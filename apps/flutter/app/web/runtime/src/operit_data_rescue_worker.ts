@@ -1,3 +1,5 @@
+import { recoverRuntimeStorageCompaction, storageCompactionFiles } from './runtime_storage_compaction.js';
+
 export {};
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 interface SyncFile { getSize(): number; read(buffer: Uint8Array, options: { at: number }): number; write(buffer: Uint8Array, options: { at: number }): number; flush(): void; truncate(length: number): void; close(): void; }
@@ -99,8 +101,16 @@ async function copy(source: Source, target: FileHandle, progress: Progress): Pro
 async function collect(base: Directory, prefix: string, result: Map<string, Source>): Promise<void> {
   const segments = prefix.split('/');
   const identityRoot = segments.length === 3 && segments[0] === 'runtime' && segments[1] === 'identities';
+  if (identityRoot) {
+    for await (const [name] of base.entries()) {
+      if (name === 'operit_runtime_storage.compact.ready') {
+        await recoverRuntimeStorageCompaction(base);
+        break;
+      }
+    }
+  }
   for await (const [name, entry] of base.entries()) {
-    if (identityRoot && (name === 'operit_archive_staging.data' || name === 'snapshot_exports')) continue;
+    if (identityRoot && (name === 'operit_archive_staging.data' || name === 'snapshot_exports' || storageCompactionFiles.has(name))) continue;
     if (prefix === '' && name === 'data-rescue') continue;
     const path = prefix === '' ? name : `${prefix}/${name}`;
     if (entry.kind === 'directory') await collect(entry, path, result);

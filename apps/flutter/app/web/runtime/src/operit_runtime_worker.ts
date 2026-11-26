@@ -1,5 +1,6 @@
 import { MessagePack } from "./operit_messagepack.js";
 import { requireBrowserSharedMemory } from "./browser_system_capabilities.js";
+import { RuntimeStorageCompaction, copyStorageRange } from "./runtime_storage_compaction.js";
 
 export {};
 
@@ -793,33 +794,41 @@ function storageKey(prefix: string, path: string): string {
   return `${prefix}${normalized}`;
 }
 
-/** Owns an append-only OPFS data file and a compact persisted index of live records. */
+/** Owns indexed OPFS records and reclaims obsolete extents through journaled compaction. */
 class RuntimeWorkerStorage {
-  private readonly records: Map<string, WorkerStorageRecord>;
+  private records: Map<string, WorkerStorageRecord>;
   private readonly sessions = new Map<string, WorkerWriteSession>();
+  private liveBytes: number;
+  private closed = false;
 
   private constructor(
     private readonly data: WorkerSyncAccessHandle,
     private readonly index: WorkerSyncAccessHandle,
+    private readonly compaction: RuntimeStorageCompaction,
     records: Map<string, WorkerStorageRecord>,
   ) {
     this.records = records;
+    this.liveBytes = Array.from(records.values()).reduce((sum, record) => sum + record.byteLength, 0);
   }
 
   /** Opens the persistent runtime OPFS files and validates the existing metadata index. */
   static async open(root: WorkerDirectoryHandle): Promise<RuntimeWorkerStorage> {
     let data: WorkerSyncAccessHandle | null = null;
     let index: WorkerSyncAccessHandle | null = null;
+    let compaction: RuntimeStorageCompaction | null = null;
     try {
       data = await openSyncAccessHandle(root, runtimeStorageDataFileName);
       const indexFile = await root.getFileHandle(runtimeStorageIndexFileName, { create: true });
       const indexModifiedAt = (await indexFile.getFile()).lastModified * 1000;
       index = await indexFile.createSyncAccessHandle();
+      compaction = await RuntimeStorageCompaction.open(root, data, index);
       const loaded = readRuntimeStorageIndex(index, data.getSize(), indexModifiedAt);
-      const storage = new RuntimeWorkerStorage(data, index, loaded.records);
+      const storage = new RuntimeWorkerStorage(data, index, compaction, loaded.records);
       if (loaded.migrated) { storage.persistIndex(); }
+      storage.compactIfNeeded();
       return storage;
     } catch (error) {
+      compaction?.close();
       index?.close();
       data?.close();
       throw error;
@@ -828,6 +837,9 @@ class RuntimeWorkerStorage {
 
   /** Releases the worker-owned OPFS access handles after an unsuccessful initialization. */
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.compaction.close();
     this.index.close();
     this.data.close();
   }
@@ -872,24 +884,28 @@ class RuntimeWorkerStorage {
 
   /** Appends and atomically publishes one complete runtime storage value. */
   write(itemKey: string, content: Uint8Array): void {
-    this.writeRecord(itemKey, content, true);
+    const previous = this.records.get(itemKey);
+    if (previous !== undefined && previous.byteLength === content.byteLength && this.matches(previous, content)) {
+      this.setModifiedAt(itemKey, Math.max(Date.now() * 1000, previous.modifiedAt + 1));
+      return;
+    }
+    const offset = this.data.getSize();
+    writeExact(this.data, content, offset);
+    this.data.flush();
+    this.publishRecord(itemKey, offset, content.byteLength);
   }
 
   /** Appends bytes to one runtime OPFS record and publishes its new length. */
   append(itemKey: string, content: Uint8Array): void {
     const previous = this.records.get(itemKey);
-    const offset = this.data.getSize();
-    if (previous !== undefined) {
-      writeExact(this.data, readRecord(this.data, previous), offset);
+    const end = this.data.getSize();
+    const offset = previous !== undefined && previous.offset + previous.byteLength === end ? previous.offset : end;
+    if (previous !== undefined && offset === end) {
+      copyStorageRange(this.data, this.data, previous.offset, offset, previous.byteLength);
     }
     writeExact(this.data, content, offset + (previous?.byteLength ?? 0));
     this.data.flush();
-    this.records.set(itemKey, {
-      offset,
-      byteLength: (previous?.byteLength ?? 0) + content.byteLength,
-      modifiedAt: Math.max(Date.now() * 1000, (previous?.modifiedAt ?? 0) + 1),
-    });
-    this.persistIndex();
+    this.publishRecord(itemKey, offset, (previous?.byteLength ?? 0) + content.byteLength);
   }
 
   /** Flushes a live record without allocating another copy in the OPFS data file. */
@@ -926,7 +942,9 @@ class RuntimeWorkerStorage {
         }
       }
     }
+    this.liveBytes = Array.from(this.records.values()).reduce((sum, record) => sum + record.byteLength, 0);
     this.persistIndex();
+    this.compactIfNeeded();
   }
 
   /** Lists the immediate children of one virtual storage directory. */
@@ -965,6 +983,11 @@ class RuntimeWorkerStorage {
   /** Appends one bounded chunk to an existing uncommitted runtime storage writer. */
   writeSessionChunk(sessionId: string, content: Uint8Array): void {
     const session = this.requiredSession(sessionId);
+    const end = this.data.getSize();
+    if (end !== session.offset + session.byteLength) {
+      copyStorageRange(this.data, this.data, session.offset, end, session.byteLength);
+      session.offset = end;
+    }
     writeExact(this.data, content, session.offset + session.byteLength);
     session.byteLength += content.byteLength;
     this.data.flush();
@@ -973,13 +996,9 @@ class RuntimeWorkerStorage {
   /** Publishes a fully written runtime storage session into the persistent index. */
   commitWriteSession(sessionId: string): void {
     const session = this.requiredSession(sessionId);
-    this.records.set(session.key, {
-      offset: session.offset,
-      byteLength: session.byteLength,
-      modifiedAt: Math.max(Date.now() * 1000, (this.records.get(session.key)?.modifiedAt ?? 0) + 1),
-    });
+    this.data.flush();
     this.sessions.delete(sessionId);
-    this.persistIndex();
+    this.publishRecord(session.key, session.offset, session.byteLength);
   }
 
   /** Discards an incomplete runtime storage writer without publishing its bytes. */
@@ -987,16 +1006,39 @@ class RuntimeWorkerStorage {
     if (!this.sessions.delete(sessionId)) {
       throw new Error("runtime storage write session does not exist");
     }
+    this.compactIfNeeded();
   }
 
-  /** Appends bytes to the data file and updates the in-memory record index. */
-  private writeRecord(itemKey: string, content: Uint8Array, persist: boolean): void {
-    const offset = this.data.getSize();
-    writeExact(this.data, content, offset);
-    this.data.flush();
-    this.records.set(itemKey, { offset, byteLength: content.byteLength, modifiedAt: Math.max(Date.now() * 1000, (this.records.get(itemKey)?.modifiedAt ?? 0) + 1) });
-    if (persist) {
-      this.persistIndex();
+  /** Compares an existing value in bounded ranges to avoid appending identical database images. */
+  private matches(record: WorkerStorageRecord, content: Uint8Array): boolean {
+    for (let offset = 0; offset < content.byteLength; offset += 65536) {
+      const chunk = content.subarray(offset, offset + 65536);
+      const previous = readRecord(this.data, { offset: record.offset + offset, byteLength: chunk.byteLength });
+      if (!previous.every((byte, index) => byte === chunk[index])) return false;
+    }
+    return true;
+  }
+
+  /** Publishes one durable extent and accounts for the previous version becoming obsolete. */
+  private publishRecord(itemKey: string, offset: number, byteLength: number): void {
+    const previous = this.records.get(itemKey);
+    this.liveBytes += byteLength - (previous?.byteLength ?? 0);
+    this.records.set(itemKey, { offset, byteLength, modifiedAt: Math.max(Date.now() * 1000, (previous?.modifiedAt ?? 0) + 1) });
+    this.persistIndex();
+    this.compactIfNeeded();
+  }
+
+  /** Bounds obsolete storage without moving extents owned by active sequential writers. */
+  private compactIfNeeded(): void {
+    if (this.sessions.size !== 0) return;
+    const garbage = this.data.getSize() - this.liveBytes;
+    if (garbage === 0 || (this.liveBytes !== 0 && garbage < Math.max(16 * 1024 * 1024, this.liveBytes))) return;
+    try {
+      this.records = this.compaction.compact(this.records);
+    } catch (error) {
+      // A committed journal may own newer offsets; no further writes may use the old map.
+      this.close();
+      throw error;
     }
   }
 

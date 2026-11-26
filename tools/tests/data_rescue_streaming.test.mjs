@@ -156,6 +156,7 @@ test('browser rescue rejects oversized export metadata before opening a destinat
 /** Excludes only the real browser archive namespace before any payload handle is opened. */
 test('browser rescue excludes identity staging and saved export copies from inventory', async () => {
   const opened = [];
+  let recovered = false;
   /** Creates a source file that records accidental reads of temporary payloads. */
   function file(path) {
     return { kind: 'file', async createSyncAccessHandle() { opened.push(path); return {}; } };
@@ -166,6 +167,9 @@ test('browser rescue excludes identity staging and saved export copies from inve
   }
   const identity = directory([
     ['operit_archive_staging.data', file('temporary archive container')],
+    ['operit_runtime_storage.compact.data', file('compaction data')],
+    ['operit_runtime_storage.compact.index', file('compaction index')],
+    ['operit_runtime_storage.compact.ready', file('compaction marker')],
     ['snapshot_exports', directory([['old.zip', file('temporary export copy')]])],
     ['operit_runtime_storage.data', file('runtime data')],
     ['data', directory([['snapshot_exports', directory([['user.zip', file('user export')]])]])],
@@ -177,9 +181,17 @@ test('browser rescue excludes identity staging and saved export copies from inve
   ]);
   const collect = implementation('async function collect(', '/** Converts a database request', {
     reportProgress() {},
+    storageCompactionFiles: new Set(['operit_runtime_storage.compact.data', 'operit_runtime_storage.compact.index', 'operit_runtime_storage.compact.ready']),
+    recoverRuntimeStorageCompaction(base) {
+      assert.equal(base, identity);
+      assert.equal(opened.length, 0, 'recover before opening raw storage');
+      assert.equal(recovered, false);
+      recovered = true;
+    },
   }, 'collect');
   const inventory = new Map();
   await collect(root, '', inventory);
+  assert.equal(recovered, true);
   assert.deepEqual(opened, ['runtime data', 'user export', 'workspace export']);
   assert.deepEqual([...inventory.keys()], [
     'opfs/runtime/identities/identity-test/operit_runtime_storage.data',

@@ -84,6 +84,20 @@ The standalone data rescue Worker queues its exclusive maintenance lease, so pag
 before maintenance opens storage; the UI asks users to close other Operit windows while waiting. The serving origin must provide COOP and
 COEP headers because the runtime worker host RPC uses `SharedArrayBuffer`.
 
+Runtime storage reclaims obsolete file versions at startup and after mutations once garbage
+reaches both 16 MiB and the live byte count. Empty stores reclaim all data immediately.
+Compaction copies only indexed records in 64 KiB ranges, preserving timestamps and the
+version 2 data/index format. Its journal flushes the packed data and index before setting a
+commit marker; only then does it replace the original files. Startup and offline maintenance
+replay any committed copy before opening records, and discard uncommitted scratch bytes.
+Journal files are excluded from snapshots. Compaction temporarily needs space for another
+copy of the live data and index, and storage errors are reported rather than hidden.
+Active sequential writers defer compaction until they commit or discard. Interleaved writers
+relocate their unpublished extents instead of overwriting one another. Identical file updates
+do not append another data image, and appending to the final live extent writes only new bytes.
+SQLite still exports a complete image for changed database saves; storage compaction bounds
+retained obsolete images without changing the SQLite host contract.
+
 Archive staging is also worker-owned OPFS. `createArchive` reserves the declared byte range,
 `appendArchive` writes ordered chunks, `sealArchive` verifies the exact length, and
 `readArchive` serves bounded ZIP-reader ranges. Browser file selection remains on the UI
