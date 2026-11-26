@@ -74,7 +74,6 @@ pub struct PrepareConversationHistoryRequest {
     pub workspace_path: Option<String>,
     pub workspace_folders: Vec<String>,
     pub prompt_function_type: String,
-    pub custom_system_prompt_template: Option<String>,
     pub participant_id: Option<String>,
     pub proxy_sender_name: Option<String>,
     pub has_image_recognition: bool,
@@ -819,11 +818,6 @@ fn build_prepare_history_metadata(
         "workspaceFolders".to_string(),
         serde_json::to_string(&request.workspace_folders)
             .expect("workspace folder paths must serialize"),
-    );
-    insert_option(
-        &mut metadata,
-        "customSystemPromptTemplate",
-        request.custom_system_prompt_template.as_ref(),
     );
     insert_option(
         &mut metadata,

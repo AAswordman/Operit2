@@ -26,6 +26,14 @@ conversation orchestration, store access, and tool integration.
   context, token accounting, ToolPkg AI provider hooks, and timing logs.
 - Provide Operit's built-in provider implementations and orchestration.
 
+## Chat Prompt Composition
+
+Chat requests use the built-in system prompt templates. Callers cannot supply a
+replacement template through send options, history preparation or prompt options.
+The resolved participant's `introPrompt` supplies the character instructions;
+workspace guidance and tool sections are composed by the provider service.
+Prompt composition hooks remain available to plugins.
+
 ## Main Modules
 
 - `src/chat/llmprovider/AIService.rs`: provider request, result, stream, and

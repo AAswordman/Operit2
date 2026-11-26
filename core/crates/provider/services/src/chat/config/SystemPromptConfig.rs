@@ -157,7 +157,6 @@ pub struct SystemPromptOptions {
     pub terminal_path_mappings: Vec<TerminalPathMapping>,
     pub saf_bookmark_names: Vec<String>,
     pub use_english: bool,
-    pub custom_system_prompt_template: String,
     pub enable_tools: bool,
     pub has_image_recognition: bool,
     pub chat_model_has_direct_image: bool,
@@ -189,7 +188,6 @@ impl Default for SystemPromptOptions {
             terminal_path_mappings: Vec::new(),
             saf_bookmark_names: Vec::new(),
             use_english: false,
-            custom_system_prompt_template: String::new(),
             enable_tools: true,
             has_image_recognition: false,
             chat_model_has_direct_image: false,
@@ -267,12 +265,10 @@ impl SystemPromptConfig {
             packages_section.push_str("<tool name=\"use_package\"><param name=\"package_name\">package_name_here</param></tool>\n");
         }
 
-        let template_to_use = if !options.custom_system_prompt_template.is_empty() {
-            options.custom_system_prompt_template.clone()
-        } else if options.use_english {
-            SYSTEM_PROMPT_TEMPLATE.to_string()
+        let template_to_use = if options.use_english {
+            SYSTEM_PROMPT_TEMPLATE
         } else {
-            SYSTEM_PROMPT_TEMPLATE_CN.to_string()
+            SYSTEM_PROMPT_TEMPLATE_CN
         };
 
         let workspace_guidelines = getWorkspaceGuidelines(
@@ -391,17 +387,6 @@ impl SystemPromptConfig {
                 .replace("AVAILABLE_TOOLS_SECTION", "")
                 .replace(&workspace_guidelines, "");
         }
-
-        // Custom templates may omit the placeholder, but workspace context is
-        // still required to use tools correctly.
-        if options.enable_tools
-            && !workspace_guidelines.is_empty()
-            && !template_to_use.contains("WORKSPACE_GUIDELINES_SECTION")
-        {
-            prompt.push_str("\n\n");
-            prompt.push_str(&workspace_guidelines);
-        }
-
         if options.enable_tools {
             prompt.push_str("\n\n");
             prompt.push_str(getAttachmentGuidelines(options.use_english));
@@ -413,7 +398,7 @@ impl SystemPromptConfig {
     }
 
     #[allow(non_snake_case)]
-    /// Propagates tool-policy failure through custom system-prompt construction.
+    /// Composes character instructions and plugin sections into the built-in system prompt.
     pub async fn getSystemPromptWithCustomPrompts(
         options: SystemPromptWithCustomOptions,
     ) -> Result<String, String> {
@@ -444,10 +429,6 @@ impl SystemPromptConfig {
             (
                 "safBookmarkNames".to_string(),
                 json!(options.base.saf_bookmark_names),
-            ),
-            (
-                "customSystemPromptTemplate".to_string(),
-                json!(options.base.custom_system_prompt_template),
             ),
             (
                 "customIntroPrompt".to_string(),
@@ -717,6 +698,33 @@ mod tests {
         }
     }
 
+    /// Keeps the selected character in built-in prompts across languages and tool protocols.
+    #[tokio::test(flavor = "current_thread")]
+    async fn builtInPromptsIncludeCharacterInstructions() {
+        let intro = "You are the selected character. Reply in this character's voice.";
+        for use_english in [false, true] {
+            for (use_tool_call_api, tool_exposure_mode) in [
+                (false, super::ToolExposureMode::FULL),
+                (true, super::ToolExposureMode::FULL),
+                (false, super::ToolExposureMode::CLI),
+            ] {
+                let prompt = SystemPromptConfig::getSystemPromptWithCustomPrompts(
+                    super::SystemPromptWithCustomOptions {
+                        base: SystemPromptOptions {
+                            use_english,
+                            use_tool_call_api,
+                            tool_exposure_mode,
+                            ..SystemPromptOptions::default()
+                        },
+                        custom_intro_prompt: intro.into(),
+                    },
+                ).await.expect("Character prompt composition must succeed");
+                assert_eq!(prompt.matches(intro).count(), 1);
+                assert!(!prompt.contains("BEGIN_SELF_INTRODUCTION_SECTION"));
+            }
+        }
+    }
+
     /// Verifies native tool-call prompts never advertise the text XML protocol.
     #[tokio::test(flavor = "current_thread")]
     async fn nativeToolCallPromptExcludesXmlToolSyntax() {
@@ -752,7 +760,6 @@ mod tests {
         for use_english in [true, false] {
             let prompt = SystemPromptConfig::getSystemPrompt(SystemPromptOptions {
                 use_english,
-                custom_system_prompt_template: "Custom instructions".into(),
                 ..SystemPromptOptions::default()
             })
             .await.expect("Tool-prompt policies must succeed in this test");
@@ -791,7 +798,7 @@ mod tests {
         }
     }
 
-    /// Workspaces, unbound output areas and custom templates all carry executable policy guidance.
+    /// Workspaces and unbound output areas carry executable policy guidance.
     #[tokio::test(flavor = "current_thread")]
     async fn sync_policy_instructions_cover_schema_and_proactive_exclusion_in_both_languages() {
         let defaults = serde_json::to_string_pretty(&operit_store::FileSyncPolicy::FileSyncPolicy::default()).unwrap();
@@ -801,7 +808,6 @@ mod tests {
                     use_english,
                     workspace_path: workspace,
                     output_path: Some("/operitapp/outputs/family".into()),
-                    custom_system_prompt_template: "Custom instructions".into(),
                     ..SystemPromptOptions::default()
                 }).await.unwrap();
                 assert!(prompt.contains(&format!("```json\n{defaults}\n```")));
@@ -876,6 +882,8 @@ mod tests {
                     assert!(prompt.contains("`native/shell`: `.`"));
                     assert!(prompt.contains("/Users/test/My Projects/library"));
                     assert!(prompt.contains(if use_english {
+                    assert_eq!(prompt.matches("`native/shell`: `.`").count(), 1);
+                    assert!(!prompt.contains("WORKSPACE_GUIDELINES_SECTION"));
                         "Each selected Host starts its sessions at `.`"
                     } else {
                         "所选 Host 从 `.` 启动终端"
@@ -885,32 +893,14 @@ mod tests {
         }
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn workspacePromptSurvivesCustomTemplatesWithOrWithoutPlaceholder() {
-        for template in [
-            "Custom instructions.",
-            "Custom instructions.\nWORKSPACE_GUIDELINES_SECTION",
-        ] {
-            let mut options = workspacePromptOptions(true);
-            options.custom_system_prompt_template = template.into();
-            let prompt = SystemPromptConfig::getSystemPrompt(options).await.expect("Tool-prompt policies must succeed in this test");
-            assert!(prompt.contains("Custom instructions."));
-            assert!(prompt.contains("`native/shell`: `.`"));
-            assert_eq!(prompt.matches("TERMINAL WORKSPACE PATHS").count(), 1);
-            assert!(!prompt.contains("WORKSPACE_GUIDELINES_SECTION"));
-        }
-    }
-
+    /// Omits terminal paths when tools are disabled or no workspace is bound.
     #[tokio::test(flavor = "current_thread")]
     async fn workspacePromptOmitsPathsWhenToolsAreDisabledOrWorkspaceIsUnbound() {
-        for template in ["Custom instructions.", "WORKSPACE_GUIDELINES_SECTION"] {
-            let mut options = workspacePromptOptions(true);
-            options.custom_system_prompt_template = template.into();
-            options.enable_tools = false;
-            assert!(!SystemPromptConfig::getSystemPrompt(options)
-                .await.expect("Tool-prompt policies must succeed in this test")
-                .contains("/Users/test/My Projects"));
-        }
+        let mut options = workspacePromptOptions(true);
+        options.enable_tools = false;
+        assert!(!SystemPromptConfig::getSystemPrompt(options)
+            .await.expect("Tool-prompt policies must succeed in this test")
+            .contains("/Users/test/My Projects"));
         for path in [None, Some(" ".into())] {
             let mut options = workspacePromptOptions(true);
             options.workspace_path = path;
@@ -920,7 +910,7 @@ mod tests {
         }
     }
 
-    /// Every tool protocol and custom template must retain the relative-path contract.
+    /// Every tool protocol retains the relative-path contract in both languages.
     #[tokio::test(flavor = "current_thread")]
     async fn chat_file_prompt_uses_the_same_relative_base_without_attachment_searches() {
         for use_english in [false, true] {
@@ -930,36 +920,33 @@ mod tests {
                     (true, super::ToolExposureMode::FULL),
                     (false, super::ToolExposureMode::CLI),
                 ] {
-                    for template in ["", "Custom instructions"] {
-                        let prompt = SystemPromptConfig::getSystemPrompt(SystemPromptOptions {
-                            use_english,
-                            workspace_path: workspace_path.clone(),
-                            output_path: Some("/operitapp/outputs/family".into()),
-                            use_tool_call_api,
-                            tool_exposure_mode: tool_exposure_mode.clone(),
-                            custom_system_prompt_template: template.into(),
-                            ..SystemPromptOptions::default()
-                        }).await.expect("Tool-prompt policies must succeed in this test");
-                        assert!(prompt.contains(if use_english {
-                            "File tools and terminal sessions use this same base"
-                        } else {
-                            "文件工具与终端使用同一个基准"
-                        }));
-                        assert!(prompt.contains(if use_english {
-                            "Read supplied relative attachment paths directly"
-                        } else {
-                            "直接读取附件提供的相对路径"
-                        }));
-                        assert!(prompt.contains(if use_english {
-                            "For terminal startup errors"
-                        } else {
-                            "终端启动失败时报告错误"
-                        }));
-                        assert!(!prompt.contains("Relative file paths require a workspace"));
-                        assert!(!prompt.contains("Without a workspace, list `/`"));
-                        assert!(!prompt.contains("文件相对路径需要绑定工作区"));
-                        assert!(!prompt.contains("没有工作区时，可列出 `/`"));
-                    }
+                    let prompt = SystemPromptConfig::getSystemPrompt(SystemPromptOptions {
+                        use_english,
+                        workspace_path: workspace_path.clone(),
+                        output_path: Some("/operitapp/outputs/family".into()),
+                        use_tool_call_api,
+                        tool_exposure_mode: tool_exposure_mode.clone(),
+                        ..SystemPromptOptions::default()
+                    }).await.expect("Tool-prompt policies must succeed in this test");
+                    assert!(prompt.contains(if use_english {
+                        "File tools and terminal sessions use this same base"
+                    } else {
+                        "文件工具与终端使用同一个基准"
+                    }));
+                    assert!(prompt.contains(if use_english {
+                        "Read supplied relative attachment paths directly"
+                    } else {
+                        "直接读取附件提供的相对路径"
+                    }));
+                    assert!(prompt.contains(if use_english {
+                        "For terminal startup errors"
+                    } else {
+                        "终端启动失败时报告错误"
+                    }));
+                    assert!(!prompt.contains("Relative file paths require a workspace"));
+                    assert!(!prompt.contains("Without a workspace, list `/`"));
+                    assert!(!prompt.contains("文件相对路径需要绑定工作区"));
+                    assert!(!prompt.contains("没有工作区时，可列出 `/`"));
                 }
             }
         }

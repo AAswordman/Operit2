@@ -366,7 +366,6 @@ pub struct SendMessageOptions {
     pub enableThinking: bool,
     pub onNonFatalError: Option<fn(String)>,
     pub onTokenLimitExceeded: Option<fn()>,
-    pub customSystemPromptTemplate: Option<String>,
     pub isSubTask: bool,
     pub participantName: Option<String>,
     /// Explicit participant selected from a plugin-resolved execution plan.
@@ -415,7 +414,6 @@ impl SendMessageOptions {
             enableThinking: false,
             onNonFatalError: None,
             onTokenLimitExceeded: None,
-            customSystemPromptTemplate: None,
             isSubTask: false,
             participantName: None,
             executionParticipantId: None,
@@ -754,10 +752,6 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
         use_english: bool,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>> {
         Box::pin(async move {
-            let custom_system_prompt_template = match &request.custom_system_prompt_template {
-                Some(value) => value.clone(),
-                None => String::new(),
-            };
             let host_environment = self.tool_handler.getHostEnvironmentDescriptor();
             // Use the same host-owned roots as file tools, not a guessed storage location.
             // Resolve afresh for every request so workspace switches cannot retain stale paths.
@@ -829,7 +823,6 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
                     workspace_path_mappings,
                     terminal_path_mappings,
                     use_english,
-                    custom_system_prompt_template,
                     enable_tools: true,
                     has_image_recognition: request.has_image_recognition,
                     chat_model_has_direct_image: request.chat_model_has_direct_image,
@@ -1028,7 +1021,6 @@ impl EnhancedAIService {
         workspacePath: Option<String>,
         workspaceFolders: Vec<String>,
         promptFunctionType: PromptFunctionType,
-        customSystemPromptTemplate: Option<String>,
         participantId: Option<String>,
         proxySenderName: Option<String>,
         isSubTask: bool,
@@ -1077,7 +1069,6 @@ impl EnhancedAIService {
                     workspace_folders: workspaceFolders,
                     prompt_function_type: prompt_function_type_name(&promptFunctionType)
                         .to_string(),
-                    custom_system_prompt_template: customSystemPromptTemplate,
                     participant_id: participantId,
                     proxy_sender_name: proxySenderName,
                     has_image_recognition: !isSubTask && runtime.hasImageRecognition,
@@ -1213,7 +1204,7 @@ impl EnhancedAIService {
         runtime.promptMetadata.insert("promptPreparationId".into(), uuid::Uuid::new_v4().to_string());
         let history = self.prepareConversationHistory(
             messages, String::new(), sendOptions.chatId.clone(), options.workspacePath.clone(),
-            options.workspaceFolders.clone(), options.promptFunctionType.clone(), None,
+            options.workspaceFolders.clone(), options.promptFunctionType.clone(),
             sendOptions.executionParticipantId.clone(), None, false, FunctionType::CHAT,
             None, None, PromptPreparationPurpose::Send, &runtime,
         ).await?;
@@ -1397,7 +1388,6 @@ impl EnhancedAIService {
                 workspacePath.clone(),
                 workspaceFolders.clone(),
                 promptFunctionType.clone(),
-                None,
                 participantId.clone(),
                 proxySenderName,
                 false,
@@ -1860,7 +1850,6 @@ impl EnhancedAIService {
         let enableThinking = options.enableThinking;
         let maxTokens = options.maxTokens;
         let tokenUsageThreshold = options.tokenUsageThreshold;
-        let customSystemPromptTemplate = options.customSystemPromptTemplate.clone();
         let isSubTask = options.isSubTask;
         let participantName = options.participantName.clone();
         let participantId = Some(runtime.chatConfiguration.profile.id.clone());
@@ -1908,7 +1897,6 @@ impl EnhancedAIService {
                 workspacePath.clone(),
                 options.workspaceFolders.clone(),
                 promptFunctionType.clone(),
-                customSystemPromptTemplate.clone(),
                 participantId.clone(),
                 proxySenderName.clone(),
                 isSubTask,
