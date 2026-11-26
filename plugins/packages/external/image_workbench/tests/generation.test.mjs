@@ -94,6 +94,27 @@ test('compatible endpoint configuration produces one canonical URL and supports 
   }
 });
 
+test('OpenAI responses containing both encodings save base64 without downloading the URL', async () => {
+  const io = host([{ data: [{ b64_json: 'aW1hZ2U=', url: 'https://images.test/result.png', revised_prompt: 'a quiet garden' }] }], keys);
+  const output = await (await toolRuntime(io)).generate_image({ provider: 'openai', prompt: 'garden' });
+  assert.equal(output.success, true);
+  assert.equal(output.data.assets.length, 1);
+  assert.equal(io.requests.length, 1);
+  assert.equal(io.writes.length, 1);
+  assert.equal(io.writes[0].data, 'aW1hZ2U=');
+  assert.equal(io.writes[0].url, undefined);
+  assert.equal(output.data.assets[0].uri, io.writes[0].path);
+});
+
+test('OpenAI responses without either encoding fail before writing a file', async () => {
+  for (const response of [{}, { data: [] }, { data: [null] }, { data: [{}] }, { data: [{ b64_json: '', url: '' }] }]) {
+    const io = host([response], keys);
+    await assert.rejects((await toolRuntime(io)).generate_image({ provider: 'openai', prompt: 'garden' }), /b64_json 或 url/);
+    assert.equal(io.requests.length, 1);
+    assert.equal(io.writes.length, 0);
+  }
+});
+
 test('xAI video shares assets while keeping image references inside the service request', async () => {
   const io = host([{ request_id: 'video-job' }, { status: 'processing' }, { status: 'done', video: { url: 'https://images.test/output.mp4' } }], keys);
   const output = await (await toolRuntime(io)).generate_video({ provider: 'xai', prompt: 'garden', reference_image: '/selected/reference.png', duration: 6 });
