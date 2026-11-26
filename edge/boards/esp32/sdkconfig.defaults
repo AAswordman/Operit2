@@ -30,3 +30,13 @@ CONFIG_MBEDTLS_TLS_CLIENT_ONLY=y
 
 # Keep microphone DMA interrupts running during Flash/NVS cache stalls.
 CONFIG_I2S_ISR_IRAM_SAFE=y
+
+# This board configures open or WPA/WPA2-Personal stations (wifi.rs), with
+# SSID/password credentials only. Enterprise EAP and WPA3-only association
+# paths cannot be selected by its configuration UI or station setup.
+CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
+CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=n
+CONFIG_ESP_WIFI_ENABLE_WPA3_OWE_STA=n
+
+# Use the ESP32 ROM printf/scanf implementation for bounded native UI fields.
+CONFIG_NEWLIB_NANO_FORMAT=y

@@ -6,13 +6,13 @@ linker = "ldproxy"
 runner = "espflash flash --monitor --chip esp32"
 # Resolve available symbols from the matching ELF on the host. Embedded Rust
 # caller file/line records are omitted to fit the fixed Flash partition.
-rustflags = ["--cfg", "espidf_time64", "--cfg", "mio_unsupported_force_poll_poll", "-Z", "location-detail=none"]
+rustflags = ["--cfg", "espidf_time64", "--cfg", "mio_unsupported_force_poll_poll", "-Z", "location-detail=none", "-Z", "unstable-options", "-C", "panic=immediate-abort"]
 
 [unstable]
 build-std = ["std", "panic_abort"]
-# Keep panic messages and raw backtrace addresses; resolve symbols on the host
-# with the matching ELF instead of shipping a DWARF reader on the device.
-build-std-features = ["backtrace", "panic-unwind", "backtrace-trace-only"]
+# Abort panics immediately. Structured errors and native crash diagnostics
+# remain available; resolve native backtraces with the matching ELF on the host.
+build-std-features = ["backtrace", "panic-unwind", "backtrace-trace-only", "optimize_for_size"]
 
 [env]
 CARGO_WORKSPACE_DIR = { value = ".", relative = true, force = true }
