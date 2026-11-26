@@ -1015,6 +1015,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get openFile => 'Open file';
 
   @override
+  String get openInOtherApp => 'Open in other app';
+
+  @override
   String get workspaceFileOpening => 'Opening file…';
 
   @override

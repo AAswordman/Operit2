@@ -983,6 +983,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get openFile => '打开文件';
 
   @override
+  String get openInOtherApp => '用其他应用打开';
+
+  @override
   String get workspaceFileOpening => '正在打开文件…';
 
   @override

@@ -62,6 +62,7 @@ void main() {
     WidgetTester tester, {
     Future<List<WorkspaceFileEntry>> Function(String)? list,
     Future<void> Function(WorkspaceFileEntry)? open,
+    Future<void> Function(String)? openExternally,
     double textScale = 1,
     WorkspaceFileMutation? mutate,
     WorkspaceFileClipboard? clipboard,
@@ -74,6 +75,7 @@ void main() {
           rootRelativePath: '',
           onListWorkspaceFiles: list ?? (path) async => fixtures[path] ?? [],
           onOpenFile: open ?? (_) async {},
+          onOpenWorkspaceFile: openExternally,
           onMutateWorkspaceFile: mutate,
           fileClipboard: clipboard,
           protectWorkspaceRoots: protectWorkspaceRoots,
@@ -104,6 +106,104 @@ void main() {
         .first;
     expect(tester.getSize(material).width, lessThanOrEqualTo(156));
     expect(tester.takeException(), isNull);
+  });
+
+  for (final secondaryClick in [false, true]) {
+    testWidgets(
+      '${secondaryClick ? 'secondary click' : 'long press'} opens the listed file in another app without mutation access',
+      (tester) async {
+        const path = 'source-node:/operitapp/workspaces/demo/archive.zip';
+        final opened = <String>[];
+        var previewOpened = false;
+        await mount(
+          tester,
+          list: (_) async => [
+            const WorkspaceFileEntry(
+              name: 'archive.zip',
+              path: path,
+              relativePath: 'demo/archive.zip',
+              isDirectory: false,
+              size: 0,
+              lastModified: '',
+            ),
+          ],
+          open: (_) async => previewOpened = true,
+          openExternally: (path) async => opened.add(path),
+        );
+        if (secondaryClick) {
+          await tester.tap(
+            find.text('archive.zip'),
+            buttons: kSecondaryMouseButton,
+          );
+        } else {
+          await tester.longPress(find.text('archive.zip'));
+        }
+        await tester.pumpAndSettle();
+        expect(find.text('用其他应用打开'), findsOneWidget);
+        expect(find.text('删除'), findsNothing);
+        expect(opened, isEmpty);
+        expect(previewOpened, isFalse);
+        await tester.tap(find.text('用其他应用打开'));
+        await tester.pumpAndSettle();
+        expect(opened, [path]);
+        expect(previewOpened, isFalse);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('folder actions do not offer external file opening', (
+    tester,
+  ) async {
+    await mount(
+      tester,
+      openExternally: (_) async => fail('A directory must not open as a file'),
+      mutate: (_, _, _) async {},
+    );
+    await tester.longPress(find.text('src'));
+    await tester.pumpAndSettle();
+    expect(find.text('用其他应用打开'), findsNothing);
+    expect(find.text('重命名'), findsOneWidget);
+  });
+
+  testWidgets('external file opening awaits the host and reports failures', (
+    tester,
+  ) async {
+    final pending = Completer<void>();
+    var calls = 0;
+    await mount(
+      tester,
+      openExternally: (_) {
+        calls++;
+        return pending.future;
+      },
+    );
+    await tester.longPress(find.text('README.md'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('用其他应用打开'));
+    await tester.pumpAndSettle();
+    await tester.longPress(find.text('README.md'));
+    await tester.pumpAndSettle();
+    final action = find
+        .ancestor(
+          of: find.text('正在打开文件…'),
+          matching: find.byWidgetPredicate((widget) => widget is PopupMenuItem),
+        )
+        .first;
+    expect(tester.widget<PopupMenuItem<dynamic>>(action).enabled, isFalse);
+    expect(calls, 1);
+    await tester.tapAt(const Offset(780, 580));
+    await tester.pumpAndSettle();
+    pending.completeError(StateError('External application is unavailable'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('External application is unavailable'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.longPress(find.text('README.md'));
+    await tester.pumpAndSettle();
+    expect(find.text('用其他应用打开'), findsOneWidget);
   });
 
   testWidgets(

@@ -484,6 +484,7 @@
   "searchHistory": "Search history",
   "noDownloadTasks": "No download tasks yet",
   "openFile": "Open file",
+  "openInOtherApp": "Open in other app",
   "workspaceFileOpening": "Opening file…",
   "workspaceFileOpenTimedOut": "Opening the file timed out. Please try again.",
   "openLocation": "Open location",

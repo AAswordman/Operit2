@@ -41,6 +41,14 @@ own workspace presentation. The panel remounts when its session changes, keeping
 file navigation and asynchronous panel callbacks within their owning workspace.
 Embedded chat surfaces do not change the main workspace or its plugin context.
 
+File rows expose **Open in other app** in both the long-press and secondary-click
+menus on every host. The action passes the listing's complete VFS address,
+including its owning node, to the existing workspace file opener. It is
+available independently of file mutation controls and does not apply to
+directories. Pending opens disable duplicate requests; host failures appear in
+the initiating workspace. Platform presentation remains owned by the Host
+file-system implementation.
+
 Plugins moved from the application navigation sidebar into the workspace remain
 global. `SidebarDockController.secondaryViews` owns their placement, and every
 workspace panel reconciles its docked plugin tabs with that shared catalog.

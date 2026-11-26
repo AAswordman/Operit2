@@ -484,6 +484,7 @@
   "searchHistory": "Historique de recherche",
   "noDownloadTasks": "Aucun téléchargement pour le moment",
   "openFile": "Ouvrir le fichier",
+  "openInOtherApp": "Ouvrir avec une autre app",
   "workspaceFileOpening": "Ouverture du fichier…",
   "workspaceFileOpenTimedOut": "Délai d'ouverture du fichier dépassé. Veuillez réessayer.",
   "openLocation": "Ouvrir l'emplacement",

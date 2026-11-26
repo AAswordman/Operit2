@@ -16,6 +16,7 @@ class WorkspaceFileBrowserContent extends StatefulWidget {
     required this.rootRelativePath,
     required this.onListWorkspaceFiles,
     required this.onOpenFile,
+    this.onOpenWorkspaceFile,
     this.rootLabelRelativePath = '',
     this.protectWorkspaceRoots = false,
     this.onMutateWorkspaceFile,
@@ -33,6 +34,7 @@ class WorkspaceFileBrowserContent extends StatefulWidget {
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
   final Future<void> Function(WorkspaceFileEntry entry) onOpenFile;
+  final Future<void> Function(String path)? onOpenWorkspaceFile;
   final Future<void> Function(String path)? onSelectCurrentDirectory;
   final Future<void> Function()? onPickLocalDirectory;
 
@@ -128,6 +130,7 @@ class _WorkspaceFileBrowserContentState
                     rootEntries: _entriesFuture!,
                     onListDirectory: _listTreeDirectory,
                     onOpenFile: widget.onOpenFile,
+                    onOpenWorkspaceFile: widget.onOpenWorkspaceFile,
                     onMutate: widget.onMutateWorkspaceFile,
                     clipboard: widget.fileClipboard,
                     protectWorkspaceRoots: widget.protectWorkspaceRoots,

@@ -1918,6 +1918,12 @@ abstract class AppLocalizations {
   /// **'Open file'**
   String get openFile;
 
+  /// No description provided for @openInOtherApp.
+  ///
+  /// In en, this message translates to:
+  /// **'Open in other app'**
+  String get openInOtherApp;
+
   /// No description provided for @workspaceFileOpening.
   ///
   /// In en, this message translates to:

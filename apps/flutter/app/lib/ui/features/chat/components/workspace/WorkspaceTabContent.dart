@@ -185,6 +185,7 @@ class WorkspaceTabContent extends StatelessWidget {
           fileClipboard: fileClipboard,
           protectWorkspaceRoots: workspacePath?.trim().isNotEmpty == true,
           onOpenFile: onOpenFile,
+          onOpenWorkspaceFile: onOpenWorkspaceFile,
         );
       case WorkspaceTabKind.terminal:
         final sessionId = tab.terminalSessionId;

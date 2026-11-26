@@ -22,6 +22,7 @@ class WorkspaceFileTree extends StatefulWidget {
     required this.rootEntries,
     required this.onListDirectory,
     required this.onOpenFile,
+    this.onOpenWorkspaceFile,
     this.protectWorkspaceRoots = false,
     this.onMutate,
     this.clipboard,
@@ -37,6 +38,7 @@ class WorkspaceFileTree extends StatefulWidget {
   final Future<List<WorkspaceFileEntry>> rootEntries;
   final Future<List<WorkspaceFileEntry>> Function(String) onListDirectory;
   final Future<void> Function(WorkspaceFileEntry) onOpenFile;
+  final Future<void> Function(String path)? onOpenWorkspaceFile;
 
   @override
   State<WorkspaceFileTree> createState() => _WorkspaceFileTreeState();
@@ -51,6 +53,7 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
   final _focus = FocusNode();
   final _localClipboard = WorkspaceFileClipboard();
   bool _mutating = false;
+  bool _openingExternally = false;
   bool _menuOpen = false;
   String? _selected;
   bool _rootExpanded = true;
@@ -261,12 +264,20 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
         (directory != source && !directory.startsWith('$source/'));
   }
 
+  /// Exposes file presentation independently from permission to mutate entries.
+  bool _hasActionsFor(WorkspaceFileEntry? entry) =>
+      widget.onMutate != null ||
+      (entry != null &&
+          !entry.isDirectory &&
+          widget.onOpenWorkspaceFile != null);
+
+  /// Presents file and mutation actions for touch and pointer context menus.
   Future<void> _showActions(
     Offset position, {
     WorkspaceFileEntry? entry,
     required String directory,
   }) async {
-    if (widget.onMutate == null || _mutating || _menuOpen) return;
+    if (!_hasActionsFor(entry) || _mutating || _menuOpen) return;
     _menuOpen = true;
     if (entry != null) setState(() => _selected = entry.relativePath);
     final l10n = AppLocalizations.of(context)!;
@@ -275,40 +286,53 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
         entry != null &&
         !(widget.protectWorkspaceRoots && !entry.relativePath.contains('/'));
     final actions = <SidebarMenuAction<_FileAction>>[
-      if (entry != null) ...[
+      if (entry != null &&
+          !entry.isDirectory &&
+          widget.onOpenWorkspaceFile != null)
         SidebarMenuAction(
-          value: _FileAction.rename,
-          icon: Icons.edit_outlined,
-          label: l10n.workspaceFileRename,
-          enabled: mutable,
+          value: _FileAction.openExternally,
+          icon: Icons.open_in_new,
+          label: _openingExternally
+              ? l10n.workspaceFileOpening
+              : l10n.openInOtherApp,
+          enabled: !_openingExternally,
         ),
+      if (widget.onMutate != null) ...[
+        if (entry != null) ...[
+          SidebarMenuAction(
+            value: _FileAction.rename,
+            icon: Icons.edit_outlined,
+            label: l10n.workspaceFileRename,
+            enabled: mutable,
+          ),
+          SidebarMenuAction(
+            value: _FileAction.copy,
+            icon: Icons.copy_outlined,
+            label: l10n.workspaceFileCopy,
+          ),
+          SidebarMenuAction(
+            value: _FileAction.cut,
+            icon: Icons.content_cut,
+            label: l10n.workspaceFileCut,
+            enabled: mutable,
+          ),
+        ],
         SidebarMenuAction(
-          value: _FileAction.copy,
-          icon: Icons.copy_outlined,
-          label: l10n.workspaceFileCopy,
+          value: _FileAction.paste,
+          icon: Icons.content_paste,
+          label: l10n.workspaceFilePaste,
+          enabled: _canPaste(directory),
         ),
-        SidebarMenuAction(
-          value: _FileAction.cut,
-          icon: Icons.content_cut,
-          label: l10n.workspaceFileCut,
-          enabled: mutable,
-        ),
+        if (entry != null)
+          SidebarMenuAction(
+            value: _FileAction.delete,
+            icon: Icons.delete_outline,
+            label: l10n.delete,
+            enabled: mutable,
+            danger: true,
+            dividerBefore: true,
+          ),
       ],
-      SidebarMenuAction(
-        value: _FileAction.paste,
-        icon: Icons.content_paste,
-        label: l10n.workspaceFilePaste,
-        enabled: _canPaste(directory),
-      ),
-      if (entry != null)
-        SidebarMenuAction(
-          value: _FileAction.delete,
-          icon: Icons.delete_outline,
-          label: l10n.delete,
-          enabled: mutable,
-          danger: true,
-          dividerBefore: true,
-        ),
     ];
     final action = await showSidebarContextMenu(
       context,
@@ -318,6 +342,8 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
     _menuOpen = false;
     if (!mounted || generation != _generation || action == null) return;
     switch (action) {
+      case _FileAction.openExternally:
+        await _openExternally(entry!);
       case _FileAction.copy:
       case _FileAction.cut:
         _clipboard.value = WorkspaceFileClipboardEntry(
@@ -330,6 +356,20 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
         await _paste(directory);
       case _FileAction.delete:
         await _delete(entry!);
+    }
+  }
+
+  /// Opens the listed VFS address through the shared platform host capability.
+  Future<void> _openExternally(WorkspaceFileEntry entry) async {
+    if (_openingExternally) return;
+    final generation = _generation;
+    setState(() => _openingExternally = true);
+    try {
+      await widget.onOpenWorkspaceFile!(entry.path);
+    } catch (error) {
+      if (mounted && generation == _generation) _showError(error);
+    } finally {
+      if (mounted) setState(() => _openingExternally = false);
     }
   }
 
@@ -604,7 +644,7 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
                 ? colors.primary.withValues(alpha: 0.12)
                 : Colors.transparent,
             child: GestureDetector(
-              onLongPressStart: widget.onMutate == null
+              onLongPressStart: !_hasActionsFor(entry)
                   ? null
                   : (details) => _showActions(
                       details.globalPosition,
@@ -616,7 +656,7 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
                           : row.path,
                     ),
               child: InkWell(
-                onSecondaryTapUp: widget.onMutate == null
+                onSecondaryTapUp: !_hasActionsFor(entry)
                     ? null
                     : (details) => _showActions(
                         details.globalPosition,
@@ -643,7 +683,7 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
                       ? 0.45
                       : 1,
                   child: Tooltip(
-                    triggerMode: widget.onMutate == null
+                    triggerMode: !_hasActionsFor(entry)
                         ? null
                         : TooltipTriggerMode.manual,
                     message: entry?.relativePath ?? error?.toString() ?? label,
@@ -747,7 +787,7 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
   }
 }
 
-enum _FileAction { rename, copy, cut, paste, delete }
+enum _FileAction { openExternally, rename, copy, cut, paste, delete }
 
 class _TreeRow {
   const _TreeRow.entry(WorkspaceFileEntry this.entry, this.depth)

@@ -1028,6 +1028,9 @@ class AppLocalizationsFr extends AppLocalizations {
   String get openFile => 'Ouvrir le fichier';
 
   @override
+  String get openInOtherApp => 'Ouvrir avec une autre app';
+
+  @override
   String get workspaceFileOpening => 'Ouverture du fichier…';
 
   @override
