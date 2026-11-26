@@ -33,6 +33,75 @@ class ActiveMentionTrigger {
   final String triggerChar;
   final int triggerIndex;
   final String query;
+
+  /// Reports whether this trigger starts a leading slash command rather than an inline package mention.
+  bool isLeadingSlashCommand(String text) {
+    if (triggerChar != '/' || triggerIndex < 0 || triggerIndex > text.length) {
+      return false;
+    }
+    return text.substring(0, triggerIndex).trim().isEmpty;
+  }
+}
+
+/// Splits a slash command body into shell-like arguments respecting single and double quotes.
+///
+/// Throws [FormatException] when an opening quote is not closed.
+List<String> splitSlashCommandTokens(String input) {
+  final tokens = <String>[];
+  final buffer = StringBuffer();
+  var inToken = false;
+  String? quoteChar;
+  var escaping = false;
+
+  for (var index = 0; index < input.length; index += 1) {
+    final char = input.substring(index, index + 1);
+    if (escaping) {
+      buffer.write(char);
+      inToken = true;
+      escaping = false;
+      continue;
+    }
+    if (char == r'\' && quoteChar != "'") {
+      escaping = true;
+      inToken = true;
+      continue;
+    }
+    if (quoteChar != null) {
+      if (char == quoteChar) {
+        quoteChar = null;
+      } else {
+        buffer.write(char);
+      }
+      inToken = true;
+      continue;
+    }
+    if (char == '"' || char == "'") {
+      quoteChar = char;
+      inToken = true;
+      continue;
+    }
+    if (_isWhitespace(char)) {
+      if (inToken) {
+        tokens.add(buffer.toString());
+        buffer.clear();
+        inToken = false;
+      }
+      continue;
+    }
+    buffer.write(char);
+    inToken = true;
+  }
+
+  if (escaping) {
+    buffer.write(r'\');
+  }
+  if (quoteChar != null) {
+    throw const FormatException('Unterminated quote in command');
+  }
+  if (inToken) {
+    tokens.add(buffer.toString());
+  }
+  return tokens;
 }
 
 /// Reports whether a character can continue a mention token.

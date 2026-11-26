@@ -42,6 +42,8 @@ class ChatScreenContent extends StatelessWidget {
     required this.scrollController,
     required this.inputProcessingState,
     this.mentionSuggestionPanel,
+    this.onMentionEnter,
+    this.onMentionKeyEvent,
     required this.viewModel,
     required this.currentChatId,
     this.fileDirectory,
@@ -125,6 +127,8 @@ class ChatScreenContent extends StatelessWidget {
   final ScrollController scrollController;
   final core_proxy.InputProcessingState inputProcessingState;
   final Widget? mentionSuggestionPanel;
+  final bool Function()? onMentionEnter;
+  final KeyEventResult Function(KeyEvent event)? onMentionKeyEvent;
   final ChatViewModel viewModel;
   final String? currentChatId;
   final String? fileDirectory;
@@ -405,6 +409,8 @@ class ChatScreenContent extends StatelessWidget {
         isLoading: loading,
         inputState: inputProcessingState,
         mentionSuggestionPanel: mentionSuggestionPanel,
+        onMentionEnter: onMentionEnter,
+        onMentionKeyEvent: onMentionKeyEvent,
         viewModel: viewModel,
         currentChatId: currentChatId,
         onSendMessage: sendMessage,
@@ -444,6 +450,8 @@ class ChatScreenContent extends StatelessWidget {
         isLoading: loading,
         inputState: inputProcessingState,
         mentionSuggestionPanel: mentionSuggestionPanel,
+        onMentionEnter: onMentionEnter,
+        onMentionKeyEvent: onMentionKeyEvent,
         viewModel: viewModel,
         currentChatId: currentChatId,
         onSendMessage: sendMessage,
