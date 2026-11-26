@@ -128,6 +128,7 @@ pub struct OperitApplication {
     pub initialized: bool,
     pub(super) applicationUpdate: super::ApplicationUpdate::ApplicationUpdateManager,
     extensionChanges: Option<operit_store::SyncAppliedChanges::SyncAppliedSubscription>,
+    scheduledChatDelivery: Arc<crate::services::ToolRuntimeSupportService::RuntimeToolSupport>,
     hostRuntimeEventRegistration: Option<Arc<Mutex<Box<dyn HostRuntimeEventRegistration>>>>,
 }
 
@@ -224,9 +225,6 @@ impl OperitApplication {
         *chatRuntimeHolder
             .try_lock()
             .expect("new chat runtime holder must be unlocked") = initializedChatRuntimeHolder;
-        if let Err(error) = runtimeToolSupport.startScheduledChatDelivery() {
-            operit_util::AppLogger::AppLogger::e("ScheduledChatMessages", &error);
-        }
         Self {
             applicationUpdate: super::ApplicationUpdate::ApplicationUpdateManager::new(),
             appStartupTimeMs: 0,
@@ -239,6 +237,7 @@ impl OperitApplication {
             initialized: false,
             hostRuntimeEventRegistration: None,
             extensionChanges: None,
+            scheduledChatDelivery: runtimeToolSupport,
         }
     }
 
@@ -258,6 +257,7 @@ impl OperitApplication {
             initialized: self.initialized,
             // The original application remains the sole lifecycle/subscription owner.
             extensionChanges: None,
+            scheduledChatDelivery: self.scheduledChatDelivery.clone(),
             hostRuntimeEventRegistration: None,
         }
     }
@@ -346,6 +346,8 @@ impl OperitApplication {
         AppLogger::v("OperitApplication", "built-in plugin initialization start");
         PluginRegistry::initializeBuiltins(self.toolPkgBridgeRuntime.clone());
         crate::plugins::toolpkg::ToolPkgChatLifecycleHookBridge::ToolPkgChatLifecycleHookBridge::register(self.toolPkgBridgeRuntime.clone())?;
+        self.dispatchPluginLoading()?;
+        self.scheduledChatDelivery.startScheduledChatDelivery()?;
         AppLogger::v(
             "OperitApplication",
             &format!(
@@ -382,7 +384,6 @@ impl OperitApplication {
             self.hostManager.clone(),
             self.toolHandler.clone(),
         );
-        self.dispatchPluginLoading()?;
         crate::services::ModelCatalogService::startKeepingFresh();
         self.initialized = true;
         AppLogger::i(

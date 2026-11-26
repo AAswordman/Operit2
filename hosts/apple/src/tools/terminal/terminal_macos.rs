@@ -90,6 +90,15 @@ impl AppleTerminalHost {
 }
 
 impl TerminalHost for AppleTerminalHost {
+    /// Preserves macOS backend selection while launching a process-owned PTY.
+    fn openTerminalSession(&self, request: &operit_host_api::TerminalSessionRequest) -> HostResult<TerminalSessionInfo> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if request.terminal == "arm64" { return self.arm64.openTerminalSession(request); }
+        let mut session = self.hostForType(&request.terminal, &request.terminalType)?.openTerminalSession(request)?;
+        session.platform = PLATFORM.into();
+        Ok(session)
+    }
+
     /// Declares custom native shell launchers without exposing emulated backend internals.
     fn terminalProfileSupport(&self) -> HostResult<Vec<operit_host_api::TerminalProfileSupport>> {
         Ok(self

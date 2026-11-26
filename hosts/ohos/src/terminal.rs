@@ -331,6 +331,17 @@ impl OhosTerminalHost {
 }
 
 impl TerminalHost for OhosTerminalHost {
+    /// Launches raw PTY processes on the exact native or QEMU backend.
+    fn openTerminalSession(&self, request: &operit_host_api::TerminalSessionRequest) -> HostResult<TerminalSessionInfo> {
+        let backend = self.backendForTerminal(&request.terminal, &request.terminalType)?;
+        self.prepareBackend(backend)?;
+        let mut selected = request.clone();
+        selected.terminal = "native".into();
+        let session = self.ptyHost(backend).openTerminalSession(&selected)?;
+        self.recordSession(&session.sessionId, backend)?;
+        Ok(mapSessionInfo(session, backend))
+    }
+
     /// Offers ARM64 Linux images executable by the registered QEMU-vroot runtime.
     fn terminalDistributions(&self) -> HostResult<Vec<operit_host_api::TerminalDistribution>> {
         Ok(operit_host_native_common::TerminalRootfs::distributions())
@@ -668,7 +679,8 @@ fn createVrootShell(runtime: &OhosVrootRuntime) -> HostResult<NativePtyTerminalH
             ".".to_string(),
             "./bin/sh".to_string(),
             "-c".to_string(),
-            "cd \"$OPERIT_OHOS_HOST_WORKING_DIR\" && exec /bin/sh -i".to_string(),
+            "cd \"$OPERIT_OHOS_HOST_WORKING_DIR\" || exit; exec /bin/sh \"$@\"".to_string(),
+            "operit-shell".into(), "-i".into(),
         ],
         description: "OpenHarmony QEMU-vroot Alpine Linux shell".to_string(),
         processWorkingDirectory: rootfsDirectory.to_string_lossy().to_string(),

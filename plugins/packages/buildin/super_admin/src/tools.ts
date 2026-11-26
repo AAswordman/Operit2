@@ -75,8 +75,8 @@ type PersistedTerminalOutput = {
                 "targetParameter": "command"
             },
             "description": {
-                "zh": "在用户配置的终端中执行命令并持续返回输出。省略 profileId 使用默认配置；先用 list_terminals 查询具体配置，不要按平台猜测 shell。包执行默认等待20秒，随后返回 execution_id，命令继续运行；使用 package_wait 读取后续输出和完成结果。终端开始事件提供 sessionId，可用于 get_screen、input、close。命令结束后闲置10分钟的会话会自动关闭，之后执行命令将新建会话，原上下文不再保留。",
-                "en": "Execute in a user-configured terminal and stream output until completion. Omit profileId for the default or select a profile from list_terminals. Package execution waits up to 20 seconds, then returns execution_id while the command continues. Use package_wait for further output and completion. The terminal start event supplies sessionId for get_screen, input and close. Sessions idle for 10 minutes after completion close automatically; subsequent commands create a new session without the previous context."
+                "zh": "每次启动一个独立命令进程，完整脚本在启动时传入，工作目录为当前文件目录。最多等待1秒；status=running 时使用返回的 sessionId 读屏、输入、terminal_wait 或关闭，不要重复执行。结束以真实进程退出码为准。每次调用环境独立，变量和 cd 不跨调用保留；需要持久交互请用 terminal_open。命令结束后闲置10分钟自动关闭会话。",
+                "en": "Start a fresh command process with the full script supplied at launch in the current file directory. Wait at most one second; while status=running, use its sessionId for screen, input, terminal_wait or close without resubmitting. Completion uses the real process exit code. Variables and directory changes do not carry across calls; use terminal_open for persistent interaction. Completed sessions close after ten idle minutes."
             },
             "parameters": [
                 {
@@ -96,6 +96,57 @@ type PersistedTerminalOutput = {
                     },
                     "type": "string",
                     "required": false
+                }
+            ]
+        },
+        {
+            "name": "terminal_open",
+            "display": {
+                "label": {
+                    "zh": "打开交互终端",
+                    "en": "Open interactive terminal"
+                },
+                "icon": "terminal"
+            },
+            "description": {
+                "zh": "打开持久交互 Shell，工作目录为当前文件目录。使用 input 发送原始文本、Enter 或 Ctrl+C，get_screen 读取屏幕。变量、cd 和前台程序在该会话中持续保留。交互输入不判定单条命令退出码，terminal_wait 仅用于 terminal 启动的命令。交互终端存活期间不自动清理；使用完须 close。",
+                "en": "Open a persistent interactive shell in the current file directory. Use input for literal text, Enter or Ctrl+C and get_screen for the screen. Variables, directory changes and foreground programs persist. Typed commands have no managed exit receipt; terminal_wait is for terminal commands only. Live interactive sessions require explicit close."
+            },
+            "parameters": [
+                {
+                    "name": "profileId",
+                    "description": {
+                        "zh": "list_terminals 返回的配置 ID；省略使用默认配置。",
+                        "en": "Profile ID from list_terminals; omission uses the default."
+                    },
+                    "type": "string",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "terminal_wait",
+            "display": {
+                "label": {
+                    "zh": "读取命令结果",
+                    "en": "Read command result"
+                },
+                "icon": "terminal",
+                "targetParameter": "sessionId"
+            },
+            "description": {
+                "zh": "读取该会话原命令的输出和退出码，最多等待1秒，不发送新命令。status=running 时仍可读屏或输入；status=completed 时 exitCode 才是最终退出码。",
+                "en": "Read the original command output and exit code, waiting at most one second without sending a new command. While status=running, screen and input remain available. exitCode is final only when status=completed."
+            },
+            "parameters": [
+                {
+                    "name": "sessionId",
+                    "description": {
+                        "zh": "terminal 返回的会话 ID。",
+                        "en": "Session ID returned by terminal."
+                    },
+                    "type": "string",
+                    "required": true
                 }
             ]
         },
@@ -162,8 +213,8 @@ type PersistedTerminalOutput = {
                 "targetParameter": "sessionId"
             },
             "description": {
-                "zh": "向当前终端会话写入输入。input 与 control 至少传一个。常见用法：先写 input，再写 control=enter 提交；control=ctrl 且 input=c 可发送 Ctrl+C。",
-                "en": "Write input to the active terminal session. Provide at least one of input or control. Typical usage: send input first, then control=enter to submit; use control=ctrl with input=c for Ctrl+C."
+                "zh": "向当前终端会话写入输入。input 与 control 至少传一个。input 与 control=enter 可一起发送，原子提交一行；control=ctrl 且 input=c 可发送 Ctrl+C。",
+                "en": "Write input to the active terminal session. Provide at least one of input or control. Send input together with control=enter to submit a line atomically; use control=ctrl with input=c for Ctrl+C."
             },
             "parameters": [
                 {
@@ -196,7 +247,8 @@ type PersistedTerminalOutput = {
             ]
         }
     ]
-}*/
+}
+*/
 
 /**
  * Creates the super admin terminal tool exports.
@@ -236,17 +288,26 @@ const superAdmin = (function () {
             terminal: result.terminal,
             terminalType: result.terminalType,
             timedOut: result?.timedOut === true,
-            context_preserved: true,
+            context_preserved: false,
             output_saved_to: filePath,
             output_chars: outputStr.length,
             operit_clean_on_exit_dir: OPERIT_CLEAN_ON_EXIT_DIR,
             hint: "Output is large and saved to file. Use read_file_part or grep_code to inspect it.",
         };
     }
-    /**
-     * Executes a terminal command and returns output plus terminal environment details.
-     * @param command - Command to execute.
-     */
+    /** Returns an execution snapshot without treating a foreground wait expiry as command failure. */
+    async function commandResult(result: Awaited<ReturnType<typeof Tools.System.terminal.run>>) {
+        const running = result.timedOut;
+        const persisted = await persistTerminalOutputIfTooLong(result.command, result);
+        return {
+            ...(persisted || result), command: result.command, exitCode: running ? null : result.exitCode,
+            background: running, commandRunning: running, started: true,
+            status: running ? "running" : "completed", context_preserved: false,
+            message: running ? "命令仍在运行，可读屏、输入或用 terminal_wait 获取结果。不要重复提交原命令。" : "命令已完成。"
+        };
+    }
+
+    /** Submits once and returns control while the Host continues to own the running command. */
     async function terminal(params: TerminalParams) {
         let acquiredFamily: string | undefined;
         let activeSession: string | undefined;
@@ -265,33 +326,20 @@ const superAdmin = (function () {
             await manageSessions({ action: "acquire_family", sessionName: sessionFamily });
             acquiredFamily = sessionFamily;
             console.log(`执行终端命令: ${command}`);
-            const stream = Tools.System.terminal.runStream({
+            const result = await Tools.System.terminal.run({
                 sessionName,
                 profileId,
-                command
+                command,
+                waitMs: 1000,
             });
-            for await (const event of stream) {
-                if (event.type === "start") {
-                    await manageSessions({ action: "track", sessionId: event.sessionId, sessionName: sessionFamily });
-                    activeSession = event.sessionId;
-                    await manageSessions({ action: "release_family", sessionName: sessionFamily });
-                    acquiredFamily = undefined;
-                }
-                if (event.type !== "completed") {
-                    sendIntermediateResult(event);
-                    continue;
-                }
-                const result = event.result;
-                if (result.timedOut) throw new Error("Terminal stream ended before command completion");
-                const persistedResult = await persistTerminalOutputIfTooLong(command, result);
-                return {
-                    ...(persistedResult || result), command,
-                    background: false, commandRunning: false, started: true, status: "completed",
-                    terminalEnvironment: { ...terminalInfo, platform: result.platform, terminal: result.terminal, terminalType: result.terminalType },
-                    context_preserved: true, message: "命令已完成。"
-                };
-            }
-            throw new Error("Terminal stream ended without a completion result");
+            await manageSessions({ action: "track", sessionId: result.sessionId, sessionName: sessionFamily });
+            activeSession = result.sessionId;
+            await manageSessions({ action: "release_family", sessionName: sessionFamily });
+            acquiredFamily = undefined;
+            return {
+                ...await commandResult(result),
+                terminalEnvironment: { ...terminalInfo, platform: result.platform, terminal: result.terminal, terminalType: result.terminalType },
+            };
         }
         catch (error) {
             console.error(`[terminal] 错误: ${error.message}`);
@@ -301,6 +349,16 @@ const superAdmin = (function () {
         finally {
             if (activeSession !== undefined) await manageSessions({ action: "release_session", sessionId: activeSession });
             if (acquiredFamily !== undefined) await manageSessions({ action: "release_family", sessionName: acquiredFamily });
+        }
+    }
+
+    /** Observes the same command with a bounded wait while leaving terminal input independent. */
+    async function terminal_wait(params: TerminalSessionParams) {
+        await manageSessions({ action: "acquire_session", sessionId: params.sessionId });
+        try {
+            return await commandResult(await Tools.System.terminal.wait(params.sessionId, 1000));
+        } finally {
+            await manageSessions({ action: "release_session", sessionId: params.sessionId });
         }
     }
 
@@ -380,8 +438,24 @@ const superAdmin = (function () {
             await manageSessions({ action: "release_session", sessionId: params.sessionId });
         }
     }
+    /** Opens a persistent interactive shell; its process remains available until explicit close. */
+    async function terminal_open(params: SuperAdminParams & { profileId?: string }) {
+        const info = await Tools.System.terminal.info();
+        const profileId = params.profileId ?? info.defaultProfileId;
+        const profile = info.profiles.find(entry => entry.id === profileId);
+        if (!profile?.available) throw new Error(`Terminal profile is unavailable: ${profileId}`);
+        const sessionName = getDefaultTerminalSessionName(profileId);
+        const session = await Tools.System.terminal.open({ sessionName, profileId });
+        await manageSessions({ action: "track", sessionId: session.sessionId, sessionName: `${sessionName}_profile_${profileId}` });
+        await manageSessions({ action: "release_session", sessionId: session.sessionId });
+        return { ...session, context_preserved: true, mode: "interactive",
+            message: "交互终端已打开。input 发送文本或按键，get_screen 读屏；用 close 显式关闭。交互输入不提供单条命令退出码。" };
+    }
+
     return {
+        terminal_open,
         terminal,
+        terminal_wait,
         list_terminals,
         close,
         get_screen,
@@ -389,7 +463,9 @@ const superAdmin = (function () {
     };
 })();
 // 逐个导出
+exports.terminal_open = superAdmin.terminal_open;
 exports.terminal = superAdmin.terminal;
+exports.terminal_wait = superAdmin.terminal_wait;
 exports.list_terminals = superAdmin.list_terminals;
 exports.close = superAdmin.close;
 exports.get_screen = superAdmin.get_screen;

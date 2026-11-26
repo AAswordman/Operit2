@@ -148,6 +148,7 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
     const before = decodeStateFromRecords(metadata, rows), state = clone(before);
     const session = new RepositorySession(state, this.directory, this.chatBindings, this.storage.memory, this.directories);
     const result = await action(session), documents = session.documentWrites();
+    await this.chatBindings.deleteSelections(session.selectionsToUnbind());
     const removed = before.owners.filter(/** Selects explicitly removed owner namespaces. */ owner => !state.owners.some(/** Matches retained owner identities. */ retained => retained.ownerKey === owner.ownerKey))
       .map(/** Resolves the removed owner's document directory. */ owner => this.directory + "/" + owner.userDocumentPath.slice(0, owner.userDocumentPath.lastIndexOf("/")));
     if (!equal(before, state) || documents.length !== 0) await this.publish(state, rows, documents, removed, metadata);

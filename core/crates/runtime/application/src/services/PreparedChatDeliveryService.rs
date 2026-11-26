@@ -56,6 +56,8 @@ struct Entry {
     notificationAttempted: bool,
     #[serde(default)]
     notificationRegistered: bool,
+    #[serde(default)]
+    notificationError: Option<String>,
     error: Option<String>,
     #[serde(default)]
     retryAt: i64,
@@ -86,6 +88,9 @@ impl Entry {
             status: self.status.clone(),
             error: JsNullable::from_option(self.error.clone()),
             text: self.text(),
+            notificationAttempted: self.notificationAttempted,
+            notificationRegistered: self.notificationRegistered,
+            notificationError: JsNullable::from_option(self.notificationError.clone()),
         }
     }
 }
@@ -107,6 +112,15 @@ impl Default for PreparedChatDeliveryService {
     }
 }
 impl PreparedChatDeliveryService {
+    /// Builds plain-text input for the same snapshot commit used by generated replies.
+    fn textMessage(text: &str, timestamp: i64) -> ChatMessage {
+        let mut message = ChatMessage::new_with_markdown_timestamp("ai".into(), text.into(), timestamp);
+        message.sentAt = timestamp;
+        message.completedAt = currentTimeMillis();
+        message.pluginExtensions.insert("host.chat.scheduled".into(), serde_json::json!({ "preparedAt": message.completedAt }));
+        message
+    }
+
     pub fn setForeground(&self, foreground: bool) {
         self.foreground.store(foreground, Ordering::SeqCst);
     }
@@ -142,9 +156,7 @@ impl PreparedChatDeliveryService {
         let duplicate = holder
             .lock()
             .await
-            .getCore(ChatRuntimeSlot::MAIN)
-            .chatHistoryDelegate
-            .commitPreparedAssistantMessage(&request.chatId, &request.text, request.timestamp)?;
+            .commitPreparedAssistantMessage(&request.chatId, Self::textMessage(&request.text, request.timestamp))?;
         let error = if request.notify && !duplicate {
             send(host, &request.chatId, "Operit", &request.text).err()
         } else {
@@ -206,6 +218,7 @@ impl PreparedChatDeliveryService {
             owner: owner.into(), request: request.clone(), status: "preparing".into(),
             cancelling: false, invalidated: false, notificationAttempted: false,
             notificationRegistered: false, error: None, retryAt: 0, prepared: None,
+            notificationError: None,
         };
         entries.push(entry);
         Self::save(storage.as_ref(), &entries)?;
@@ -254,16 +267,15 @@ impl PreparedChatDeliveryService {
             entries[index] = entry.clone();
             Self::save(storage.as_ref(), &entries)?;
             match nativeNotification("schedule_notification", &entry).await {
-                Ok(()) => entry.notificationRegistered = true,
+                Ok(()) => { entry.notificationRegistered = true; entry.notificationError = None; }
                 Err(error) => {
-                    entry.error = Some(error.clone());
+                    entry.notificationError = Some(error.clone());
                     entry.retryAt = currentTimeMillis() + 60000;
                     entries[index] = entry;
                     Self::save(storage.as_ref(), &entries)?;
                     return Err(error);
                 }
             }
-            entry.error = None;
             entries[index] = entry.clone();
             Self::save(storage.as_ref(), &entries)?;
         }
@@ -387,9 +399,8 @@ impl PreparedChatDeliveryService {
             // Recover a commit whose receipt write was interrupted before considering context invalidation.
             if let Some(prepared) = &entries[index].prepared {
                 let mut runtime = holder.lock().await;
-                let history = &mut runtime.getCore(ChatRuntimeSlot::MAIN).chatHistoryDelegate;
-                if history.chatHistoryManager.loadChatMessageIndexPosition(&entries[index].request.chatId, prepared.message.timestamp).map_err(|e| e.to_string())?.is_some() {
-                    history.commitPreparedAssistantMessageSnapshot(&entries[index].request.chatId, prepared.message.clone())?;
+                if runtime.getCore(ChatRuntimeSlot::MAIN).chatHistoryDelegate.chatHistoryManager.loadChatMessageIndexPosition(&entries[index].request.chatId, prepared.message.timestamp).map_err(|e| e.to_string())?.is_some() {
+                    runtime.commitPreparedAssistantMessage(&entries[index].request.chatId, prepared.message.clone())?;
                     entries[index].status = "delivered".into();
                     entries[index].error = None;
                     Self::save(storage.as_ref(), &entries)?;
@@ -439,10 +450,10 @@ impl PreparedChatDeliveryService {
                     match nativeNotification("schedule_notification", &entries[index]).await {
                         Ok(()) => {
                             entries[index].notificationRegistered = true;
-                            entries[index].error = None;
+                            entries[index].notificationError = None;
                         }
                         Err(error) => {
-                            entries[index].error = Some(error);
+                            entries[index].notificationError = Some(error);
                             entries[index].retryAt = now + 60000;
                         }
                     }
@@ -476,27 +487,26 @@ impl PreparedChatDeliveryService {
                 }) {
                     continue;
                 }
-                let history = &mut runtime.getCore(ChatRuntimeSlot::MAIN).chatHistoryDelegate;
-                match &entries[index].prepared {
-                    Some(prepared) => {
-                        if fingerprint(&history.getRuntimeChatHistory(request.chatId.clone()))? != prepared.historyFingerprint { continue; }
-                        history.commitPreparedAssistantMessageSnapshot(&request.chatId, prepared.message.clone())
-                    }
-                    None => history.commitPreparedAssistantMessage(&request.chatId, &request.text, request.timestamp),
+                if let Some(prepared) = &entries[index].prepared {
+                    if fingerprint(&runtime.getCore(ChatRuntimeSlot::MAIN).chatHistoryDelegate.getRuntimeChatHistory(request.chatId.clone()))? != prepared.historyFingerprint { continue; }
                 }
+                let message = match &entries[index].prepared {
+                    Some(prepared) => prepared.message.clone(),
+                    None => Self::textMessage(&request.text, request.timestamp),
+                };
+                runtime.commitPreparedAssistantMessage(&request.chatId, message)
             };
             match result {
                 Ok(duplicate) => {
-                    // iOS owns the pre-registered alert. Resume only reconciles the chat message.
-                    let error = if !duplicate && !cfg!(target_os = "ios") {
-                        send(host, &request.chatId, &request.title, &entries[index].text()).err()
-                    } else if cfg!(target_os = "ios") && !entries[index].notificationRegistered {
-                        entries[index].error.clone()
-                    } else {
-                        None
-                    };
                     entries[index].status = "delivered".into();
-                    entries[index].error = error;
+                    entries[index].error = None;
+                    // iOS owns the pre-registered alert. Resume only reconciles the chat message.
+                    if !duplicate && !cfg!(target_os = "ios") {
+                        entries[index].notificationAttempted = true;
+                        Self::save(storage.as_ref(), &entries)?;
+                        entries[index].notificationError = send(host, &request.chatId, &request.title, &entries[index].text()).err();
+                        entries[index].notificationRegistered = entries[index].notificationError.is_none();
+                    }
                 }
                 Err(error) => {
                     entries[index].error = Some(error); /* Keep retryable on a transient database error. */

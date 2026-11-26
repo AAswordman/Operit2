@@ -128,6 +128,21 @@ void main() {
     expect(bridge.sent, hasLength(1));
     expect(bridge.acknowledged, ['linux']);
   });
+
+  test(
+    'replayed pending events share one notification and acknowledgement',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      bridge.sendGate = Completer<void>();
+      final done = bridge.notify('replayed');
+      bridge.events.add(bridge.lastEvent!);
+      await Future<void>.delayed(Duration.zero);
+      expect(bridge.sent, hasLength(1));
+      bridge.sendGate!.complete();
+      await done;
+      expect(bridge.acknowledged, ['replayed']);
+    },
+  );
 }
 
 class _NotificationBridge extends OperitRuntimeBridge {
@@ -136,51 +151,52 @@ class _NotificationBridge extends OperitRuntimeBridge {
   final acknowledged = <String>[];
   late CoreWatchRequest watch;
   final _pending = <String, Completer<void>>{};
+  Completer<void>? sendGate;
+  CoreEvent? lastEvent;
 
   Future<void> notify(String id, {String notificationType = 'reply'}) {
     final done = Completer<void>();
     _pending[id] = done;
-    events.add(
-      CoreEvent.raw(
-        requestId: watch.requestId,
-        target: watch.target,
-        propertyName: watch.propertyName,
-        kind: 'Changed',
-        valueBytes: encodeCoreLink({
-          'requestId': id,
-          'kind': RuntimeHostInteractionKind.appNotification.toJson(),
-          for (final field in [
-            'browserAutomation',
-            'browserSession',
-            'webVisit',
-            'composeWebViewController',
-            'composeFilePicker',
-            'composeFileSave',
-            'systemCaptureScreenshot',
-            'systemLanguageCode',
-            'systemRecognizeText',
-            'systemOperation',
-            'fileOpen',
-            'fileShare',
-            'audioPlay',
-            'musicPlayback',
-            'bluetooth',
-            'ttsSynthesis',
-            'ttsPlayback',
-            'localInference',
-          ])
-            field: null,
-          'appNotification': {
-            'notificationType': notificationType,
-            'title': 'Operit',
-            'message': 'Reply ready',
-            'chatId': 'chat-1',
-            'messageTimestamp': null,
-          },
-        }),
-        decodeValue: decodeCoreLink<Object?>,
-      ),
+    lastEvent = CoreEvent.raw(
+      requestId: watch.requestId,
+      target: watch.target,
+      propertyName: watch.propertyName,
+      kind: 'Changed',
+      valueBytes: encodeCoreLink({
+        'requestId': id,
+        'kind': RuntimeHostInteractionKind.appNotification.toJson(),
+        for (final field in [
+          'browserAutomation',
+          'browserSession',
+          'webVisit',
+          'composeWebViewController',
+          'composeFilePicker',
+          'composeFileSave',
+          'systemCaptureScreenshot',
+          'systemLanguageCode',
+          'systemRecognizeText',
+          'systemOperation',
+          'fileOpen',
+          'fileShare',
+          'audioPlay',
+          'musicPlayback',
+          'bluetooth',
+          'ttsSynthesis',
+          'ttsPlayback',
+          'localInference',
+        ])
+          field: null,
+        'appNotification': {
+          'notificationType': notificationType,
+          'title': 'Operit',
+          'message': 'Reply ready',
+          'chatId': 'chat-1',
+          'messageTimestamp': null,
+        },
+      }),
+      decodeValue: decodeCoreLink<Object?>,
     );
+    events.add(lastEvent!);
     return done.future.timeout(const Duration(seconds: 5));
   }
 
@@ -189,6 +205,7 @@ class _NotificationBridge extends OperitRuntimeBridge {
     switch (request.methodName) {
       case 'sendSystemNotification':
         sent.add(request.args);
+        await sendGate?.future;
       case 'acknowledgeOwnerHostInteraction':
         final id = (request.args as Map)['requestId'] as String;
         acknowledged.add(id);

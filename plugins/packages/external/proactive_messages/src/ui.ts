@@ -176,6 +176,7 @@ export default function screen(ctx: ComposeDslContext): ComposeNode {
         await reload();
       }) }));
   } else if (view.page === "activity") {
+    nodes.push(note("已写入对话表示消息已保存；界面可见性尚未确认。通知结果单独显示。"));
     nodes.push(UI.Row({ spacing: 8 }, [UI.Button({ text: view.busy ? "处理中…" : "补充发送计划", enabled: !view.busy, onClick: () => run(async () => {
       await withContext("main", {}, () => prepare());
       await reload();
@@ -188,6 +189,9 @@ export default function screen(ctx: ComposeDslContext): ComposeNode {
         UI.Text({ text: job.title || job.chatId, style: "titleSmall" }), note(`${labels[job.status]} · ${new Date(job.dueAt).toLocaleString()}`),
         ...(job.text ? [UI.Text({ text: job.text, maxLines: 4, overflow: "ellipsis" })] : []),
         ...(job.error ? [UI.Text({ text: job.error, color: colors.error })] : []),
+        ...(job.notificationError ? [UI.Text({ text: `通知失败：${job.notificationError}`, color: colors.error })]
+          : job.notificationRegistered ? [note("通知请求已由系统宿主接受，实际展示由系统决定。")]
+          : job.notificationAttempted ? [note("已请求通知，接受结果尚未确认。")] : []),
       ]));
     }
     if (!jobs.length) nodes.push(note("暂无发送计划或记录。开启对话规则后，可在这里查看进度。"));

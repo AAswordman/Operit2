@@ -223,6 +223,20 @@ impl ProfileTerminalHost {
 }
 
 impl TerminalHost for ProfileTerminalHost {
+    /// Resolves the immutable launch profile and remembers the actual process owner.
+    fn openTerminalSession(&self, request: &TerminalSessionRequest) -> HostResult<TerminalSessionInfo> {
+        let profile = self.profile(&request.terminal, &request.terminalType)?;
+        let host = self.host(&profile)?;
+        let prefix = format!("profile_{}:", profile.id);
+        let mut selected = request.clone();
+        selected.terminal = profile.terminal;
+        selected.sessionName = format!("{prefix}{}", request.sessionName);
+        let mut result = host.openTerminalSession(&selected)?;
+        self.remember(&result.sessionId, host)?;
+        self.state()?.names.insert(result.sessionId.clone(), (request.sessionName.clone(), prefix));
+        result.sessionName = request.sessionName.clone();
+        Ok(result)
+    }
     /// Returns the host's architecture-compatible downloadable distribution catalog.
     fn terminalDistributions(&self) -> HostResult<Vec<TerminalDistribution>> {
         self.base.terminalDistributions()

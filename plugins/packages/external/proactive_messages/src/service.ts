@@ -1,4 +1,5 @@
 import type { Storage } from "../../../../types/storage";
+import type { ChatScheduledMessage } from "../../../../types/results";
 import { defaultRule, hits, MAX_PENDING, nextOccurrence, pending, validateRule, validateState, type Job, type Rule, type State } from "./model";
 
 export interface Snapshot { state: State; foreground: boolean; chats: { id: string; title: string }[] }
@@ -53,6 +54,16 @@ function liveState(): State { if (!state) throw new Error("主动消息未初始
 function ruleFor(job: Job): Rule | undefined { return liveState().rules.find(rule => rule.chatId === job.chatId); }
 function planned(job: Job): boolean { return pending(job) || job.status === "skipped" || job.status === "failed"; }
 
+/** Copies the host receipt without interpreting persistence as UI or notification success. */
+function applyReceipt(job: Job, receipt: ChatScheduledMessage): void {
+  job.status = receipt.status as Job["status"];
+  job.text = receipt.text;
+  job.error = receipt.error || "";
+  job.notificationAttempted = receipt.notificationAttempted;
+  job.notificationRegistered = receipt.notificationRegistered;
+  job.notificationError = receipt.notificationError;
+}
+
 async function cancelJob(job: Job): Promise<void> {
   if (["preparing", "scheduled", "scheduling"].includes(job.status)) {
     try { await Tools.Chat.cancelScheduledMessage(job.id); }
@@ -84,15 +95,13 @@ async function schedule(job: Job): Promise<void> {
   await persist();
   try {
     const receipt = await Tools.Chat.scheduleMessage({ id: job.id, chatId: job.chatId, title: job.title || "Operit", text: "", generation: { instruction: job.instruction }, timestamp: job.dueAt });
-    job.text = receipt.message.text;
-    job.status = receipt.message.status as Job["status"];
-    job.error = receipt.message.error || "";
+    applyReceipt(job, receipt.message);
   } catch (error) {
     job.error = errorText(error);
     // Confirm acceptance after a lost response before deciding that preparation failed.
     try {
       const receipt = (await Tools.Chat.listScheduledMessages()).messages.find(item => item.id === job.id);
-      if (receipt) { job.status = receipt.status as Job["status"]; job.text = receipt.text; job.error = receipt.error || ""; }
+      if (receipt) applyReceipt(job, receipt);
       else job.status = "failed";
     } catch { /* Retain scheduling until the host can confirm acceptance. */ }
   }
@@ -106,9 +115,7 @@ async function reconcile(): Promise<void> {
     if (!ruleFor(job)?.enabled) { await cancelJob(job); continue; }
     const receipt = receipts.get(job.id);
     if (receipt) {
-      job.status = receipt.status as Job["status"];
-      job.text = receipt.text;
-      job.error = receipt.error || "";
+      applyReceipt(job, receipt);
       if (job.status === "invalidated" && job.dueAt > Date.now() + 1000) {
         replacements.push({ id: `${job.chatId}:${job.dueAt}:${Math.random().toString(36).slice(2, 10)}`, chatId: job.chatId,
           title: job.title, dueAt: job.dueAt, text: "", status: "ready", error: "" });

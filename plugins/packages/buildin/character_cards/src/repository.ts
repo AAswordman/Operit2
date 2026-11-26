@@ -1,7 +1,7 @@
 import { uuid } from "./identity";
 import type { CharacterRepository } from "./canonical";
 import type { ActivePrompt, BackupImportResult, Card, CharacterDirectories, CharacterState, ConversationGroupRecord, Group, MemorySpace, ModelSummary, Store, Tag, TagValues, ToolCatalog, TtsConfig, UserDocument, UserDocumentWrite } from "./model";
-import { assertBoolean, assertConversationGroups, assertGroup, assertInteger, assertString, assertTag, assertTagValues, requireId, requireName } from "./validation";
+import { assertBoolean, assertConversationGroups, assertGroup, assertString, assertTag, assertTagValues, requireId, requireName } from "./validation";
 import { clone } from "./storage/records";
 import { createMemorySpace, normalizeMemoryRecallSettings } from "./storage/state";
 import { DatabaseMemoryRepository } from "./storage/memory-repository";
@@ -28,6 +28,10 @@ function uniqueName(records: { id: string; name: string }[], name: string, id: s
 /** Edits configuration snapshots and delegates memory operations to the shared database repository. */
 export class RepositorySession extends DatabaseMemoryRepository implements CharacterRepository {
   private readonly documents = new Map<string, UserDocumentWrite>();
+  private readonly deletedSelections = new Set<string>();
+
+  /** Returns selections whose chat bindings must be removed before publication. */
+  selectionsToUnbind(): string[] { return [...this.deletedSelections]; }
 
   /** Receives the operation snapshot and explicitly connected external directory readers. */
   constructor(private readonly state: CharacterState, private readonly directory: string, readonly chatBindings: CharacterChatBindings, memory: CharacterMemoryDatabase, private readonly directories: CharacterDirectories | null = null) { super(memory); }
@@ -100,9 +104,8 @@ export class RepositorySession extends DatabaseMemoryRepository implements Chara
   /** Removes a non-active character and all of its owned records. */
   async deleteCharacter(id: string): Promise<void> {
     const card = get(this.state.cards, id, "character");
-    if ("CharacterCard" in this.state.active && this.state.active.CharacterCard.id === id) throw new Error("Select another character before deleting the active character");
-    await this.requireUnboundSelection("card:" + id);
-    for (const group of this.state.groups) for (const member of group.members) if (member.characterCardId === id) await this.requireUnboundSelection("group:" + group.id);
+    if ("CharacterCard" in this.state.active && this.state.active.CharacterCard.id === id) this.state.active = { Model: { id: "chat" } };
+    this.deletedSelections.add("card:" + id);
     this.state.cards.splice(this.state.cards.indexOf(card), 1); this.documents.delete("character:" + id);
     this.state.owners = this.state.owners.filter(
       /** Removes this exact deleted owner's full space. */
@@ -113,7 +116,13 @@ export class RepositorySession extends DatabaseMemoryRepository implements Chara
         /** Removes the deleted actor from actual group memberships. */
         member => member.characterCardId !== id,
       );
-      if (members.length !== group.members.length) { group.members = members; group.updatedAt = Date.now(); }
+      if (members.length !== group.members.length) {
+        group.members = members; group.updatedAt = Date.now();
+        if (members.length === 0) {
+          this.deletedSelections.add("group:" + group.id);
+          if ("CharacterGroup" in this.state.active && this.state.active.CharacterGroup.id === group.id) this.state.active = { Model: { id: "chat" } };
+        }
+      }
     }
   }
   /** Archived compatibility data only; never used by sidebar projection or live folder operations. */
@@ -141,8 +150,8 @@ export class RepositorySession extends DatabaseMemoryRepository implements Chara
   /** Deletes only a group that is not selected as active. */
   async deleteGroup(id: string): Promise<void> {
     const group = get(this.state.groups, id, "group");
-    if ("CharacterGroup" in this.state.active && this.state.active.CharacterGroup.id === id) throw new Error("Select another prompt before deleting the active group");
-    await this.requireUnboundSelection("group:" + id);
+    if ("CharacterGroup" in this.state.active && this.state.active.CharacterGroup.id === id) this.state.active = { Model: { id: "chat" } };
+    this.deletedSelections.add("group:" + id);
     this.state.groups.splice(this.state.groups.indexOf(group), 1);
   }
   /** Lists full tags. */
@@ -218,27 +227,6 @@ export class RepositorySession extends DatabaseMemoryRepository implements Chara
     else if ("CharacterGroup" in active) get(this.state.groups, active.CharacterGroup.id, "group");
     else if (active.Model.id !== "chat") throw new Error("Invalid model selection");
     this.state.active = copy(active);
-  }
-  /** Rejects deletion only while an existing Core conversation references the selection. */
-  private async requireUnboundSelection(selection: string): Promise<void> {
-    const bindings = (await this.chatBindings.listChatBindings()).filter(
-      /** Matches the exact selection proposed for deletion. */
-      binding => binding.selection === selection,
-    );
-    for (let offset = 0; offset < bindings.length; offset += 200) {
-      const ids = bindings.slice(offset, offset + 200).map(binding => binding.chatId);
-      const result = await Tools.Chat.listChats({ chat_ids: ids, limit: 200 });
-      assertInteger(result.totalCount, "conversation count", 0);
-      if (!Array.isArray(result.chats) || result.chats.length !== result.totalCount)
-        throw new Error("对话列表不完整，请刷新后重试");
-      const remaining = new Set(ids);
-      for (const chat of result.chats) {
-        requireId(chat.id, "conversation id");
-        if (!remaining.delete(chat.id)) throw new Error("Chat batch returned an unrelated or duplicate identity");
-      }
-      const chat = result.chats[0];
-      if (chat !== undefined) throw new Error("Rebind or delete the chat extension before deleting its selection: " + chat.id);
-    }
   }
   /** Reads the actual owner USER.md file or the edit staged within this same operation. */
   async readUser(ownerKey: string): Promise<UserDocument> {

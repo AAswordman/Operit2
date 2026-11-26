@@ -125,6 +125,45 @@ pub async fn runTerminalBlocking<T: Send + 'static>(
     .await
 }
 
+/// Observes real process exit independently of terminal input and drains its final output.
+/// Quiet time is used only after exit; a silent live process remains running.
+pub async fn observeTerminalProcess(
+    host: Arc<dyn crate::TerminalHost>,
+    scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
+    sessionId: String,
+    mut onOutput: crate::TerminalOutputCallback,
+) -> HostResult<i32> {
+    let mut exit = None;
+    let mut exitedAt = 0;
+    let mut lastOutputAt = 0;
+    loop {
+        let reader = host.clone();
+        let id = sessionId.clone();
+        let (bytes, status) = runTerminalBlocking(scheduler.clone(), "terminal-process-poll", move || {
+            let status = reader.pollPtyExitCode(&id)?;
+            Ok((reader.readPtySession(&id)?, status))
+        }).await?;
+        let now = scheduler.monotonicTimeMillis()?;
+        if exit.is_none() && status.is_some() {
+            exit = status;
+            exitedAt = now;
+            lastOutputAt = now;
+        }
+        if !bytes.is_empty() {
+            onOutput(&bytes, false)?;
+            lastOutputAt = now;
+        }
+        if let Some(code) = exit {
+            // Descendants may keep the PTY open; their lifetime cannot delay the parent's receipt.
+            if now.saturating_sub(lastOutputAt) >= 100 || now.saturating_sub(exitedAt) >= 1000 {
+                onOutput(&[], true)?;
+                return Ok(code);
+            }
+        }
+        scheduler.waitForHostRuntimeDelay(25).await?;
+    }
+}
+
 /// Polls command output cooperatively; execution ownership survives the caller's foreground wait.
 pub async fn observeTerminalCommand(
     mut execution: Box<dyn TerminalCommandExecution>,

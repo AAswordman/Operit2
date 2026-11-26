@@ -455,7 +455,7 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         &self,
         request: JsToolCallRequest,
     ) -> operit_plugin_sdk::javascript::JsExecutionCompletion<JsToolCallResult> {
-        if matches!(request.tool_name.as_str(), "create_terminal_session" | "execute_in_terminal_session" | "close_terminal_session") {
+        if matches!(request.tool_name.as_str(), "create_terminal_session" | "execute_in_terminal_session" | "close_terminal_session" | "get_terminal_session_screen") {
             self.legacyShellCalls.lock().unwrap().push(serde_json::json!({
                 "tool": request.tool_name, "params": request.parameters,
             }));
@@ -468,6 +468,7 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
                     let command = request.parameters.get("command").and_then(Value::as_str).unwrap();
                     serde_json::json!({"command":command, "output":"raw native output\n", "exitCode":if command == "denied" { 1 } else { 0 }, "timedOut":command == "timeout"})
                 }
+                "get_terminal_session_screen" => serde_json::json!({"sessionId":request.parameters["session_id"], "commandRunning":false, "content":"idle", "rows":1, "cols":4, "platform":"android", "terminal":"android-system", "terminalType":"shell"}),
                 _ => serde_json::json!({"success":true, "sessionId":"native-shell", "message":"closed"}),
             };
             return Box::pin(async move { JsToolCallResult { success:true, data:JsToolCallResultData::Value(data), error:None } });
@@ -2122,6 +2123,90 @@ async fn pending_call_releases_state_and_preserves_call_context() {
         "\"first\""
     );
     assert_eq!(received.recv().await.unwrap(), "first");
+    engine.destroy();
+}
+
+/// Immediate Host completions keep waking successive awaits while calls share a resident runtime.
+#[tokio::test(flavor = "current_thread")]
+async fn successive_host_completions_resume_concurrent_resident_calls() {
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let mut calls = Vec::new();
+    for index in 0..8 {
+        let worker = engine.clone();
+        calls.push(tokio::spawn(worker.execute_script_function(
+            r#"globalThis.sharedSweepQueue = globalThis.sharedSweepQueue || Promise.resolve();
+            exports.sweep = function() {
+                const owner = globalThis.__operitCurrentCallId;
+                const result = globalThis.sharedSweepQueue.then(async function() {
+                for (let index = 0; index < 256; index++) {
+                    const screen = await toolCall('echo', { index: index });
+                    if (screen.index !== index) throw new Error('Host result crossed calls');
+                    if (globalThis.__operitCurrentCallId !== owner) throw new Error('Host continuation lost owner');
+                    await toolCall('echo', { closed: index });
+                }
+                return getEnv('CALL_OWNER');
+                });
+                globalThis.sharedSweepQueue = result.then(function() {}, function() {});
+                return result;
+            };"#,
+            "sweep", &testParams(),
+            &BTreeMap::from([("CALL_OWNER".into(), index.to_string())]),
+            None, true, None,
+        )));
+    }
+    tokio::time::timeout(Duration::from_secs(15), async {
+        for (index, call) in calls.into_iter().enumerate() {
+            assert_eq!(expect_js_output(call.await.unwrap(), "successive Host results"), format!("\"{index}\""));
+        }
+    }).await.expect("Completed Host calls must resume every pending resident call");
+    assert_eq!(executionSessionCounts(&engine).await, (0, 0));
+    engine.destroy();
+}
+
+/// Packaged idle cleanup resumes every screen and close across reused main-runtime calls.
+#[tokio::test(flavor = "current_thread")]
+async fn super_admin_resident_idle_sweeps_resume_host_completions() {
+    let root = testRepositoryRoot().join("plugins/packages/buildin/super_admin/dist");
+    let resources = BTreeMap::from([("dist/sessions.js".into(), std::fs::read_to_string(root.join("sessions.js")).unwrap())]);
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
+    let engine = super::JsEngine::new_toolpkg_execution_engine(host.clone(), ToolPkgExecutionContext {
+        context_key: "toolpkg_main:com.operit.super_admin".into(),
+        container_package_name: "com.operit.super_admin".into(), api_version: "2.0.0".into(),
+        text_resource_host: Arc::new(StaticToolPkgTextResourceHost { resources }),
+    }).unwrap();
+    let script = r#"
+        const sessions = require('./sessions');
+        globalThis.idleTestClock = 0;
+        Date.now = function() { return globalThis.idleTestClock; };
+        exports.track = async function(params) {
+            await sessions.receiveSessionRequest({ action: 'track', sessionId: params.id, sessionName: params.family });
+            await sessions.receiveSessionRequest({ action: 'release_session', sessionId: params.id });
+        };
+        exports.sweep = async function() {
+            globalThis.idleTestClock += 600001;
+            await sessions.sweepIdleSessions();
+            return 'swept';
+        };
+    "#;
+    let mut params = testParams();
+    params.insert("__operit_ui_package_name".into(), "com.operit.super_admin".into());
+    params.insert("__operit_script_screen".into(), "dist/main.js".into());
+    params.insert("__operit_toolpkg_runtime_kind".into(), "main".into());
+    tokio::time::timeout(Duration::from_secs(10), async {
+        for round in 0..32 {
+            for profile in ["proot", "shell"] {
+                let mut tracked = params.clone();
+                tracked.insert("id".into(), format!("{round}:{profile}").into());
+                tracked.insert("family".into(), profile.into());
+                engine.execute_script_function(script, "track", &tracked, &BTreeMap::new(), None, true, None).await.unwrap();
+            }
+            assert_eq!(expect_js_output(engine.execute_script_function(script, "sweep", &params, &BTreeMap::new(), None, true, None).await, "resident idle sweep"), "\"swept\"");
+        }
+    }).await.expect("Every completed screen and close must resume the resident cleanup hook");
+    assert_eq!(host.legacyShellCalls.lock().unwrap().len(), 128);
+    assert_eq!(executionSessionCounts(&engine).await, (0, 0));
     engine.destroy();
 }
 
