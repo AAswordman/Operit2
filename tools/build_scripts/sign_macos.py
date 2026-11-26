@@ -11,6 +11,7 @@ import subprocess
 
 from common import REPO_ROOT, release_asset_name, run
 from macos_distribution import MACOS_TYPES, built_app_path, entitlements_path, verify_app_type
+from macos_validation import verify_macos_archive
 
 DEFAULT_WORK = REPO_ROOT / "tools" / "release" / "work" / "macos-sign"
 DEFAULT_PROFILE = REPO_ROOT / "tools" / "release" / "secrets" / "appstoreconnect" / "Operit2-Mac-App-Store-Distribution.provisionprofile"
@@ -142,6 +143,8 @@ def sign_macos_app(
             archive_app(app, package)
     if not package.is_file() or package.stat().st_size == 0:
         raise RuntimeError(f"macOS package was not produced: {package}")
+    if build_type == "unsandbox":
+        verify_macos_archive(package, build_type)
     return package
 
 

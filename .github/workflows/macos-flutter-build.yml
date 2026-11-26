@@ -100,6 +100,9 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Test macOS packaging helpers
+        run: python3 -m unittest tools.tests.test_macos_distribution tools.tests.test_macos_validation tools.tests.test_macos_packaging tools.tests.test_release_artifacts
+
       - name: Install bootstrap Dart
         uses: dart-lang/setup-dart@v1
         with:
@@ -214,6 +217,15 @@ jobs:
         with:
           name: operit2-macos-${{ github.sha }}
           path: tools/release/dist/operit2-app-macos-*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload macOS DMG artifact
+        if: inputs.products != 'cli' && inputs.distribution == 'unsandbox'
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-macos-dmg-${{ github.sha }}
+          path: tools/release/dist/operit2-app-macos-*.dmg
           if-no-files-found: error
           retention-days: 14
 

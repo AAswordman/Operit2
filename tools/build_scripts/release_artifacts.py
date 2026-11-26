@@ -17,6 +17,7 @@ RELEASE_TARGETS = (
     ("app", "linux", "x86_64", "tar.gz"),
     ("app", "linux", "aarch64", "tar.gz"),
     ("app", "macos", "universal", "zip"),
+    ("app", "macos", "universal", "dmg"),
     ("app", "ios", "arm64", "zip"),
     ("app", "android", "arm64-v8a", "apk"),
     ("app", "android", "armeabi-v7a", "apk"),
@@ -62,7 +63,7 @@ def release_asset_name(product: str, platform: str, arch: str, extension: str, b
     for value in (product, platform, arch):
         if re.fullmatch(r"[a-z0-9]+(?:[-_][a-z0-9]+)*", value) is None:
             raise ValueError(f"Invalid release target component: {value!r}")
-    if extension not in ("apk", "hap", "zip", "tar.gz", "pkg", "ipa", "msi"):
+    if extension not in ("apk", "hap", "zip", "tar.gz", "pkg", "ipa", "msi", "dmg"):
         raise ValueError(f"Unsupported release extension: {extension}")
     if product == "app" and platform == "macos":
         build_type = build_type or "sandbox"

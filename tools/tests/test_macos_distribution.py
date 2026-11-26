@@ -30,7 +30,7 @@ class MacosDistributionTests(unittest.TestCase):
         for version in ("2.0.0", "2.0.0-preview.16"):
             with patch.object(release_artifacts, "release_version", return_value=version):
                 for kind in distribution.MACOS_TYPES:
-                    for ext in ("zip", "pkg"):
+                    for ext in ("zip", "pkg", "dmg"):
                         name = release_artifacts.release_asset_name("app", "macos", "universal", ext, kind)
                         self.assertEqual(name, f"operit2-app-macos-universal-{kind}-{version}.{ext}")
                         release_artifacts.validate_release_assets([Path(name)])
@@ -53,11 +53,25 @@ class MacosDistributionTests(unittest.TestCase):
 
     def test_mislabelled_signature_is_rejected(self):
         for actual in (True, False):
-            signed = subprocess.CompletedProcess([], 0, plistlib.dumps({"com.apple.security.app-sandbox": actual}), b"")
+            signed = subprocess.CompletedProcess([], 0, plistlib.dumps({
+                "com.apple.security.app-sandbox": actual,
+                "com.apple.security.cs.disable-library-validation": True,
+            }), b"")
             with patch.object(distribution.subprocess, "run", return_value=signed):
                 distribution.verify_app_type(self.root, "sandbox" if actual else "unsandbox")
                 with self.assertRaisesRegex(RuntimeError, "distribution mismatch"):
                     distribution.verify_app_type(self.root, "unsandbox" if actual else "sandbox")
+
+    def test_unsandbox_signature_rejects_missing_or_non_boolean_library_exception(self):
+        """Reject signed desktop bundles that cannot load ad-hoc native libraries."""
+        for value in (None, False, "true", 1):
+            entitlements = {"com.apple.security.app-sandbox": False}
+            if value is not None:
+                entitlements["com.apple.security.cs.disable-library-validation"] = value
+            signed = subprocess.CompletedProcess([], 0, plistlib.dumps(entitlements), b"")
+            with self.subTest(value=value), patch.object(distribution.subprocess, "run", return_value=signed):
+                with self.assertRaisesRegex(RuntimeError, "missing disable-library-validation"):
+                    distribution.verify_app_type(self.root, "unsandbox")
 
     def test_dispatchers_forward_channel_and_match_archive_names(self):
         with patch.object(build_local, "run") as run:
@@ -90,7 +104,7 @@ class MacosDistributionTests(unittest.TestCase):
                 if command[0] in ("ditto", "productbuild"):
                     Path(command[-1]).write_bytes(b"package")
             allowed = {"com.apple.application-identifier": "TEAM123.app.store", "com.apple.developer.team-identifier": "TEAM123"}
-            with patch.object(sign_macos, "run", side_effect=fake_run), patch.object(sign_macos, "verify_app_type"), patch.object(sign_macos, "profile_entitlements", return_value=allowed) as read_profile:
+            with patch.object(sign_macos, "run", side_effect=fake_run), patch.object(sign_macos, "verify_app_type"), patch.object(sign_macos, "verify_macos_archive") as verify_archive, patch.object(sign_macos, "profile_entitlements", return_value=allowed) as read_profile:
                 package = sign_macos.sign_macos_app(
                     app, self.root / kind, profile if kind == "sandbox" else None,
                     distribution.entitlements_path(kind), "channel app identity",
@@ -101,11 +115,13 @@ class MacosDistributionTests(unittest.TestCase):
             info = plistlib.loads((signed_app / "Contents/Info.plist").read_bytes())
             app_sign = next(command for command in calls if command[0] == "codesign" and "--entitlements" in command)
             if kind == "sandbox":
+                verify_archive.assert_not_called()
                 read_profile.assert_called_once()
                 self.assertEqual(info["CFBundleIdentifier"], "app.store")
                 self.assertEqual(package.suffix, ".pkg")
                 self.assertTrue((signed_app / "Contents/embedded.provisionprofile").exists())
             else:
+                verify_archive.assert_called_once_with(package, kind)
                 read_profile.assert_not_called()
                 self.assertEqual(info["CFBundleIdentifier"], "app.original")
                 self.assertEqual(package.suffix, ".zip")

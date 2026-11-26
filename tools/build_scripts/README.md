@@ -182,6 +182,30 @@ uses the App Store profile and distribution/installer certificates; unsandbox
 uses Developer ID Application, Hardened Runtime and no App Store profile.
 Without `--notary-profile`, a signed unsandbox archive is not yet notarized.
 
+Unsandbox Debug/Profile and Release entitlements disable library validation while
+keeping Hardened Runtime enabled. Ad-hoc signatures have no Team ID, so they cannot
+satisfy the same-Team requirement when loading bundled non-Apple frameworks.
+The exception also permits libraries signed by other developers; App Sandbox is
+independent of this setting. Packaging checks the actual signed entitlement and
+rejects unsandbox bundles that are missing it. Rebuild older bundles before signing.
+
+Both the Flutter build packager and the Developer ID ZIP signer extract the final
+ZIP, verify its nested signatures, and launch the extracted executable. An exit
+within 15 seconds fails packaging and includes captured console output. This
+opens the app using the current macOS user's normal application data, then stops
+the check process. Run release packaging under a dedicated macOS user with a GUI
+session. Startup survival detects immediate loader/signing crashes; it does not
+verify UI readiness, full functionality, or downloaded-file Gatekeeper approval.
+Developer ID signing and notarization remain separate release requirements.
+
+The unsandbox Flutter packager also creates a compressed `.dmg` alongside its
+ZIP. The disk image contains `Operit2.app` and an `/Applications` shortcut for
+drag-to-install. Packaging verifies the image checksum, mounts it read-only,
+checks the mounted app's signatures and startup survival, and detaches it.
+The macOS workflow uploads the DMG as a separate `operit2-macos-dmg-<sha>` artifact.
+CI uses ad-hoc signatures; creating a disk image does not provide Developer ID
+signing or Apple notarization for downloaded-file Gatekeeper approval.
+
 Direct `flutter run`, VS Code Run (including profile/release), and Xcode Runner
 builds default to **unsandbox**. Release scripts override a custom Runner setting
 through a temporary `XCODE_XCCONFIG_FILE`; they do not edit the project or impose

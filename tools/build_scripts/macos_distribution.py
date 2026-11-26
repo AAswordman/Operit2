@@ -63,3 +63,8 @@ def verify_app_type(app: Path, build_type: str) -> None:
             f"macOS distribution mismatch: requested {build_type}, "
             f"but {app} has app-sandbox={actual!r}. Rebuild with --type {build_type}."
         )
+    if build_type == "unsandbox" and entitlements.get("com.apple.security.cs.disable-library-validation") is not True:
+        raise RuntimeError(
+            f"macOS unsandbox signature is missing disable-library-validation: {app}. "
+            "Rebuild with the unsandbox entitlements before packaging."
+        )
