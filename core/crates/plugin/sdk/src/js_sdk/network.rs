@@ -206,12 +206,22 @@ pub struct NetHostBrowserFillFormOptions {
     pub fields: Vec<NetHostBrowserFillFormOptionsFieldsItem>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// Chooses how an active browser alert, confirmation, or prompt is resolved.
-pub struct NetHostBrowserHandleDialogOptions {
-    /// Accepts the dialog when true and dismisses it when false.
-    pub accept: bool,
+/// Selects inspection, confirmation, or cancellation of a page dialog.
+pub enum NetHostBrowserDialogOptionsAction {
+    #[serde(rename = "get")]
+    Get,
+    #[serde(rename = "accept")]
+    Accept,
+    #[serde(rename = "dismiss")]
+    Dismiss,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Inspects or resolves an active browser alert, confirmation, or prompt.
+pub struct NetHostBrowserDialogOptions {
+    /// Selects get, accept, or dismiss for the current dialog.
+    pub action: NetHostBrowserDialogOptionsAction,
     /// Supplies text entered into a prompt dialog before it is accepted.
-    #[serde(rename = "promptText")]
+    #[serde(rename = "promptText", skip_serializing_if = "Option::is_none")]
     pub prompt_text: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -636,9 +646,9 @@ pub trait NetHost: Send + Sync {
     ///
     fn browserFillForm(&self, options: NetHostBrowserFillFormOptions) -> JsFuture<String>;
     ///
-    ///Handle an active dialog.
+    ///Inspect, accept, or dismiss an active dialog.
     ///
-    fn browserHandleDialog(&self, options: NetHostBrowserHandleDialogOptions) -> JsFuture<String>;
+    fn browserDialog(&self, options: NetHostBrowserDialogOptions) -> JsFuture<String>;
     ///
     ///Hover over an element by snapshot ref.
     ///

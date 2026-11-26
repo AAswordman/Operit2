@@ -73,6 +73,25 @@ impl FlutterBrowserAutomationBridge {
         self.forward(request)
     }
 
+    /// Persists an owner screenshot through the runtime VFS when requested.
+    fn screenshot(&self, request: BrowserAutomationRequest) -> HostResult<BrowserAutomationResponse> {
+        let params: serde_json::Value = serde_json::from_str(&request.parametersJson)
+            .map_err(|error| HostError::new(format!("Invalid screenshot parameters: {error}")))?;
+        let filename = params.get("filename").and_then(serde_json::Value::as_str)
+            .map(str::trim).filter(|value| !value.is_empty());
+        let response = self.forward(request)?;
+        let Some(filename) = filename else { return Ok(response); };
+        let data = response.output.strip_prefix("data:image/png;base64,")
+            .ok_or_else(|| HostError::new("Browser screenshot did not return PNG data"))?;
+        let bytes = STANDARD.decode(data).map_err(|error| HostError::new(error.to_string()))?;
+        let context = operit_tools::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
+        let directory = context.as_ref().map(|context| context.fileDirectory(self.storage.clone()))
+            .transpose().map_err(HostError::new)?.flatten();
+        let path = self.fileSystem.resolveResourcePath(directory.as_deref(), filename).map_err(HostError::new)?;
+        self.fileSystem.writeFileBytes(&path, &bytes).map_err(HostError::new)?;
+        Ok(BrowserAutomationResponse { output: path })
+    }
+
     /// Sends one prepared request and validates the owner response envelope.
     fn forward(&self, request: BrowserAutomationRequest) -> HostResult<BrowserAutomationResponse> {
         let requestId = request.requestId.clone();
@@ -110,6 +129,7 @@ impl operit_host_api::BrowserAutomationHost for FlutterBrowserAutomationBridge {
     ) -> HostResult<BrowserAutomationResponse> {
         match request.toolName.as_str() {
             "browser_file_upload" => self.fileUpload(request),
+            "browser_take_screenshot" => self.screenshot(request),
             _ => self.forward(request),
         }
     }

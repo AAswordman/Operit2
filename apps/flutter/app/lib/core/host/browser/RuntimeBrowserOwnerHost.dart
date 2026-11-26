@@ -141,14 +141,14 @@ class _RuntimeBrowserOwnerHostState extends State<RuntimeBrowserOwnerHost> {
     _browserSessionStore.attachOwnerUi(
       owner: this,
       delegate: RuntimeBrowserOwnerUiDelegate(
-        showAlertDialog: (request) {
-          return showWorkspaceBrowserAlertDialog(context, request);
+        showAlertDialog: (request, dismissed) {
+          return showWorkspaceBrowserAlertDialog(context, request, dismissed);
         },
-        showConfirmDialog: (request) {
-          return showWorkspaceBrowserConfirmDialog(context, request);
+        showConfirmDialog: (request, dismissed) {
+          return showWorkspaceBrowserConfirmDialog(context, request, dismissed);
         },
-        showPromptDialog: (request) {
-          return showWorkspaceBrowserPromptDialog(context, request);
+        showPromptDialog: (request, dismissed) {
+          return showWorkspaceBrowserPromptDialog(context, request, dismissed);
         },
         openExternalNavigation: _openExternalNavigation,
         handlePermissionRequest: _handlePermissionRequest,
@@ -214,7 +214,13 @@ class _RuntimeBrowserOwnerHostState extends State<RuntimeBrowserOwnerHost> {
     BrowserAutomationRequest request,
   ) async {
     try {
-      final result = await _execute(request);
+      final controller = _registry.activeController;
+      final result =
+          controller != null && _dialogOpeningTools.contains(request.toolName)
+          ? await controller.dialogs.observe(() => _execute(request))
+          : controller == null && request.toolName == 'browser_navigate'
+          ? await _observeNewBrowser(() => _execute(request))
+          : await _execute(request);
       return BrowserAutomationResponse(
         requestId: request.requestId,
         success: true,
@@ -235,6 +241,44 @@ class _RuntimeBrowserOwnerHostState extends State<RuntimeBrowserOwnerHost> {
         result: '',
         error: error.toString(),
       );
+    }
+  }
+
+  static const Set<String> _dialogOpeningTools = <String>{
+    'browser_navigate',
+    'browser_navigate_back',
+    'browser_click',
+    'browser_type',
+    'browser_hover',
+    'browser_drag',
+    'browser_fill_form',
+    'browser_press_key',
+    'browser_select_option',
+    'browser_evaluate',
+    'browser_run_code',
+  };
+
+  /// Observes the newly registered session while its initial page is loading.
+  Future<String> _observeNewBrowser(Future<String> Function() start) async {
+    final action = Completer<String>();
+    final observed = Completer<String>();
+    var attached = false;
+    void attach() {
+      final controller = _registry.activeController;
+      if (controller == null || attached) return;
+      attached = true;
+      controller.dialogs
+          .observe(() => action.future)
+          .then(observed.complete, onError: observed.completeError);
+    }
+
+    _registry.addListener(attach);
+    Future.sync(start).then(action.complete, onError: action.completeError);
+    attach();
+    try {
+      return await Future.any(<Future<String>>[action.future, observed.future]);
+    } finally {
+      _registry.removeListener(attach);
     }
   }
 
@@ -331,13 +375,41 @@ class _RuntimeBrowserOwnerHostState extends State<RuntimeBrowserOwnerHost> {
         }
         await _controller(request).resizeViewport(Size(width, height));
         return 'OK';
-      case 'browser_handle_dialog':
-      case 'browser_take_screenshot':
-        throw StateError(
-          '${request.toolName} is not supported by Workspace Browser',
+      case 'browser_dialog':
+        final controller = _controller(request);
+        if (!controller
+            .controller
+            .platform
+            .supportsAsynchronousJavaScriptDialogs) {
+          throw UnsupportedError(
+            'This browser host cannot control page dialogs asynchronously',
+          );
+        }
+        return controller.dialogs.dialog(
+          action: _required(params, 'action'),
+          promptText: params['promptText'],
         );
+      case 'browser_take_screenshot':
+        return _takeScreenshot(request);
     }
     throw StateError('Unknown browser automation tool: ${request.toolName}');
+  }
+
+  /// Captures the owner WebView viewport through its platform interface.
+  Future<String> _takeScreenshot(BrowserAutomationRequest request) async {
+    final params = request.parameters;
+    final type = _optional(params, 'type') ?? 'png';
+    if (type != 'png' ||
+        _optional(params, 'ref') != null ||
+        _boolParam(params, 'fullPage')) {
+      throw UnsupportedError(
+        'Workspace browser supports PNG viewport screenshots only',
+      );
+    }
+    final bytes = await _controller(
+      request,
+    ).controller.platform.captureScreenshot();
+    return 'data:image/png;base64,${base64Encode(bytes)}';
   }
 
   Future<String> _handleTabs(BrowserAutomationRequest request) async {

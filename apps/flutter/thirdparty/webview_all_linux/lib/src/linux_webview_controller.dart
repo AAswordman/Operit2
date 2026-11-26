@@ -107,7 +107,7 @@ class LinuxWebViewController extends PlatformWebViewController {
   _onJavaScriptAlertDialog;
   Future<bool> Function(JavaScriptConfirmDialogRequest request)?
   _onJavaScriptConfirmDialog;
-  Future<String> Function(JavaScriptTextInputDialogRequest request)?
+  Future<String?> Function(JavaScriptTextInputDialogRequest request)?
   _onJavaScriptTextInputDialog;
 
   Future<void> _initialize(
@@ -631,12 +631,13 @@ class LinuxWebViewController extends PlatformWebViewController {
 
   @override
   Future<void> setOnJavaScriptTextInputDialog(
-    Future<String> Function(JavaScriptTextInputDialogRequest request)
+    Future<String?> Function(JavaScriptTextInputDialogRequest request)
     onJavaScriptTextInputDialog,
   ) async {
     _onJavaScriptTextInputDialog = onJavaScriptTextInputDialog;
     await _updateJavaScriptDialogCallbacksEnabled();
   }
+
 
   Future<void> _updateJavaScriptDialogCallbacksEnabled() {
     return _invoke<void>(

@@ -399,7 +399,7 @@ class AndroidWebViewController extends PlatformWebViewController {
       WeakReference<AndroidWebViewController> weakReference,
     ) {
       return (_, __, String url, String message, String defaultValue) async {
-        final Future<String> Function(JavaScriptTextInputDialogRequest)?
+        final Future<String?> Function(JavaScriptTextInputDialogRequest)?
         callback = weakReference.target?._onJavaScriptPrompt;
         if (callback != null) {
           final request = JavaScriptTextInputDialogRequest(
@@ -407,7 +407,7 @@ class AndroidWebViewController extends PlatformWebViewController {
             url: url,
             defaultText: defaultValue,
           );
-          final String result = await callback.call(request);
+          final String? result = await callback.call(request);
           return result;
         }
         return '';
@@ -443,7 +443,7 @@ class AndroidWebViewController extends PlatformWebViewController {
   _onJavaScriptAlert;
   Future<bool> Function(JavaScriptConfirmDialogRequest request)?
   _onJavaScriptConfirm;
-  Future<String> Function(JavaScriptTextInputDialogRequest request)?
+  Future<String?> Function(JavaScriptTextInputDialogRequest request)?
   _onJavaScriptPrompt;
 
   void Function(ScrollPositionChange scrollPositionChange)?
@@ -880,12 +880,13 @@ class AndroidWebViewController extends PlatformWebViewController {
 
   @override
   Future<void> setOnJavaScriptTextInputDialog(
-    Future<String> Function(JavaScriptTextInputDialogRequest request)
+    Future<String?> Function(JavaScriptTextInputDialogRequest request)
     onJavaScriptTextInputDialog,
   ) async {
     _onJavaScriptPrompt = onJavaScriptTextInputDialog;
     return _webChromeClient.setSynchronousReturnValueForOnJsPrompt(true);
   }
+
 
   @override
   Future<void> setVerticalScrollBarEnabled(bool enabled) =>

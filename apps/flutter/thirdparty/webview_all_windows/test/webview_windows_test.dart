@@ -600,6 +600,14 @@ void main() {
     expect(promptRequests.single.message, 'name');
     expect(promptRequests.single.url, 'https://example.test/prompt');
     expect(promptRequests.single.defaultText, 'default value');
+    await controller.setOnJavaScriptTextInputDialog((_) async => null);
+    expect(await _invokeWindowsWebViewMethod('javaScriptDialogRequested',
+      <String, Object?>{'dialogType': 'prompt', 'message': 'name', 'url': 'https://example.test'}),
+      <String, Object?>{'action': 'cancel'});
+    await controller.setOnJavaScriptTextInputDialog((_) async => '');
+    expect(await _invokeWindowsWebViewMethod('javaScriptDialogRequested',
+      <String, Object?>{'dialogType': 'prompt', 'message': 'name', 'url': 'https://example.test'}),
+      <String, Object?>{'action': 'confirm', 'text': ''});
   });
 
   test(

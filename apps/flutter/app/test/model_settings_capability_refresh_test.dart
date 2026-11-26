@@ -13,6 +13,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/common/ApiErrorText.dart';
+import 'package:operit2/ui/common/components/M3LoadingIndicator.dart';
 import 'package:operit2/ui/common/contributions/ToolPkgChatUiCatalog.dart';
 import 'package:operit2/ui/features/settings/model/ModelSettingsPanel.dart';
 import 'package:operit2/ui/features/chat/components/style/input/agent/AgentChatInputSection.dart';
@@ -410,6 +411,27 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets('model picker opens with a loading indicator immediately', (
+    tester,
+  ) async {
+    final gate = Completer<void>();
+    final bridge = _ModelSettingsBridge()..availableModelsGate = gate;
+    final panelKey = GlobalKey<ModelSettingsPanelState>();
+    await _pumpModelSettings(tester, bridge, panelKey);
+    final l10n = AppLocalizations.of(panelKey.currentContext!)!;
+    await tester.tap(find.text('Test Provider'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip(l10n.settingsModelAddModel));
+    await tester.pump();
+    expect(find.byType(Dialog), findsWidgets);
+    expect(find.byType(M3LoadingIndicator), findsOneWidget);
+    expect(find.text('new-model'), findsNothing);
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.byType(M3LoadingIndicator), findsNothing);
+    expect(find.text('new-model'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
   for (final downloadedAt in <int?>[null, 1794000000000]) {
     testWidgets(
       'catalog update failure keeps model picker usable at $downloadedAt',
@@ -801,6 +823,7 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
   String connectionTestError = 'HTTP 503';
   int connectionTestCalls = 0;
   Completer<void>? connectionTestGate;
+  Completer<void>? availableModelsGate;
   List<Map<String, Object?>> savedConnectionTests = [];
   core.ModelCapabilities capabilities = const core.ModelCapabilities(
     directImage: false,
@@ -931,6 +954,7 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
         requestedModelChatId = payload['chatId'] as String?;
         result = {'participants': participantModels};
       case 'getAvailableProviderModels':
+        await availableModelsGate?.future;
         result = [
           core.AvailableProviderModel(
             modelId: 'new-model',

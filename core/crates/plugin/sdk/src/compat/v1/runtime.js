@@ -204,7 +204,7 @@ function __operitInstallV1Runtime(runtime) {
         return mapped;
     }
 
-    /** Rewrites only admitted legacy package identities while preserving every public overload.
+    /** Translates admitted v1 tool identities and arguments while preserving public overloads.
      * @param {...any} args
      * @returns {Promise<any>}
      */
@@ -219,6 +219,26 @@ function __operitInstallV1Runtime(runtime) {
         } else {
             if (typeof args[1] === 'string') { type = args[0]; index = 1; }
             name = args[index];
+        }
+        if (type === 'default' && name === 'browser_handle_dialog') {
+            var objectCall = args[0] !== null && typeof args[0] === 'object';
+            var parameters = objectCall ? args[0].params : args[index + 1];
+            var accept = parameters && parameters.accept;
+            if (accept !== true && accept !== false && accept !== 'true' && accept !== 'false') {
+                throw new TypeError('browser_handle_dialog requires a boolean accept');
+            }
+            var accepted = accept === true || accept === 'true';
+            var dialogParams = accepted && parameters.promptText !== undefined
+                ? { action: 'accept', promptText: parameters.promptText }
+                : { action: accepted ? 'accept' : 'dismiss' };
+            if (objectCall) {
+                rewritten[0] = Object.assign({}, args[0], { name: 'browser_dialog', params: dialogParams });
+            } else {
+                rewritten[index] = 'browser_dialog';
+                rewritten[index + 1] = dialogParams;
+            }
+            await originalToolCall.apply(runtime, rewritten);
+            return 'OK';
         }
         if (type === 'default' && Object.prototype.hasOwnProperty.call(routes, name)) {
             var target = routes[/** @type {keyof typeof routes} */ (name)];

@@ -53,7 +53,7 @@ export interface ToolResultMap {
   browser_evaluate: string;
   browser_file_upload: string;
   browser_fill_form: string;
-  browser_handle_dialog: string;
+  browser_dialog: string;
   browser_hover: string;
   browser_navigate: string;
   browser_navigate_back: string;

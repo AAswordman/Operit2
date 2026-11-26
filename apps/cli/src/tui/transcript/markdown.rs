@@ -1283,7 +1283,7 @@ fn tool_leading_symbol(tool_name: &str) -> &'static str {
         | BuiltinToolName::BrowserDrag
         | BuiltinToolName::BrowserEvaluate
         | BuiltinToolName::BrowserFillForm
-        | BuiltinToolName::BrowserHandleDialog
+        | BuiltinToolName::BrowserDialog
         | BuiltinToolName::BrowserHover
         | BuiltinToolName::BrowserNavigate
         | BuiltinToolName::BrowserNavigateBack

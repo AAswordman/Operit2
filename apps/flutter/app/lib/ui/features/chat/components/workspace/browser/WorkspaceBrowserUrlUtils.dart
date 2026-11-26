@@ -2,6 +2,9 @@
 
 String normalizeWorkspaceBrowserUrl(String raw) {
   final value = raw.trim();
+  if (value.startsWith('/')) {
+    return Uri.file(value).toString();
+  }
   final uri = Uri.tryParse(value);
   if (uri != null && uri.hasScheme) {
     return value;

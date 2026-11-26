@@ -139,7 +139,7 @@ pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
     JsToolBinding { namespace: "Net", method: "browserEvaluate", target: BuiltinToolName::BrowserEvaluate, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Net", method: "browserFileUpload", target: BuiltinToolName::BrowserFileUpload, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Net", method: "browserFillForm", target: BuiltinToolName::BrowserFillForm, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
-    JsToolBinding { namespace: "Net", method: "browserHandleDialog", target: BuiltinToolName::BrowserHandleDialog, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
+    JsToolBinding { namespace: "Net", method: "browserDialog", target: BuiltinToolName::BrowserDialog, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Net", method: "browserHover", target: BuiltinToolName::BrowserHover, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Net", method: "browserNavigate", target: BuiltinToolName::BrowserNavigate, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Net", method: "browserNavigateBack", target: BuiltinToolName::BrowserNavigateBack, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },

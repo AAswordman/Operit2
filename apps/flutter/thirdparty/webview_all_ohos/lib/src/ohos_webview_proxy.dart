@@ -65,7 +65,7 @@ class OhosWebViewProxy {
     void Function(ohos_webview.WebChromeClient instance)? onHideCustomView,
     Future<void> Function(String url, String message)? onJsAlert,
     Future<bool> Function(String url, String message)? onJsConfirm,
-    Future<String> Function(String url, String message, String defaultValue)?
+    Future<String?> Function(String url, String message, String defaultValue)?
     onJsPrompt,
   })
   createOhosWebChromeClient;

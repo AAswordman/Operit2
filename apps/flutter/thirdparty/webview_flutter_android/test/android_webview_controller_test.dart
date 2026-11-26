@@ -1485,6 +1485,8 @@ void main() {
         expect(message, callbackMessage);
         expect(defaultText, callbackDefaultText);
         expect(returnValue, callbackReturnValue);
+        await controller.setOnJavaScriptTextInputDialog((_) async => null);
+        expect(await onJsPromptCallback(MockWebChromeClient(), MockWebView(), '', callbackMessage, callbackDefaultText), isNull);
       });
     });
 

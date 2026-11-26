@@ -73,7 +73,7 @@
             "display": {"label": {"zh": "上传文件", "en": "Upload files"}, "icon": "file"},
             "description": { "zh": "向点击或执行脚本打开的当前文件选择器上传文件；支持单文件、多文件及取消，上传失败保留选择器。", "en": "Upload files to the chooser opened by a click or page script. Supports single/multiple files and cancellation; failed uploads preserve the chooser." },
             "parameters": [
-                { "name": "paths", "description": { "zh": "可选，host 文件系统中的绝对文件路径数组；省略表示取消并保留已选文件，空数组表示清空。多个文件要求选择器支持 multiple。", "en": "Optional absolute file paths in the host file system. Omission cancels without changing selected files; an empty array clears the selection. Multiple files require a multiple chooser." }, "type": "array", "required": false }
+                { "name": "paths", "description": { "zh": "可选，文件路径数组；Flutter 浏览器支持 VFS 路径。省略表示取消并保留已选文件，空数组表示清空。多个文件要求选择器支持 multiple。", "en": "Optional file paths; the Flutter browser supports VFS paths. Omission cancels without changing selected files; an empty array clears the selection. Multiple files require a multiple chooser." }, "type": "array", "required": false }
             ]
         },
         {
@@ -85,11 +85,11 @@
             ]
         },
         {
-            "name": "handle_dialog",
+            "name": "dialog",
             "display": {"label": {"zh": "处理网页弹窗", "en": "Handle dialog"}, "icon": "web"},
-            "description": { "zh": "处理当前对话框。", "en": "Handle the current dialog." },
+            "description": { "zh": "查看、接受或取消当前标签页的 alert、confirm、prompt。get 在没有弹窗时返回 dialog: null。accept 可为 prompt 提供文本，dismiss 取消输入。", "en": "Inspect, accept, or dismiss an alert, confirm, or prompt in the current tab. get returns dialog: null when no dialog is open. accept can supply prompt text; dismiss cancels input." },
             "parameters": [
-                { "name": "accept", "description": { "zh": "是否接受对话框。", "en": "Whether to accept the dialog." }, "type": "boolean", "required": true },
+                { "name": "action", "description": { "zh": "get 查看当前弹窗；accept 确认；dismiss 取消。", "en": "get inspects the current dialog; accept confirms; dismiss cancels." }, "type": "string", "required": true },
                 { "name": "promptText", "description": { "zh": "可选，prompt 的输入文本。", "en": "Optional prompt text." }, "type": "string", "required": false }
             ]
         },
@@ -171,6 +171,18 @@
             ]
         },
         {
+            "name": "take_screenshot",
+            "display": {"label": {"zh": "截取网页图片", "en": "Take screenshot"}, "icon": "web"},
+            "description": {"zh": "截取当前页面或指定元素。Windows 工作区浏览器支持 PNG 视口截图；其他工作区浏览器暂不支持。", "en": "Capture the current page or an element. The Windows workspace browser supports PNG viewport screenshots; other workspace browsers do not yet support this operation."},
+            "parameters": [
+                {"name": "type", "description": {"zh": "图片格式：png 或 jpeg。", "en": "Image format: png or jpeg."}, "type": "string", "required": false},
+                {"name": "filename", "description": {"zh": "可选输出文件名。", "en": "Optional output file name."}, "type": "string", "required": false},
+                {"name": "ref", "description": {"zh": "可选元素引用。", "en": "Optional element reference."}, "type": "string", "required": false},
+                {"name": "element", "description": {"zh": "可选元素描述。", "en": "Optional element description."}, "type": "string", "required": false},
+                {"name": "fullPage", "description": {"zh": "是否截取完整页面。", "en": "Capture the full page."}, "type": "boolean", "required": false}
+            ]
+        },
+        {
             "name": "type",
             "display": {"label": {"zh": "输入网页文本", "en": "Type text"}, "icon": "web", "targetParameter": "element"},
             "description": { "zh": "向可编辑元素输入文本。", "en": "Type text into an editable element." },
@@ -220,6 +232,13 @@ interface SnapshotPayload extends FilenamePayload {
     depth?: number;
 }
 
+interface ScreenshotPayload extends FilenamePayload {
+    type?: "png" | "jpeg";
+    element?: string;
+    ref?: string;
+    fullPage?: boolean;
+}
+
 interface ClickPayload {
     ref?: string;
     selector?: string;
@@ -255,8 +274,8 @@ interface FillFormPayload {
     fields: FillFormFieldPayload[];
 }
 
-interface HandleDialogPayload {
-    accept: boolean;
+interface DialogPayload {
+    action: "get" | "accept" | "dismiss";
     promptText?: string;
 }
 
@@ -327,7 +346,7 @@ const TOOL_NAMES = [
     "evaluate",
     "upload",
     "fill_form",
-    "handle_dialog",
+    "dialog",
     "hover",
     "goto",
     "back",
@@ -337,6 +356,7 @@ const TOOL_NAMES = [
     "run_code",
     "select_option",
     "snapshot",
+    "take_screenshot",
     "type",
     "wait_for",
     "tabs"
@@ -451,9 +471,10 @@ async function fill_form(params: FillFormPayload) {
     return maybePersistLargeBrowserResponse(result, "fill_form");
 }
 
-async function handle_dialog(params: HandleDialogPayload) {
-    const result = await Tools.Net.browserHandleDialog(params);
-    return maybePersistLargeBrowserResponse(result, "handle_dialog");
+/** Inspects or resolves the active page dialog through the owning browser host. */
+async function dialog(params: DialogPayload) {
+    const result = await Tools.Net.browserDialog(params);
+    return maybePersistLargeBrowserResponse(result, "dialog");
 }
 
 async function hover(params: HoverPayload) {
@@ -505,6 +526,23 @@ async function snapshot(params: SnapshotPayload = {}) {
     return maybePersistLargeBrowserResponse(result, "snapshot");
 }
 
+/** Captures the current page or a referenced element through the browser host. */
+async function take_screenshot(params: ScreenshotPayload = {}) {
+    const { filename, ...options } = params;
+    const result = browserResultText(await Tools.Net.browserTakeScreenshot(options));
+    const match = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(result);
+    if (!match) {
+        throw new Error("Browser screenshot did not return image data");
+    }
+    const path = normalizeOptionalString(filename) || buildLargeOutputFilename("screenshot", match[1] === "jpeg" ? "jpg" : "png");
+    if (!normalizeOptionalString(filename)) {
+        await Tools.Files.mkdir(OPERIT_CLEAN_ON_EXIT_DIR, true);
+    }
+    await Tools.Files.writeBinary(path, match[2]);
+    const image = await Tools.Media.registerFromPath({ type: "image", path });
+    return { file_path: path, image_link: image.link };
+}
+
 async function type(params: TypePayload) {
     const result = await Tools.Net.browserType(params);
     return maybePersistLargeBrowserResponse(result, "type");
@@ -532,7 +570,7 @@ exports.drag = drag;
 exports.evaluate = evaluate;
 exports.upload = upload;
 exports.fill_form = fill_form;
-exports.handle_dialog = handle_dialog;
+exports.dialog = dialog;
 exports.hover = hover;
 exports.goto = goto;
 exports.back = back;
@@ -542,6 +580,7 @@ exports.resize = resize;
 exports.run_code = run_code;
 exports.select_option = select_option;
 exports.snapshot = snapshot;
+exports.take_screenshot = take_screenshot;
 exports.type = type;
 exports.wait_for = wait_for;
 exports.tabs = tabs;

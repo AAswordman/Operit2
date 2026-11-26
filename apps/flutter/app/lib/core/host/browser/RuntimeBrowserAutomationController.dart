@@ -10,6 +10,7 @@ import 'package:webview_all/webview_all.dart';
 import 'package:webview_all_windows/webview_all_windows.dart';
 
 import 'RuntimeBrowserFileUpload.dart';
+import 'RuntimeBrowserDialogs.dart';
 
 class RuntimeBrowserAutomationController {
   RuntimeBrowserAutomationController({
@@ -18,6 +19,7 @@ class RuntimeBrowserAutomationController {
   });
 
   final WebViewController controller;
+  final RuntimeBrowserDialogs dialogs = RuntimeBrowserDialogs();
   late final RuntimeBrowserFileUpload _fileUpload = RuntimeBrowserFileUpload(
     controller,
   );

@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -176,7 +177,7 @@ class WindowsWebViewController extends PlatformWebViewController {
   _onJavaScriptAlertDialogCallback;
   Future<bool> Function(JavaScriptConfirmDialogRequest)?
   _onJavaScriptConfirmDialogCallback;
-  Future<String> Function(JavaScriptTextInputDialogRequest)?
+  Future<String?> Function(JavaScriptTextInputDialogRequest)?
   _onJavaScriptTextInputDialogCallback;
   void Function(ScrollPositionChange)? _onScrollPositionChangeCallback;
 
@@ -274,6 +275,31 @@ class WindowsWebViewController extends PlatformWebViewController {
     return WindowsBrowserSurfaceFrame.fromNative(
       await _webviewController.captureSurfaceFrame(),
     );
+  }
+
+  /// Encodes an on-demand WebView2 viewport capture as PNG.
+  @override
+  Future<Uint8List> captureScreenshot() async {
+    final frame = await captureBrowserSurfaceFrame();
+    if (frame.codec != 'raw/bgra') {
+      throw StateError('Unexpected browser frame codec: ${frame.codec}');
+    }
+    final completer = Completer<ui.Image>();
+    ui.decodeImageFromPixels(
+      frame.data,
+      frame.width.toInt(),
+      frame.height.toInt(),
+      ui.PixelFormat.bgra8888,
+      completer.complete,
+    );
+    final image = await completer.future;
+    try {
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (data == null) throw StateError('Failed to encode browser screenshot');
+      return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+    } finally {
+      image.dispose();
+    }
   }
 
   /// Applies the host color preference after the native WebView is ready.
@@ -523,14 +549,16 @@ class WindowsWebViewController extends PlatformWebViewController {
         if (callback == null) {
           return null;
         }
-        final String text = await callback(
+        final String? text = await callback(
           JavaScriptTextInputDialogRequest(
             message: message,
             url: url,
             defaultText: defaultText,
           ),
         );
-        return <String, Object?>{'action': 'confirm', 'text': text};
+        return text == null
+            ? <String, Object?>{'action': 'cancel'}
+            : <String, Object?>{'action': 'confirm', 'text': text};
     }
 
     return null;
@@ -1117,13 +1145,14 @@ class WindowsWebViewController extends PlatformWebViewController {
 
   @override
   Future<void> setOnJavaScriptTextInputDialog(
-    Future<String> Function(JavaScriptTextInputDialogRequest request)
+    Future<String?> Function(JavaScriptTextInputDialogRequest request)
     onJavaScriptTextInputDialog,
   ) async {
     await _ensureInitialized();
     _onJavaScriptTextInputDialogCallback = onJavaScriptTextInputDialog;
     await _updateJavaScriptDialogCallbacksEnabled();
   }
+
 
   @override
   Future<void> setOverScrollMode(WebViewOverScrollMode mode) async {

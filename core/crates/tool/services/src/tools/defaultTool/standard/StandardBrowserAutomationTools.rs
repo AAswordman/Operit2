@@ -58,6 +58,15 @@ impl ToolExecutor for BrowserAutomationToolExecutor {
         }
 
         match tool.name.as_str() {
+            "browser_dialog" => {
+                let action = parameterValue(tool, "action");
+                if !matches!(action.as_str(), "get" | "accept" | "dismiss") {
+                    return invalid("action must be get, accept, or dismiss.");
+                }
+                if optionalParameterValue(tool, "promptText").is_some() && action != "accept" {
+                    return invalid("promptText requires action accept.");
+                }
+            }
             "browser_file_upload" => {
                 if let Err(error) = browserUploadPaths(tool) {
                     return invalid(&error);
@@ -103,6 +112,7 @@ impl ToolExecutor for BrowserAutomationToolExecutor {
 
 fn browserToolEffect(tool: &AITool) -> ToolEffect {
     match tool.name.as_str() {
+        "browser_dialog" if parameterValue(tool, "action") == "get" => ToolEffect::READ,
         "browser_console_messages"
         | "browser_network_requests"
         | "browser_snapshot"
@@ -152,7 +162,7 @@ fn requiredParameters(toolName: &str) -> &'static [&'static str] {
         "browser_drag" => &["startRef", "endRef"],
         "browser_evaluate" => &["function"],
         "browser_fill_form" => &["fields"],
-        "browser_handle_dialog" => &["accept"],
+        "browser_dialog" => &["action"],
         "browser_hover" => &["ref"],
         "browser_press_key" => &["key"],
         "browser_resize" => &["width", "height"],

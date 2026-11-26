@@ -343,7 +343,7 @@ class _FakePlatformWebViewController extends PlatformWebViewController {
   Future<bool> Function(JavaScriptConfirmDialogRequest request)?
   onJavaScriptConfirmDialog;
   String? receivedConfirmMessage;
-  Future<String> Function(JavaScriptTextInputDialogRequest request)?
+  Future<String?> Function(JavaScriptTextInputDialogRequest request)?
   onJavaScriptTextInputDialog;
   String? receivedPromptMessage;
   void Function(ScrollPositionChange scrollPositionChange)?
@@ -499,7 +499,7 @@ class _FakePlatformWebViewController extends PlatformWebViewController {
 
   @override
   Future<void> setOnJavaScriptTextInputDialog(
-    Future<String> Function(JavaScriptTextInputDialogRequest request)
+    Future<String?> Function(JavaScriptTextInputDialogRequest request)
     onJavaScriptTextInputDialog,
   ) async {
     this.onJavaScriptTextInputDialog = onJavaScriptTextInputDialog;

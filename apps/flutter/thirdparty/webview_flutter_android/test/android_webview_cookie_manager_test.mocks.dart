@@ -562,7 +562,7 @@ class MockAndroidWebViewController extends _i1.Mock
 
   @override
   _i5.Future<void> setOnJavaScriptTextInputDialog(
-    _i5.Future<String> Function(_i3.JavaScriptTextInputDialogRequest)?
+    _i5.Future<String?> Function(_i3.JavaScriptTextInputDialogRequest)?
     onJavaScriptTextInputDialog,
   ) =>
       (super.noSuchMethod(

@@ -972,6 +972,20 @@ void main() {
         expect(requests.single.message, 'name');
         expect(requests.single.url, isNotEmpty);
         expect(requests.single.defaultText, 'world');
+        await controller.setOnJavaScriptTextInputDialog(
+          (_) => SynchronousFuture<String?>(null),
+        );
+        final cancelled = await controller.runJavaScriptReturningResult(
+          "prompt('name', 'world') === null",
+        );
+        expect(cancelled, isTrue);
+        await controller.setOnJavaScriptTextInputDialog(
+          (_) => SynchronousFuture<String?>(''),
+        );
+        final empty = await controller.runJavaScriptReturningResult(
+          "prompt('name', 'world') === ''",
+        );
+        expect(empty, isTrue);
       });
     });
 

@@ -10,6 +10,7 @@ import 'package:operit2/core/bridge/PlatformCoreProxy.dart';
 import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
+import 'package:operit2/core/runtime/RuntimeFileBytes.dart';
 import 'package:webview_all/webview_all.dart';
 
 import 'package:operit2/ui/features/chat/components/workspace/browser/WorkspaceBrowserStores.dart';
@@ -24,6 +25,7 @@ import 'RuntimeBrowserAutomationController.dart';
 import 'RuntimeBrowserPageDownloads.dart';
 import 'RuntimeBrowserExternalNavigation.dart';
 import 'RuntimeBrowserSessionRegistry.dart';
+import 'RuntimeBrowserVfsResources.dart';
 
 class RuntimeBrowserOwnerUiDelegate {
   const RuntimeBrowserOwnerUiDelegate({
@@ -34,11 +36,20 @@ class RuntimeBrowserOwnerUiDelegate {
     required this.handlePermissionRequest,
   });
 
-  final Future<void> Function(JavaScriptAlertDialogRequest request)
+  final Future<void> Function(
+    JavaScriptAlertDialogRequest request,
+    Future<void> dismissed,
+  )
   showAlertDialog;
-  final Future<bool> Function(JavaScriptConfirmDialogRequest request)
+  final Future<bool> Function(
+    JavaScriptConfirmDialogRequest request,
+    Future<void> dismissed,
+  )
   showConfirmDialog;
-  final Future<String> Function(JavaScriptTextInputDialogRequest request)
+  final Future<String?> Function(
+    JavaScriptTextInputDialogRequest request,
+    Future<void> dismissed,
+  )
   showPromptDialog;
   final Future<void> Function(WorkspaceBrowserTabState tab, String url)
   openExternalNavigation;
@@ -85,6 +96,9 @@ class RuntimeBrowserOwner extends ChangeNotifier {
       GeneratedCoreProxyClients(
         ProxyCoreRuntimeBridge(coreProxy: platformCoreProxy),
       );
+  final RuntimeBrowserVfsResources _vfsResources = RuntimeBrowserVfsResources(
+    (path) => readRuntimeFileBytes(_coreClients, path),
+  );
 
   final WorkspaceBrowserStores stores = WorkspaceBrowserStores(
     clients: _coreClients,
@@ -288,7 +302,10 @@ class RuntimeBrowserOwner extends ChangeNotifier {
       );
       await _attachTab(tab);
       await tab.controller.loadRequest(
-        Uri.parse(normalizedUrl),
+        _vfsResources.navigationUri(
+          normalizedUrl,
+          tab.controller.localResourceScheme,
+        ),
         headers: requestHeaders,
       );
       ClientLogger.v(
@@ -437,7 +454,7 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     final downloads = _pageDownloads.remove(tab.id);
     if (downloads != null) unawaited(downloads.close());
     stores.downloads.closeEngineSession(tab.id);
-    _automation.remove(tab.id);
+    _automation.remove(tab.id)?.dialogs.close();
     _defaultUserAgents.remove(tab.id);
     _sessionRegistry.unregister(tab.id);
     _workspaceSurfaceSessionClaims.remove(tab.id);
@@ -458,7 +475,7 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     tab.update(url: url, addressText: url, errorText: null);
     _syncSessionRegistry();
     await tab.controller.loadRequest(
-      Uri.parse(url),
+      _vfsResources.navigationUri(url, tab.controller.localResourceScheme),
       headers: tab.requestHeaders,
     );
   }
@@ -743,6 +760,15 @@ class RuntimeBrowserOwner extends ChangeNotifier {
 
   /// Configures browser behavior shared by every owner WebView session.
   Future<void> _configureTab(WorkspaceBrowserTabState tab) async {
+    if (tab.controller.localResourceScheme != null) {
+      await tab.controller.setLocalResourceHandler((request) {
+        if (Uri.tryParse(tab.url)?.scheme != 'file') {
+          throw StateError('VFS resources require a file browser session');
+        }
+        return _vfsResources.handle(request);
+      });
+      _requireLiveTab(tab);
+    }
     tab.controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.transparent)
@@ -803,16 +829,43 @@ class RuntimeBrowserOwner extends ChangeNotifier {
           },
         );
     }
-    if (tab.capabilities.javaScriptDialogs) {
+    if (tab.capabilities.javaScriptDialogs &&
+        tab.controller.platform.supportsAsynchronousJavaScriptDialogs) {
+      final dialogs = _automation[tab.id]!.dialogs;
       tab.controller
         ..setOnJavaScriptAlertDialog((request) {
-          return _requiredUiDelegate.showAlertDialog(request);
+          return dialogs
+              .open(
+                type: 'alert',
+                message: request.message,
+                url: request.url,
+                present: (dismissed) =>
+                    _requiredUiDelegate.showAlertDialog(request, dismissed),
+              )
+              .then<void>((_) {});
         })
         ..setOnJavaScriptConfirmDialog((request) {
-          return _requiredUiDelegate.showConfirmDialog(request);
+          return dialogs
+              .open(
+                type: 'confirm',
+                message: request.message,
+                url: request.url,
+                present: (dismissed) =>
+                    _requiredUiDelegate.showConfirmDialog(request, dismissed),
+              )
+              .then((value) => value as bool);
         })
         ..setOnJavaScriptTextInputDialog((request) {
-          return _requiredUiDelegate.showPromptDialog(request);
+          return dialogs
+              .open(
+                type: 'prompt',
+                message: request.message,
+                url: request.url,
+                defaultText: request.defaultText,
+                present: (dismissed) =>
+                    _requiredUiDelegate.showPromptDialog(request, dismissed),
+              )
+              .then((value) => value as String?);
         });
     }
     await tab.controller.setNavigationDelegate(
@@ -1221,28 +1274,18 @@ class RuntimeBrowserOwner extends ChangeNotifier {
 
   /// Returns the logical page URL shown by the browser session.
   String _logicalUrl(String url) {
-    return url.trim();
+    return _vfsResources.logicalUrl(url.trim());
   }
 
   /// Returns the browser host capabilities for one URL.
   WorkspaceBrowserSessionCapabilities _capabilitiesForUrl(String url) {
-    final pageJavaScript = _pageJavaScriptSupportedByHost(url);
+    const pageJavaScript = true;
     return WorkspaceBrowserSessionCapabilities(
       pageJavaScript: pageJavaScript,
       pageHooks: pageJavaScript,
       permissionRequests: !kIsWeb,
-      javaScriptDialogs:
-          pageJavaScript &&
-          (kIsWeb || defaultTargetPlatform != TargetPlatform.windows),
+      javaScriptDialogs: pageJavaScript,
     );
-  }
-
-  /// Returns whether the owner host can execute page JavaScript for this URL.
-  bool _pageJavaScriptSupportedByHost(String url) {
-    if (kIsWeb) {
-      return false;
-    }
-    return true;
   }
 
   /// Returns whether the session exposes page JavaScript to host commands.
@@ -1253,7 +1296,7 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     if (!tab.capabilities.pageJavaScript) {
       return false;
     }
-    return _pageJavaScriptSupportedByHost(tab.url);
+    return tab.controller.platform.supportsPageJavaScript;
   }
 
   /// Applies the stored zoom factor through the tab's WebView host.

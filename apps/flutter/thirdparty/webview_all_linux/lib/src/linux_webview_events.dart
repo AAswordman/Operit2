@@ -391,7 +391,7 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
             );
             return;
           }
-          final String text = await callback(
+          final String? text = await callback(
             JavaScriptTextInputDialogRequest(
               message: message,
               url: url,
@@ -400,7 +400,7 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
           );
           await _completeJavaScriptDialog(
             requestId,
-            action: 'confirm',
+            action: text == null ? 'cancel' : 'confirm',
             text: text,
           );
           return;

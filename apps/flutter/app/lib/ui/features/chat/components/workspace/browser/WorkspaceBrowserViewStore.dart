@@ -186,9 +186,10 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
 
   /// Attaches an existing Core browser session to the workspace view.
   Future<WorkspaceBrowserTabState> attachSession(
-    RuntimeBrowserSessionInfo session,
-  ) {
-    return _attachSession(session, select: true);
+    RuntimeBrowserSessionInfo session, {
+    bool select = true,
+  }) {
+    return _attachSession(session, select: select);
   }
 
   /// Opens a runtime-owner local file session through Core.

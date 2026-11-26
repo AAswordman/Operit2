@@ -305,12 +305,11 @@ impl BrowserAutomationHost for ChromiumBrowserAutomationHost {
                 state.file_upload(params.optional_string_list("paths")?)?;
                 Ok("OK".to_string())
             }),
-            "browser_handle_dialog" => self.with_existing_state(|state| {
-                state.handle_dialog(
-                    params.required_bool("accept")?,
+            "browser_dialog" => self.with_existing_state(|state| {
+                state.dialog(
+                    &params.required_trimmed("action")?,
                     params.optional_raw("promptText")?,
-                )?;
-                Ok("OK".to_string())
+                )
             }),
             other => Err(HostError::new(format!(
                 "Unknown browser automation tool: {other}"
@@ -765,15 +764,30 @@ impl BrowserState {
         Ok(())
     }
 
-    fn handle_dialog(&mut self, accept: bool, prompt_text: Option<String>) -> HostResult<()> {
-        let mut params = json!({ "accept": accept });
-        if let Some(prompt_text) = prompt_text {
-            params["promptText"] = Value::String(prompt_text);
+    /// Inspects or resolves the native dialog tracked by this tab's CDP events.
+    fn dialog(&mut self, action: &str, prompt_text: Option<String>) -> HostResult<String> {
+        if !matches!(action, "get" | "accept" | "dismiss") {
+            return Err(HostError::new("action must be get, accept, or dismiss"));
+        }
+        if prompt_text.is_some() && action != "accept" {
+            return Err(HostError::new("promptText requires action accept"));
         }
         let tab = self.active_tab_mut()?;
-        tab.session.command("Page.handleJavaScriptDialog", params)?;
         tab.collect_events()?;
-        Ok(())
+        if action != "get" {
+            let dialog = tab.dialog.as_ref().ok_or_else(|| HostError::new("No active browser dialog"))?;
+            if prompt_text.is_some() && dialog.get("type").and_then(Value::as_str) != Some("prompt") {
+                return Err(HostError::new("promptText requires a prompt dialog"));
+            }
+            let mut params = json!({ "accept": action == "accept" });
+            if let Some(prompt_text) = prompt_text {
+                params["promptText"] = Value::String(prompt_text);
+            }
+            tab.session.command("Page.handleJavaScriptDialog", params)?;
+            tab.dialog = None;
+            tab.collect_events()?;
+        }
+        Ok(json!({ "dialog": tab.dialog }).to_string())
     }
 
     fn element_rect(&mut self, target: &str) -> HostResult<ElementRect> {
@@ -925,6 +939,7 @@ struct TabState {
     console_messages: Vec<Value>,
     network_requests: Vec<Value>,
     file_chooser: Option<BrowserFileChooser>,
+    dialog: Option<Value>,
 }
 
 impl TabState {
@@ -952,6 +967,12 @@ impl TabState {
     fn record_event(&mut self, event: Value) -> HostResult<()> {
         let method = event.get("method").and_then(Value::as_str);
         match method {
+            Some("Page.javascriptDialogOpening") => {
+                self.dialog = Some(event["params"].clone());
+            }
+            Some("Page.javascriptDialogClosed") => {
+                self.dialog = None;
+            }
             Some("Runtime.consoleAPICalled") => {
                 if let Some(item) = runtime_console_event(&event) {
                     push_limited(&mut self.console_messages, item);
@@ -1014,6 +1035,7 @@ fn create_automation_tab(port: u16) -> HostResult<TabState> {
         console_messages: Vec::new(),
         network_requests: Vec::new(),
         file_chooser: None,
+        dialog: None,
     })
 }
 
@@ -1249,7 +1271,15 @@ impl CdpSession {
                 }
                 return Ok(value.get("result").cloned().unwrap_or(Value::Null));
             }
+            let dialog_opened = value.get("method").and_then(Value::as_str) == Some("Page.javascriptDialogOpening");
+            let dialog = value.get("params").cloned();
             self.pending_events.push(value);
+            if dialog_opened {
+                return Err(HostError::new(format!(
+                    "Browser command {method} paused by page dialog: {}. Use browser_dialog with action get, accept, or dismiss before continuing.",
+                    json!({ "dialog": dialog }),
+                )));
+            }
         }
     }
 
@@ -1867,11 +1897,6 @@ impl BrowserToolParams {
         self.optional_trimmed(name)?
             .map(|value| parse_bool(name, &value))
             .transpose()
-    }
-
-    fn required_bool(&self, name: &str) -> HostResult<bool> {
-        self.optional_bool(name)?
-            .ok_or_else(|| HostError::new(format!("Missing parameter: {name}")))
     }
 
     fn optional_string_list(&self, name: &str) -> HostResult<Option<Vec<String>>> {

@@ -1299,7 +1299,7 @@ fn registerBrowserAutomationTools(
         BuiltinToolName::BrowserEvaluate,
         BuiltinToolName::BrowserFileUpload,
         BuiltinToolName::BrowserFillForm,
-        BuiltinToolName::BrowserHandleDialog,
+        BuiltinToolName::BrowserDialog,
         BuiltinToolName::BrowserHover,
         BuiltinToolName::BrowserNavigate,
         BuiltinToolName::BrowserNavigateBack,

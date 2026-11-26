@@ -1175,7 +1175,7 @@ class WebChromeClient extends OhosObject {
 
   /// Notify the host application that the web page wants to display a
   /// JavaScript prompt() dialog.
-  final Future<String> Function(
+  final Future<String?> Function(
     String url,
     String message,
     String defaultValue,

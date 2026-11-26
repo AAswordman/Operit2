@@ -245,6 +245,26 @@ function __operitInstallV1SharedPreferences(runtime, api) {
     java.getApplicationContext = function() { return wrap(applicationContext.apply(java, arguments)); };
 }
 
+/**
+ * Preserves the v1 boolean dialog contract over the canonical action interface.
+ * @param {typeof import('../../../../../../../plugins/types/network').Net.browserDialog} current
+ * @returns {typeof import('../../../../../../../plugins/types-v1/network').Net.browserHandleDialog}
+ */
+function __operitCreateV1BrowserDialog(current) {
+    /** Resolves one existing dialog and retains the historical success receipt. */
+    return async function browserHandleDialog(options) {
+        if (!options || typeof options.accept !== 'boolean') {
+            throw new TypeError('browserHandleDialog requires a boolean accept');
+        }
+        /** @type {import('../../../../../../../plugins/types/network').Net.HostBrowserDialogOptionsAction} */
+        var action = options.accept ? 'accept' : 'dismiss';
+        await current(options.accept && options.promptText !== undefined
+            ? { action: action, promptText: options.promptText }
+            : { action: action });
+        return 'OK';
+    };
+}
+
 (/**
  * Installs typed v1 adapters in the runtime's dynamic registration namespace.
  * @param {Record<string, any>} runtime
@@ -253,6 +273,17 @@ function installV1Adapters(runtime) {
     var Tools = runtime.Tools;
     var api = runtime.__operitToolPkgApi;
     __operitInstallV1SharedPreferences(runtime, api);
+    var legacyBrowserDialog = api.method()
+        .between('1.0.0', '2.0.0', __operitCreateV1BrowserDialog(Tools.Net.browserDialog))
+        .build('Tools.Net.browserHandleDialog');
+    Object.defineProperty(Tools.Net, 'browserHandleDialog', {
+        configurable: true,
+        /** Exposes the historical method only for admitted v1 invocations. */
+        get: function() {
+            var version = api.currentVersion();
+            return version === '1.0.0' || version === '1.0.1' ? legacyBrowserDialog : undefined;
+        },
+    });
     var currentSettings = Object.assign({}, Tools.SoftwareSettings);
     /** Resolves the native installation owner retained by the exact active call. */
     function environmentPackageName() {

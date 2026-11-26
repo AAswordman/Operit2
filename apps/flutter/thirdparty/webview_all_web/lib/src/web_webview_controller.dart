@@ -221,7 +221,7 @@ class WebWebViewController extends PlatformWebViewController {
   _onJavaScriptAlertDialog;
   Future<bool> Function(JavaScriptConfirmDialogRequest request)?
   _onJavaScriptConfirmDialog;
-  Future<String> Function(JavaScriptTextInputDialogRequest request)?
+  Future<String?> Function(JavaScriptTextInputDialogRequest request)?
   _onJavaScriptTextInputDialog;
   void Function(PlatformWebViewPermissionRequest request)?
   _onPlatformPermissionRequest;
@@ -642,6 +642,14 @@ class WebWebViewController extends PlatformWebViewController {
     ).evaluateJavaScript(javaScript);
   }
 
+  /// Exposes the current frame's script capability through the host interface.
+  @override
+  bool get supportsPageJavaScript => _tryReadAccessibleContentWindow() != null;
+
+  /// Browser confirm and prompt calls require their result synchronously.
+  @override
+  bool get supportsAsynchronousJavaScriptDialogs => false;
+
   @override
   Future<Object?> runJavaScriptReturningResult(String javaScript) async {
     if (_javaScriptMode == JavaScriptMode.disabled) {
@@ -1021,7 +1029,7 @@ class WebWebViewController extends PlatformWebViewController {
               message.toDart,
               url.toDart,
               defaultText?.toDart,
-            ).toJS;
+            )?.toJS;
           }).toJS;
       bridge['prompt'] = _javaScriptTextInputDialogBridge;
     }
@@ -1077,18 +1085,18 @@ class WebWebViewController extends PlatformWebViewController {
     );
   }
 
-  String _handleJavaScriptTextInputDialog(
+  String? _handleJavaScriptTextInputDialog(
     String message,
     String url,
     String? defaultText,
   ) {
-    final Future<String> Function(JavaScriptTextInputDialogRequest request)?
+    final Future<String?> Function(JavaScriptTextInputDialogRequest request)?
     callback = _onJavaScriptTextInputDialog;
     if (callback == null) {
       return defaultText ?? '';
     }
 
-    return _completeJavaScriptDialogSynchronously<String>(
+    return _completeJavaScriptDialogSynchronously<String?>(
       callback(
         JavaScriptTextInputDialogRequest(
           message: message,
@@ -1254,7 +1262,7 @@ class WebWebViewController extends PlatformWebViewController {
 
   @override
   Future<void> setOnJavaScriptTextInputDialog(
-    Future<String> Function(JavaScriptTextInputDialogRequest request)
+    Future<String?> Function(JavaScriptTextInputDialogRequest request)
     onJavaScriptTextInputDialog,
   ) async {
     _onJavaScriptTextInputDialog = onJavaScriptTextInputDialog;

@@ -107,6 +107,16 @@ void main() {
   });
 
   test(
+    'attaching a background session preserves the selected session',
+    () async {
+      await store.attachSession(_session('second'), select: false);
+      expect(store.currentTab?.id, 'first');
+      expect(store.tabs.map((tab) => tab.id), ['first', 'second']);
+      expect(sessions.activations, isEmpty);
+    },
+  );
+
+  test(
     'explicit application handoff reaches the selected session owner',
     () async {
       await store.attachSession(_session('second'));

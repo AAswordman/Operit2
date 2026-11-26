@@ -8,9 +8,11 @@ import '../../../../../../../l10n/generated/app_localizations.dart';
 Future<void> showWorkspaceBrowserAlertDialog(
   BuildContext context,
   JavaScriptAlertDialogRequest request,
+  Future<void> dismissed,
 ) async {
-  await showDialog<void>(
+  await _showBrowserDialog<void>(
     context: context,
+    dismissed: dismissed,
     builder: (context) {
       final l10n = AppLocalizations.of(context)!;
       return AlertDialog(
@@ -30,9 +32,11 @@ Future<void> showWorkspaceBrowserAlertDialog(
 Future<bool> showWorkspaceBrowserConfirmDialog(
   BuildContext context,
   JavaScriptConfirmDialogRequest request,
+  Future<void> dismissed,
 ) async {
-  final result = await showDialog<bool>(
+  final result = await _showBrowserDialog<bool>(
     context: context,
+    dismissed: dismissed,
     builder: (context) {
       final l10n = AppLocalizations.of(context)!;
       return AlertDialog(
@@ -54,13 +58,15 @@ Future<bool> showWorkspaceBrowserConfirmDialog(
   return result == true;
 }
 
-Future<String> showWorkspaceBrowserPromptDialog(
+Future<String?> showWorkspaceBrowserPromptDialog(
   BuildContext context,
   JavaScriptTextInputDialogRequest request,
+  Future<void> dismissed,
 ) async {
   final controller = TextEditingController(text: request.defaultText ?? '');
-  final result = await showDialog<String>(
+  final result = await _showBrowserDialog<String>(
     context: context,
+    dismissed: dismissed,
     builder: (context) {
       final l10n = AppLocalizations.of(context)!;
       return AlertDialog(
@@ -86,7 +92,7 @@ Future<String> showWorkspaceBrowserPromptDialog(
         ),
         actions: <Widget>[
           TextButton(
-            onPressed: () => Navigator.of(context).pop(''),
+            onPressed: () => Navigator.of(context).pop(),
             child: Text(l10n.cancel),
           ),
           FilledButton(
@@ -98,7 +104,21 @@ Future<String> showWorkspaceBrowserPromptDialog(
     },
   );
   controller.dispose();
-  return result ?? '';
+  return result;
+}
+
+/// Removes only the originating dialog when automation resolves its request.
+Future<T?> _showBrowserDialog<T>({
+  required BuildContext context,
+  required Future<void> dismissed,
+  required WidgetBuilder builder,
+}) {
+  final navigator = Navigator.of(context, rootNavigator: true);
+  final route = DialogRoute<T>(context: context, builder: builder);
+  dismissed.then((_) {
+    if (route.isActive) navigator.removeRoute(route);
+  });
+  return navigator.push(route);
 }
 
 String _hostLabel(AppLocalizations l10n, String url) {

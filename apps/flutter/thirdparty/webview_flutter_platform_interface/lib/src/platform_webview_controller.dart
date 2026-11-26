@@ -22,6 +22,19 @@ import 'webview_platform.dart' show WebViewPlatform;
 /// `implements` this interface will be broken by newly added
 /// [PlatformWebViewController] methods.
 abstract class PlatformWebViewController extends PlatformInterface {
+  /// Reports whether page scripts can be evaluated in the current document.
+  bool get supportsPageJavaScript => true;
+
+  /// Reports whether a page dialog can wait for an asynchronous response.
+  bool get supportsAsynchronousJavaScriptDialogs => true;
+
+  /// Captures the current viewport as a PNG image.
+  Future<Uint8List> captureScreenshot() {
+    throw UnsupportedError(
+      'WebView screenshots are not supported on this platform',
+    );
+  }
+
   /// Hands an explicitly approved URL to the operating system's application resolver.
   Future<bool> openExternalApplication(String url) {
     final uri = Uri.parse(url);
@@ -500,7 +513,7 @@ abstract class PlatformWebViewController extends PlatformInterface {
   /// Sets a callback that notifies the host application that the web page
   /// wants to display a JavaScript prompt() dialog.
   Future<void> setOnJavaScriptTextInputDialog(
-    Future<String> Function(JavaScriptTextInputDialogRequest request)
+    Future<String?> Function(JavaScriptTextInputDialogRequest request)
     onJavaScriptTextInputDialog,
   ) async {
     throw UnimplementedError(

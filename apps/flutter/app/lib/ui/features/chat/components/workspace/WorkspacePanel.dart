@@ -124,6 +124,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   );
   final ValueNotifier<int> _terminalSessionCount = ValueNotifier<int>(0);
   final ValueNotifier<int> _browserSessionCount = ValueNotifier<int>(0);
+  final Set<String> _attachingBrowserSessions = <String>{};
   List<core_proxy.ChatHistoryListItem>? _workspaceOverviewHistories;
   ({Object error, StackTrace stackTrace})? _workspaceOverviewHistoryError;
   WorkspaceOverviewChatScope? _workspaceOverviewChatScope;
@@ -807,17 +808,23 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       tabs.removeWhere(
         (tab) =>
             tab.kind == WorkspaceTabKind.webVisit &&
-            _webVisitSessionRegistry.sessionFor(tab.webVisitRequest!.requestId) == null,
+            _webVisitSessionRegistry.sessionFor(
+                  tab.webVisitRequest!.requestId,
+                ) ==
+                null,
       );
     }
     _session.selectedIndex = _clampSelectedIndex(
-      _session.selectedIndex, _session.tabs,
+      _session.selectedIndex,
+      _session.tabs,
     );
     _session.secondarySelectedIndex = _clampSelectedIndex(
-      _session.secondarySelectedIndex, _session.secondaryTabs,
+      _session.secondarySelectedIndex,
+      _session.secondaryTabs,
     );
     _webVisitSessionRegistry.setControls(
-      owner: this, openWebVisitTab: _openWebVisitTab,
+      owner: this,
+      openWebVisitTab: _openWebVisitTab,
     );
   }
 
@@ -1175,12 +1182,14 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     final existing = [..._session.tabs, ..._session.secondaryTabs]
         .where((tab) => tab.webVisitRequest?.requestId == request.requestId)
         .firstOrNull;
-    final tab = existing ?? WorkspaceTab(
-      kind: WorkspaceTabKind.webVisit,
-      title: _webVisitTabTitle(request),
-      icon: Icons.travel_explore,
-      webVisitRequest: request,
-    );
+    final tab =
+        existing ??
+        WorkspaceTab(
+          kind: WorkspaceTabKind.webVisit,
+          title: _webVisitTabTitle(request),
+          icon: Icons.travel_explore,
+          webVisitRequest: request,
+        );
     if (existing == null) {
       setState(() {
         _session.tabs.add(tab);
@@ -1189,13 +1198,15 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     }
     final task = _webVisitSessionRegistry.sessionFor(request.requestId);
     if (task != null) {
-      unawaited(task.response.then((_) {
-        if (!mounted) return;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _finishWebVisitTab(tab);
-        });
-        WidgetsBinding.instance.scheduleFrame();
-      }));
+      unawaited(
+        task.response.then((_) {
+          if (!mounted) return;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _finishWebVisitTab(tab);
+          });
+          WidgetsBinding.instance.scheduleFrame();
+        }),
+      );
     }
   }
 
@@ -1660,7 +1671,38 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   /// Updates the browser session counter from the owner registry.
   void _handleBrowserSessionRegistryChanged() {
-    _browserSessionCount.value = _browserSessionRegistry.sessions.length;
+    final sessions = _browserSessionRegistry.sessions;
+    _browserSessionCount.value = sessions.length;
+    for (final session in sessions) {
+      if (_browserViewStore.tabById(session.sessionId) == null &&
+          _attachingBrowserSessions.add(session.sessionId)) {
+        unawaited(_attachOwnerBrowserSession(session));
+      }
+    }
+  }
+
+  /// Attaches sessions created by automation after the workspace was loaded.
+  Future<void> _attachOwnerBrowserSession(
+    WorkspaceBrowserSessionInfo session,
+  ) async {
+    try {
+      await _browserViewStore.ensureLoaded();
+      if (!mounted ||
+          !_browserSessionRegistry.sessions.any(
+            (current) => current.sessionId == session.sessionId,
+          ))
+        return;
+      if (_browserViewStore.tabById(session.sessionId) == null) {
+        await _browserViewStore.attachSession(
+          session.toRuntimeBrowserSessionInfo(),
+          select: false,
+        );
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Failed to attach browser session: $error\n$stackTrace');
+    } finally {
+      _attachingBrowserSessions.remove(session.sessionId);
+    }
   }
 
   /// Synchronizes open browser tab titles and removes closed browser sessions.

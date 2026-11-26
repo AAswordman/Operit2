@@ -1435,7 +1435,7 @@ class WebChromeClientFlutterApiImpl {
     }
   }
 
-  Future<String> onJsPrompt(
+  Future<String?> onJsPrompt(
     int instanceId,
     String url,
     String message,
@@ -1447,8 +1447,9 @@ class WebChromeClientFlutterApiImpl {
       'WebChromeClient',
     );
     try {
-      return await instance?.onJsPrompt?.call(url, message, defaultValue) ??
-          defaultValue;
+      final callback = instance?.onJsPrompt;
+      if (callback == null) return defaultValue;
+      return await callback(url, message, defaultValue);
     } catch (error) {
       _reportOhosApiCallbackError('JavaScript prompt callback', error);
       return defaultValue;

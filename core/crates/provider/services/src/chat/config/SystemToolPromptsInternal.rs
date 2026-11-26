@@ -519,11 +519,11 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                 ),
                 tool(
-                    "browser_handle_dialog",
-                    "Accept or dismiss the currently open dialog.",
+                    "browser_dialog",
+                    "Inspect, accept, or dismiss the current alert, confirm, or prompt. get returns dialog: null when no dialog is open.",
                     "",
                     vec![
-                        param("accept", "boolean", "true to accept, false to dismiss", true, None),
+                        param("action", "string", "get, accept, or dismiss", true, None),
                         param("promptText", "string", "optional prompt text when handling a prompt dialog", false, None)
                     ],
                     "",
@@ -1758,11 +1758,11 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                 ),
                 tool(
-                    "browser_handle_dialog",
-                    "接受或取消当前打开的对话框。",
+                    "browser_dialog",
+                    "查看、接受或取消当前 alert、confirm 或 prompt。get 在没有弹窗时返回 dialog: null。",
                     "",
                     vec![
-                        param("accept", "boolean", "true 表示接受，false 表示取消", true, None),
+                        param("action", "string", "get 查看；accept 确认；dismiss 取消", true, None),
                         param("promptText", "string", "可选，处理 prompt 时输入的文本", false, None)
                     ],
                     "",

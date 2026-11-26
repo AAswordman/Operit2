@@ -430,7 +430,7 @@ class WebViewController {
   /// Sets a callback that notifies the host application that the web page
   /// wants to display a JavaScript prompt() dialog.
   Future<void> setOnJavaScriptTextInputDialog(
-    Future<String> Function(JavaScriptTextInputDialogRequest request)
+    Future<String?> Function(JavaScriptTextInputDialogRequest request)
     onJavaScriptTextInputDialog,
   ) async {
     return platform.setOnJavaScriptTextInputDialog(onJavaScriptTextInputDialog);

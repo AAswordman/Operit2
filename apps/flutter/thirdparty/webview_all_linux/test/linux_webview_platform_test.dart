@@ -1490,6 +1490,15 @@ void main() {
       'action': 'confirm',
       'text': 'typed value',
     });
+    await controller.setOnJavaScriptTextInputDialog((_) async => null);
+    await _emitLinuxWebViewEvent(<String, Object?>{
+      'type': 'javaScriptDialog', 'requestId': 24, 'dialogType': 'prompt',
+      'message': 'name', 'url': 'https://example.test',
+    });
+    await _flushAsyncEvents();
+    expect(calls.last.arguments, <String, Object?>{
+      'requestId': 24, 'action': 'cancel', 'text': null,
+    });
   });
 
   test('uses safe JavaScript dialog defaults without Linux handlers', () async {

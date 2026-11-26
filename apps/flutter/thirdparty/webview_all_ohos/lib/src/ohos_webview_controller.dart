@@ -513,7 +513,7 @@ class OhosWebViewController extends PlatformWebViewController {
       WeakReference<OhosWebViewController> weakReference,
     ) {
       return (String url, String message, String defaultValue) async {
-        final Future<String> Function(JavaScriptTextInputDialogRequest)?
+        final Future<String?> Function(JavaScriptTextInputDialogRequest)?
         callback = weakReference.target?._onJavaScriptPrompt;
         if (callback != null) {
           final JavaScriptTextInputDialogRequest request =
@@ -522,7 +522,7 @@ class OhosWebViewController extends PlatformWebViewController {
                 url: url,
                 defaultText: defaultValue,
               );
-          final String result = await callback.call(request);
+          final String? result = await callback.call(request);
           return result;
         }
         return defaultValue;
@@ -558,7 +558,7 @@ class OhosWebViewController extends PlatformWebViewController {
   _onJavaScriptAlert;
   Future<bool> Function(JavaScriptConfirmDialogRequest request)?
   _onJavaScriptConfirm;
-  Future<String> Function(JavaScriptTextInputDialogRequest request)?
+  Future<String?> Function(JavaScriptTextInputDialogRequest request)?
   _onJavaScriptPrompt;
 
   void Function(ScrollPositionChange scrollPositionChange)?
@@ -1334,12 +1334,13 @@ ${params.functionBody}
 
   @override
   Future<void> setOnJavaScriptTextInputDialog(
-    Future<String> Function(JavaScriptTextInputDialogRequest request)
+    Future<String?> Function(JavaScriptTextInputDialogRequest request)
     onJavaScriptTextInputDialog,
   ) async {
     _onJavaScriptPrompt = onJavaScriptTextInputDialog;
     return _webChromeClient.setSynchronousReturnValueForOnJsPrompt(true);
   }
+
 }
 
 /// Ohos implementation of [PlatformWebViewPermissionRequest].

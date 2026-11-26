@@ -379,42 +379,6 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
 
   /// Adds a provider model from the remote catalog or a user-entered model ID.
   Future<void> _addProviderModel(core_proxy.ProviderProfile provider) async {
-    final List<core_proxy.AvailableProviderModel> availableModels;
-    final core_proxy.ModelCatalogStatus catalogStatus;
-    try {
-      availableModels = await widget.clients.preferencesModelConfigManager
-          .getAvailableProviderModels(providerId: provider.id);
-      catalogStatus = await widget.clients.preferencesModelConfigManager
-          .getModelCatalogStatus();
-    } on CoreLinkError catch (error) {
-      if (!mounted) {
-        return;
-      }
-      final action = await _AddProviderModelErrorDialog.show(
-        context: context,
-        errorDetails: core_proxy.CoreProxyErrorDetails.fromCoreLinkError(error),
-        providerName: provider.name,
-        showCustomAction: true,
-      );
-      if (action == _AddProviderModelErrorAction.custom && mounted) {
-        try {
-          await _createCustomProviderModel(provider);
-        } on CoreLinkError catch (error) {
-          if (!mounted) {
-            return;
-          }
-          await _AddProviderModelErrorDialog.show(
-            context: context,
-            errorDetails: core_proxy.CoreProxyErrorDetails.fromCoreLinkError(
-              error,
-            ),
-            providerName: provider.name,
-          );
-        }
-      }
-      return;
-    }
-
     final existingModelIds = provider.models.map((model) => model.id).toSet();
     List<core_proxy.AvailableProviderModel> selectable(
       List<core_proxy.AvailableProviderModel> models,
@@ -424,15 +388,23 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
           .toList(growable: false);
     }
 
-    if (!mounted) {
-      return;
+    final manager = widget.clients.preferencesModelConfigManager;
+    Future<_AvailableModelsReload> loadModels() async {
+      final models = await manager.getAvailableProviderModels(
+        providerId: provider.id,
+      );
+      final status = await manager.getModelCatalogStatus();
+      return _AvailableModelsReload(
+        models: selectable(models),
+        catalogStatus: status,
+      );
     }
+
     final selection = await _AvailableModelDialog.show(
       context: context,
-      models: selectable(availableModels),
-      catalogStatus: catalogStatus,
+      initialLoad: loadModels(),
+      providerName: provider.name,
       onRetryCatalog: () async {
-        final manager = widget.clients.preferencesModelConfigManager;
         final status = await manager.refreshModelCatalog();
         final models = await manager.getAvailableProviderModels(
           providerId: provider.id,
@@ -934,7 +906,8 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
     final invalidFields = _formKey.currentState!.validateGranularly();
     if (invalidFields.any(
       (field) =>
-          field.context.findAncestorWidgetOfExactType<ExpansionTile>()
+          field.context
+              .findAncestorWidgetOfExactType<ExpansionTile>()
               ?.controller ==
           _advancedController,
     )) {
@@ -1120,7 +1093,8 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                               setState(() => _keyPool = entries),
                           onTestingChanged: (value) =>
                               setState(() => _keyTesting = value),
-                          onTestEntry: widget.provider?.models.isNotEmpty == true
+                          onTestEntry:
+                              widget.provider?.models.isNotEmpty == true
                               ? _testPoolEntry
                               : null,
                         ),
@@ -1189,18 +1163,46 @@ class _AvailableModelDialog extends StatefulWidget {
   final core_proxy.ModelCatalogStatus catalogStatus;
   final Future<_AvailableModelsReload> Function() onRetryCatalog;
 
+  /// Opens immediately while the available models and catalog status load.
   static Future<_AvailableModelSelection?> show({
     required BuildContext context,
-    required List<core_proxy.AvailableProviderModel> models,
-    required core_proxy.ModelCatalogStatus catalogStatus,
+    required Future<_AvailableModelsReload> initialLoad,
+    required String providerName,
     required Future<_AvailableModelsReload> Function() onRetryCatalog,
   }) {
     return showDialog<_AvailableModelSelection>(
       context: context,
-      builder: (context) => _AvailableModelDialog(
-        models: models,
-        catalogStatus: catalogStatus,
-        onRetryCatalog: onRetryCatalog,
+      builder: (context) => FutureBuilder<_AvailableModelsReload>(
+        future: initialLoad,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Dialog(
+              child: SizedBox(width: 320, height: 240, child: M3LoadingPane()),
+            );
+          }
+          if (snapshot.hasError) {
+            final error = snapshot.error!;
+            if (error is! CoreLinkError) {
+              Error.throwWithStackTrace(error, snapshot.stackTrace!);
+            }
+            return _AddProviderModelErrorDialog(
+              errorDetails: core_proxy.CoreProxyErrorDetails.fromCoreLinkError(
+                error,
+              ),
+              providerName: providerName,
+              showCustomAction: true,
+              onCustom: () =>
+                  Navigator.of(context).pop(const _AvailableModelCustom()),
+              onDismiss: () => Navigator.of(context).pop(),
+            );
+          }
+          final loaded = snapshot.requireData;
+          return _AvailableModelDialog(
+            models: loaded.models,
+            catalogStatus: loaded.catalogStatus,
+            onRetryCatalog: onRetryCatalog,
+          );
+        },
       ),
     );
   }
@@ -4686,13 +4688,15 @@ class _TestResultBubbleState extends State<_TestResultBubble> {
                             child: Icon(
                               item.success
                                   ? Icons.check_rounded
-                                  : connectionTestRestriction(item.error) != null
+                                  : connectionTestRestriction(item.error) !=
+                                        null
                                   ? Icons.pause_rounded
                                   : Icons.close_rounded,
                               size: 13,
                               color: item.success
                                   ? _testPassedColor(isDark)
-                                  : connectionTestRestriction(item.error) != null
+                                  : connectionTestRestriction(item.error) !=
+                                        null
                                   ? _testRestrictedColor(isDark)
                                   : colorScheme.error,
                             ),
@@ -7567,8 +7571,12 @@ class _AddProviderModelErrorDialog extends StatelessWidget {
     required this.errorDetails,
     required this.providerName,
     required this.showCustomAction,
+    this.onCustom,
+    this.onDismiss,
   });
 
+  final VoidCallback? onCustom;
+  final VoidCallback? onDismiss;
   final core_proxy.CoreProxyErrorDetails errorDetails;
   final String providerName;
 
@@ -7622,13 +7630,19 @@ class _AddProviderModelErrorDialog extends StatelessWidget {
       actions: <Widget>[
         if (showCustomAction)
           TextButton(
-            onPressed: () =>
-                Navigator.of(context).pop(_AddProviderModelErrorAction.custom),
+            onPressed:
+                onCustom ??
+                () => Navigator.of(
+                  context,
+                ).pop(_AddProviderModelErrorAction.custom),
             child: Text(l10n.settingsModelCustomModel),
           ),
         FilledButton(
-          onPressed: () =>
-              Navigator.of(context).pop(_AddProviderModelErrorAction.dismiss),
+          onPressed:
+              onDismiss ??
+              () => Navigator.of(
+                context,
+              ).pop(_AddProviderModelErrorAction.dismiss),
           child: Text(l10n.ok),
         ),
       ],

@@ -124,6 +124,14 @@ fvm flutter test test/core/browser/workspace_browser_page_download_test.dart tes
 
 ## 会话回归验证
 
+浏览器工具包统一使用 `dialog({ action, promptText? })`，SDK 对应 `Tools.Net.browserDialog`，Core 对应 `browser_dialog`。`action` 必填，仅支持 `get`、`accept`、`dismiss`。`get` 返回 `{ "dialog": null }` 或包含 `type`、`message`、`url`、`defaultValue` 的弹窗对象，不关闭弹窗；`accept` 确认，`dismiss` 取消。`promptText` 仅允许在接受 prompt 时传入，省略保留默认文本，空字符串提交空内容，取消返回 null。处理不存在的弹窗会报错。新版不再提供 `handle_dialog`、`accept` 布尔参数和预设下一次响应接口。
+
+`plugins/types-v1` 是冻结的历史契约，保持字节不变。API 1.0.0 / 1.0.1 的 `Tools.Net.browserHandleDialog({ accept, promptText? })` 和直接 `toolCall('browser_handle_dialog', ...)` 由 SDK v1 适配层转换为 `browser_dialog`，成功仍返回历史字符串 `OK`，Host 错误继续传播。v1 的取消动作忽略 promptText；新版使用严格参数检查。API 2.0.0 不暴露旧方法，也不重写旧工具名。
+
+工作区浏览器按会话保存待处理的 JavaScript 对话框。点击、执行脚本或导航触发对话框时，自动化操作提前返回 `dialog` 元数据，后续由 `dialog` 工具或用户界面处理。工具处理后立即清理状态并关闭对应界面，会话关闭时终止待处理请求。独立 Chromium Host 监听 `Page.javascriptDialogOpening` / `Page.javascriptDialogClosed`，触发弹窗的 CDP 命令会返回带弹窗信息的暂停错误，允许下一次工具调用查询和处理，避免等到命令超时。对话框协调测试在 `apps/flutter/app` 使用 `fvm flutter test test/core/browser/runtime_browser_dialogs_test.dart` 运行。原生 WebView 弹窗及首个导航触发弹窗仍需设备验证。
+
+Web iframe 的页面 JavaScript 执行受同源访问限制。原生 JavaScript 对话框要求同步返回，不能等待后续异步工具调用；平台接口通过 `supportsAsynchronousJavaScriptDialogs` 明确报告不支持，工作区不注册异步弹窗拦截，`dialog` 工具明确报错。工具没有预设下一次答案模式。异步处理支持由实际承载浏览器的 Host 决定；Web 客户端连接原生浏览器 Owner 时使用该 Owner 的能力。
+
 Flutter 测试覆盖并发创建的正序与逆序返回、排队创建及错误传播、未打开工作区的访问、延迟展示、展示异常、并发完成与取消、迟到创建、脚本无响应、嵌套休眠、视图实例保持和偏移后的触摸命中。它们验证共享生命周期和控制器契约；各平台真实 WebView 的渲染、输入和后台行为仍需设备验证。
 
 ### 离屏访问回归

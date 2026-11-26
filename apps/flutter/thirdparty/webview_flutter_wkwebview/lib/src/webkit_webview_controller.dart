@@ -284,7 +284,7 @@ class WebKitWebViewController extends PlatformWebViewController {
           },
       runJavaScriptTextInputPanel:
           (_, __, String prompt, String? defaultText, WKFrameInfo frame) async {
-            final Future<String> Function(
+            final Future<String?> Function(
               JavaScriptTextInputDialogRequest request,
             )?
             callback = weakThis.target?._onJavaScriptTextInputDialog;
@@ -294,7 +294,7 @@ class WebKitWebViewController extends PlatformWebViewController {
                 url: await frame.request?.getUrl() ?? '',
                 defaultText: defaultText,
               );
-              final String result = await callback.call(request);
+              final String? result = await callback.call(request);
               return result;
             }
 
@@ -377,7 +377,7 @@ class WebKitWebViewController extends PlatformWebViewController {
   _onJavaScriptAlertDialog;
   Future<bool> Function(JavaScriptConfirmDialogRequest request)?
   _onJavaScriptConfirmDialog;
-  Future<String> Function(JavaScriptTextInputDialogRequest request)?
+  Future<String?> Function(JavaScriptTextInputDialogRequest request)?
   _onJavaScriptTextInputDialog;
 
   void Function(ScrollPositionChange scrollPositionChange)?
@@ -992,11 +992,12 @@ class WebKitWebViewController extends PlatformWebViewController {
 
   @override
   Future<void> setOnJavaScriptTextInputDialog(
-    Future<String> Function(JavaScriptTextInputDialogRequest request)
+    Future<String?> Function(JavaScriptTextInputDialogRequest request)
     onJavaScriptTextInputDialog,
   ) async {
     _onJavaScriptTextInputDialog = onJavaScriptTextInputDialog;
   }
+
 
   // WKWebView does not support removing a single user script, so all user
   // scripts and all message handlers are removed instead. And the JavaScript

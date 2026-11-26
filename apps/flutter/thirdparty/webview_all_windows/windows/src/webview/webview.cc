@@ -1308,6 +1308,10 @@ void Webview::SetJavaScriptDialogCallbacksEnabled(bool alert, bool confirm,
   java_script_alert_dialog_enabled_ = alert;
   java_script_confirm_dialog_enabled_ = confirm;
   java_script_prompt_dialog_enabled_ = prompt;
+  wil::com_ptr<ICoreWebView2Settings> settings;
+  if (SUCCEEDED(webview_->get_Settings(settings.put()))) {
+    settings->put_AreDefaultScriptDialogsEnabled(!(alert || confirm || prompt));
+  }
 }
 
 bool Webview::SetUserAgent(const std::string *user_agent) {

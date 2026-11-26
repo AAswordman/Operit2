@@ -270,13 +270,18 @@ export namespace Net {
   }
 
   /**
-   * Chooses how an active browser alert, confirmation, or prompt is resolved.
+   * Selects inspection, confirmation, or cancellation of a page dialog.
    */
-  export interface HostBrowserHandleDialogOptions {
+  export type HostBrowserDialogOptionsAction = "get" | "accept" | "dismiss";
+
+  /**
+   * Inspects or resolves an active browser alert, confirmation, or prompt.
+   */
+  export interface HostBrowserDialogOptions {
     /**
-     * Accepts the dialog when true and dismisses it when false.
+     * Selects get, accept, or dismiss for the current dialog.
      */
-    accept: boolean;
+    action: HostBrowserDialogOptionsAction;
     /**
      * Supplies text entered into a prompt dialog before it is accepted.
      */
@@ -743,6 +748,10 @@ export namespace Net {
    */
   function browserConsoleMessages(options?: HostBrowserConsoleMessagesOptions): Promise<string>;
   /**
+   * Inspect, accept, or dismiss an active dialog.
+   */
+  function browserDialog(options: HostBrowserDialogOptions): Promise<string>;
+  /**
    * Drag between two elements by snapshot refs.
    */
   function browserDrag(options: HostBrowserDragOptions): Promise<string>;
@@ -759,10 +768,6 @@ export namespace Net {
    * Fill multiple form fields in the browser session.
    */
   function browserFillForm(options: HostBrowserFillFormOptions): Promise<string>;
-  /**
-   * Handle an active dialog.
-   */
-  function browserHandleDialog(options: HostBrowserHandleDialogOptions): Promise<string>;
   /**
    * Hover over an element by snapshot ref.
    */
