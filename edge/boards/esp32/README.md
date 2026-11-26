@@ -371,7 +371,7 @@ size improvement. These options are not part of the release configuration.
 Compressing the earlier image as an ordinary XZ file produced 2,008,824 bytes;
 that archive is not a bootable firmware image and does not count as partition
 headroom. The initial target was **10% of the original image**, about
-**399,755 bytes** (a 90% reduction). The current image is still **97.98%** of
+**399,755 bytes** (a 90% reduction). That intermediate image retained **97.98%** of
 the original. The target was subsequently relaxed: about 30% is also acceptable;
 there is no mandatory 10% limit. These compiler optimizations do not establish
 a theoretical minimum or meet either size target. Further changes must still run the real firmware capacity check.
@@ -392,7 +392,7 @@ an independent model request. The connection indicator reads the shared Space
 connection directly. Local settings, pairing and Space consent remain available;
 chat browsing, plugin browsing, new-conversation and audio controls are hidden.
 
-The checked remote display image is **3,349,184 bytes**, **83.78%** of the original
+The initial checked remote display image was **3,349,184 bytes**, **83.78%** of the original
 3,997,552-byte task-cat image. It leaves **648,512 bytes** in the unchanged
 application partition and saves **648,368 bytes (16.22%)** against that original.
 Carrier selection saved 106,048 bytes, typed node-record decoder sharing saved
@@ -401,7 +401,8 @@ against the preceding 3,453,072-byte build. It has **not** reached the accepted
 approximate 30% target
 (about 1,199,266 bytes). Shared node/Space persistence, protocol processing and
 native networking still contribute substantial code. These measurements do not
-establish a minimum size.
+establish a minimum size. The later measurements and 60% target are recorded
+in [Further remote display reduction](#further-remote-display-reduction-2026-11-26).
 
 The board composes `StreamHostPeerLink` through `runtime_profile.rs`, shared with
 the simulator. It reuses the existing TCP and UART framing and supplies the
@@ -421,8 +422,8 @@ decoder instantiations; constrained current-schema reads retain their direct byt
 path. Schema migration, transaction boundaries and durable formats are unchanged.
 
 Both compositions passed actual Xtensa release compilation, ABI inspection and
-image capacity checks. The current default complete build is **3,666,816 bytes**,
-compared with 3,771,184 bytes before token/text read sharing. COM5 is running the new
+image capacity checks. At this stage the default complete build was **3,666,816 bytes**,
+compared with 3,771,184 bytes before token/text read sharing. COM5 was updated to that
 remote package, with Wi-Fi connected and saved pairing present. NVS usage was
 stable at 335 entries across twenty health requests (336 before this update).
 Those requests reported no session/allocation diagnostic; the last sample had
@@ -471,6 +472,89 @@ pairing, Space and layout data. A missing remote package fails without falling b
 to the default package. Switching to the complete composition uses the existing
 build/update commands without `--remote-display`.
 
+### Further remote display reduction (2026-11-26)
+
+The reproducible remote display build is **2,889,056 bytes**, **72.27%** of the
+original 3,997,552-byte image. It saves **1,108,496 bytes (27.73%)** and leaves
+**1,108,640 bytes** in the unchanged 3,997,696-byte application partition.
+The current requested target is **60% of the original**, at most **2,398,531
+bytes**. This build is still **490,525 bytes above that target**; the result is
+not a minimum-size claim.
+
+| Additional measurement | Application image bytes |
+| --- | ---: |
+| Previous hardware-tested remote display | 3,349,184 |
+| Standard library size optimization | 3,057,216 |
+| Immediate panic abort | 2,977,456 |
+| Native call-handler composition | 2,945,760 |
+| Visitor inlining hints and native ROM formatting | 2,903,520 |
+| Xtensa linker size relaxation | 2,895,568 |
+| Shared generated field-name lookup, initial dependency probe | 2,888,784 |
+| Rebuild with the branch dependency versions restored | 2,889,056 |
+| Default complete application with the same final dependencies | 3,273,760 |
+
+The first reduction also includes opt-in removal of application log formatting
+and reuse of the typed JSON slice decoder for selected materialized records.
+Other products keep their normal logging and JSON conversion unless they enable
+these features. The remote display composition installs `NativeClient` with the
+same native handlers; the shared router still enforces pairing, origin, Space
+membership and authorization. The default standalone composition retains
+`EdgeNode`, built-in device services and speech streams.
+
+The standard library uses its `optimize_for_size` feature. Its stable sort may
+use a 4 KiB scratch buffer, so firmware worker stacks must be checked with real
+admission work. Rust panics abort immediately and omit the Rust panic hook and
+panic text; `Result` errors, USB health and native crash backtraces remain.
+Native backtraces require the matching ELF for symbol resolution.
+
+The board disables Wi-Fi enterprise authentication, WPA3 SAE and OWE; its station
+configuration exposes open or WPA/WPA2 Personal credentials. ROM nano C formatting
+does not support 64-bit integer format specifiers or C99 positional arguments.
+Board UI formatting uses supported bounded fields. Standalone HTTP requests
+provide authorization headers and do not configure IDF Digest authentication,
+which would require full C formatting for its 64-bit nonce. Rust formatting,
+JSON numbers and Link integer widths are unchanged.
+
+`editor/prepare-serde.py` prepares a board-local overlay from a checksummed
+Serde derive archive. Generated text/binary field identifiers share a table
+lookup; ordinary and borrowed identifiers retain their original fallback paths.
+Aliases, duplicate and missing fields, unknown fields, flattened content, enum
+representations and RawValue are compared against upstream derive in
+`editor/tests/serde-compat`. The preparation verifies both source and manifest
+on repeated builds; other products and the Cargo registry are untouched.
+
+COM5 was updated to the final **2,889,056-byte** image without erasing NVS.
+It boots and shows the saved pairing as offline. Twenty consecutive UART health
+requests completed with increasing uptime and no session or allocation failure.
+The final sample had 82,728 free heap bytes, a 73,728-byte largest block, 72,520
+minimum free heap bytes and 2,700 bytes of main-task stack high-water headroom.
+NVS stayed at 336 entries before and after this final update and throughout the
+samples. The earlier 2,888,784-byte candidate also ran for 3,875,733 ms without a
+reported session/allocation failure. No live user Core was connected; these runs
+do not establish physical pairing/admission or end-to-end task-cat rendering
+after this optimization. The default complete application passed compilation,
+ABI and partition checks but was not flashed.
+
+Additional experiments were withdrawn: more aggressive MIR optimization grew
+the image to 2,903,824 bytes, shared map-visitor state saved only 3,424 bytes,
+specializing journal-free store branches saved only 3,968 bytes, concrete Space
+contexts saved 2,272 bytes, and restricting MIR/cross-crate inlining saved only
+2,384 bytes. These compiler experiments were not retained. A root-only
+virtual function elimination experiment incorrectly removed required runtime
+and cryptographic functions; its tiny image was rejected and never flashed.
+Whole-build virtual function elimination also encountered invalid LLVM bitcode.
+Native LTO across all C libraries hit ESP-IDF section conflicts; limiting it to
+networking, HTTP, mDNS and NVS produced a 2,886,544-byte image, saving just 2,512
+bytes. That additional toolchain complexity was withdrawn as well.
+
+The prepared derive overlay passed 46 production Core/Edge TCP regression tests,
+including multi-Core pairing with one admitted Space, restart and departure
+recovery, authorization rejection and the original task-cat scene assets.
+The default store suite passed 373 tests with three existing ignored tests.
+Nine preparation/ABI tests, four upstream-versus-prepared derive compatibility
+tests, two native-client tests and the selected compact JSON/logging integration
+tests passed. The production plugin parse gate passed for 59 packaged artifacts.
+
 ### Startup and Wi-Fi size probes (2026-11-26)
 
 Two build-only examples isolate the startup and networking costs from the Edge
@@ -485,7 +569,7 @@ display, fonts, audio or task-cat services.
 | --- | ---: | ---: |
 | Rust/ESP-IDF startup and idle loop | 169,888 | 4.25% |
 | WPA2 Wi-Fi probe | 681,968 | 17.06% |
-| Current complete Edge application | 3,916,736 | 97.98% |
+| Complete Edge application at probe time | 3,916,736 | 97.98% |
 | Initial 10% target | about 399,755 | 10% |
 | Subsequently accepted 30% target | about 1,199,266 | 30% |
 
@@ -530,7 +614,8 @@ unchanged application partition. Sharing one packed-storage encoder between its
 counting and writing passes saves 656 image bytes without changing the stored
 format, dictionary, allocation budget or enabled device services. Further firmware
 changes must rerun `npm run check:firmware --prefix edge/boards/esp32/editor`;
-the remaining Flash margin is small.
+that build had only 144 bytes of Flash margin. Later remote-display reductions
+are recorded above.
 
 The image was installed on the physical ESP32 with the data-preserving update
 path. After reboot, the device still reported saved pairing credentials and connected
