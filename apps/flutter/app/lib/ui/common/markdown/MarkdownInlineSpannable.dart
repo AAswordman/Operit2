@@ -148,6 +148,7 @@ InlineSpan _inlineSpan(
                   MarkdownFileScope.maybeOf(context)?.clients,
                   onOpenFile: MarkdownLinkScope.maybeOf(context)?.onOpenFile,
                   basePath: MarkdownFileScope.maybeOf(context)?.basePath,
+                  nodeId: MarkdownFileScope.maybeOf(context)?.nodeId,
                 ),
           ),
   );

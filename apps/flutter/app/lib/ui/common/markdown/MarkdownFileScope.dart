@@ -14,6 +14,7 @@ String resolveMarkdownFilePath(
   if (value.isEmpty || base == null || base.isEmpty) return value;
   if ((decodePath && value.startsWith('#')) ||
       value.startsWith('/') ||
+      RegExp(r'^[^/\\:]{2,}:/').hasMatch(value) ||
       RegExp(r'^[A-Za-z][A-Za-z0-9+.-]*:').hasMatch(value)) {
     return value;
   }
@@ -25,7 +26,10 @@ String resolveMarkdownFilePath(
   } on FormatException {
     return value;
   }
-  final parts = base.split('/').where((p) => p.isNotEmpty).toList();
+  final qualifiedBase = RegExp(r'^([^/\\:]{2,}):(/.*)$').firstMatch(base);
+  final basePath = qualifiedBase == null ? base : qualifiedBase[2]!;
+  final owner = qualifiedBase == null ? '' : '${qualifiedBase[1]}:';
+  final parts = basePath.split('/').where((p) => p.isNotEmpty).toList();
   for (final part in path.split('/')) {
     if (part.isEmpty || part == '.') continue;
     if (part == '..') {
@@ -35,7 +39,7 @@ String resolveMarkdownFilePath(
       parts.add(part);
     }
   }
-  return '/${parts.join('/')}';
+  return '$owner/${parts.join('/')}';
 }
 
 /// Returns the directory context owned by this message, independent of live text.

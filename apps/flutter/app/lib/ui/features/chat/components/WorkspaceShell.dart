@@ -85,15 +85,13 @@ class WorkspaceShell extends StatelessWidget {
       path: resolved,
       relativePath: resolved,
       readText: onReadWorkspaceTextFile,
-      resolveOpener: () async => resolved.startsWith('/')
-          ? (await PluginWorkspacePresentation.forFile(
-              clients: _clients,
-              path: resolved,
-              relativePath: resolved,
-              language: language,
-              chatId: currentChatId,
-            )).firstOrNull
-          : null,
+      resolveOpener: () async => (await PluginWorkspacePresentation.forFile(
+        clients: _clients,
+        path: resolved,
+        relativePath: resolved,
+        language: language,
+        chatId: currentChatId,
+      )).firstOrNull,
     );
     workspaceSession.isOpen = true;
     if (identical(session, workspaceSession)) {

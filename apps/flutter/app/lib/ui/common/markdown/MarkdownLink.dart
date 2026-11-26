@@ -35,6 +35,9 @@ String? markdownFileLinkPath(String source) {
   if (value.isEmpty || value.startsWith('#') || value.startsWith('//')) {
     return null;
   }
+  // Node IDs can begin with a digit and therefore are not URI schemes.
+  final vfsPath = composeDslVfsImagePath(value);
+  if (vfsPath != null && vfsPath.indexOf(':/') > 1) return vfsPath;
   final uri = Uri.tryParse(value);
   if (uri == null) return null;
   try {
@@ -99,19 +102,27 @@ void openMarkdownFileLink(
   GeneratedCoreProxyClients? clients, {
   Future<void> Function(String path)? onOpenFile,
   String? basePath,
+  String? nodeId,
 }) {
   final filePath = markdownFileLinkPath(url);
-  final path = filePath == null
+  final resolved = filePath == null
       ? null
       : resolveMarkdownFilePath(filePath, basePath, decodePath: false);
+  final owner = nodeId?.trim();
+  final path =
+      resolved != null &&
+          resolved.startsWith('/') &&
+          owner != null &&
+          owner.isNotEmpty
+      ? '$owner:$resolved'
+      : resolved;
   if (path == null || (clients == null && onOpenFile == null)) {
     activateMarkdownLink(url, null);
     return;
   }
   unawaited(() async {
     try {
-      if (onOpenFile != null &&
-          !RegExp(r'^[A-Za-z][A-Za-z0-9+.-]*:').hasMatch(path)) {
+      if (onOpenFile != null) {
         await onOpenFile(path);
         return;
       }

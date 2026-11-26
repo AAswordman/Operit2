@@ -28,6 +28,19 @@ void main() {
       resolveMarkdownFilePath('../../../../escape', old),
       '../../../../escape',
     );
+    for (final base in [
+      '12345678-abcd:/operitapp/outputs/family',
+      '12345678-abcd://operitapp/outputs/family',
+    ]) {
+      expect(
+        resolveMarkdownFilePath('../shared/中文%20图.png', base),
+        '12345678-abcd:/operitapp/outputs/shared/中文 图.png',
+      );
+      expect(
+        resolveMarkdownFilePath('../../../../escape', base),
+        '../../../../escape',
+      );
+    }
   });
   test(
     'absolute, qualified, network and embedded sources retain their meaning',
@@ -35,6 +48,7 @@ void main() {
       for (final value in [
         '/virtual/linux/tmp/file',
         'core-node:/operitapp/outputs/x/a.png',
+        '12345678-abcd://operitapp/outputs/x/a.png',
         'https://example.com/a.png',
         'data:image/png;base64,AA==',
         '#section',

@@ -4,12 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/common/markdown/MarkdownFileScope.dart';
 import 'package:operit2/ui/common/markdown/MarkdownInlineSpannable.dart';
 import 'package:operit2/ui/common/markdown/MarkdownLink.dart';
 import 'package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceSession.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceTabModels.dart';
+import 'package:operit2/ui/features/chat/components/workspace/file_preview/WorkspaceOpenOnlyPreview.dart';
 
 void main() {
   test('file destinations support relative paths and virtual file URIs', () {
@@ -23,6 +25,10 @@ void main() {
       (
         'origin:/operitapp/outputs/report.txt',
         'origin:/operitapp/outputs/report.txt',
+      ),
+      (
+        '12345678-abcd:/operitapp/outputs/archive.zip',
+        '12345678-abcd:/operitapp/outputs/archive.zip',
       ),
     ]) {
       expect(markdownFileLinkPath(source), expected, reason: source);
@@ -46,42 +52,52 @@ void main() {
   for (final (source, expected, kind) in [
     (
       'xxx.txt',
-      '/operitapp/outputs/old/xxx.txt',
+      'origin:/operitapp/outputs/old/xxx.txt',
       WorkspaceFilePreviewKind.text,
     ),
     (
       '../src/main.dart',
-      '/operitapp/outputs/src/main.dart',
+      'origin:/operitapp/outputs/src/main.dart',
       WorkspaceFilePreviewKind.text,
     ),
     (
       './中文%20文件.txt',
-      '/operitapp/outputs/old/中文 文件.txt',
+      'origin:/operitapp/outputs/old/中文 文件.txt',
       WorkspaceFilePreviewKind.text,
     ),
     (
       './literal%2520%23%3F.txt',
-      '/operitapp/outputs/old/literal%20#?.txt',
+      'origin:/operitapp/outputs/old/literal%20#?.txt',
       WorkspaceFilePreviewKind.text,
     ),
     (
       '%23notes.txt',
-      '/operitapp/outputs/old/#notes.txt',
+      'origin:/operitapp/outputs/old/#notes.txt',
       WorkspaceFilePreviewKind.text,
     ),
     (
       '/mnt/project/README.md',
-      '/mnt/project/README.md',
+      'origin:/mnt/project/README.md',
       WorkspaceFilePreviewKind.markdown,
     ),
     (
       'file:///mnt/project/report.pdf',
-      '/mnt/project/report.pdf',
+      'origin:/mnt/project/report.pdf',
       WorkspaceFilePreviewKind.pdf,
     ),
     (
       'vfs:///mnt/project/archive.zip',
-      '/mnt/project/archive.zip',
+      'origin:/mnt/project/archive.zip',
+      WorkspaceFilePreviewKind.binary,
+    ),
+    (
+      'other-node:/operitapp/outputs/archive.zip',
+      'other-node:/operitapp/outputs/archive.zip',
+      WorkspaceFilePreviewKind.binary,
+    ),
+    (
+      '12345678-abcd://operitapp/outputs/archive.zip',
+      '12345678-abcd://operitapp/outputs/archive.zip',
       WorkspaceFilePreviewKind.binary,
     ),
   ]) {
@@ -167,8 +183,61 @@ void main() {
       );
       expect(reads.length, tab.textDocument == null ? 0 : 1);
       expect(tester.takeException(), isNull);
+      if (kind == WorkspaceFilePreviewKind.binary) {
+        final externalOpens = <String>[];
+        await tester.pumpWidget(
+          MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            locale: const Locale('en'),
+            home: Scaffold(
+              body: WorkspaceOpenOnlyPreview(
+                tab: tab,
+                icon: Icons.insert_drive_file_outlined,
+                title: 'File preview',
+                detail: 'Open with an external application',
+                onOpenWorkspaceFile: (path) async => externalOpens.add(path),
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('Open file'));
+        await tester.pumpAndSettle();
+        expect(externalOpens, [expected]);
+        expect(tester.takeException(), isNull);
+      }
     });
   }
+
+  test(
+    'links retain a qualified directory owner without a preview host',
+    () async {
+      final opened = <String>[];
+      openMarkdownFileLink(
+        '../archive.zip',
+        null,
+        basePath: 'folder-owner://operitapp/workspaces/project/reports',
+        nodeId: 'message-writer',
+        onOpenFile: (path) async => opened.add(path),
+      );
+      await Future<void>.value();
+      expect(opened, [
+        'folder-owner:/operitapp/workspaces/project/archive.zip',
+      ]);
+    },
+  );
+
+  test('legacy links without a saved node retain their directory', () async {
+    final opened = <String>[];
+    openMarkdownFileLink(
+      'archive.zip',
+      null,
+      basePath: '/operitapp/outputs/old',
+      onOpenFile: (path) async => opened.add(path),
+    );
+    await Future<void>.value();
+    expect(opened, ['/operitapp/outputs/old/archive.zip']);
+  });
 
   test(
     'reopening a file in the secondary pane retains that pane and draft',
