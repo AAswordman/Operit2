@@ -367,7 +367,9 @@ function renderNativeEntity(ctx: ComposeDslContext, input: NativeEntityInput, li
       standardButton("entity-tag-remove-" + tag.id, "删除", () => { assertOwner(); update({ tagDraft: copy(tag), tagDeleting: true }); }),
     ])), { paddingStart: 0, paddingTop: 0, paddingEnd: 0, paddingBottom: 0 }), [standardButton("entity-tag-create", "创建标签", () => { assertOwner(); update({ tagDraft: { id: "", name: "", description: "", promptContent: "", tagType: "CUSTOM" } }); }), standardButton("entity-cancel", "完成", close)], 620, 560);
   } else if (state.deleting) {
-    panel = shell("确认删除", text(`确定删除“${state.card?.name ?? state.group?.name}”？此操作不可撤销。`), [cancel, standardButton("entity-primary", "删除", remove, true)], 560, 240);
+    const name = state.card?.name ?? state.group?.name;
+    const zh = getLang().toLowerCase().startsWith("zh");
+    panel = shell(zh ? "确认删除" : "Confirm deletion", text(zh ? `确定删除“${name}”？绑定它的聊天将解除绑定。此操作不可撤销。` : `Delete “${name}”? Chats bound to it will be unbound. This cannot be undone.`), [standardButton("entity-cancel", zh ? "取消" : "Cancel", close), standardButton("entity-primary", zh ? "删除" : "Delete", remove, true)], 560, 240);
   } else {
     const pages: ComposeNode[][] = [[], [], []];
     if (state.loading) pages[0].push(ctx.UI.Box({ fillMaxSize: true, contentAlignment: "center" }, ctx.UI.LoadingIndicator({ size: 32 })));

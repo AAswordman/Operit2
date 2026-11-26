@@ -33,6 +33,16 @@ export class CharacterChatStore implements CharacterChatBindings {
   async listChatBindings(): Promise<ChatBinding[]> {
     return (await this.storage.chats.data()).entries().filter(([key]) => key.startsWith("binding_")).map(([key, value]) => ({ chatId: requireId(key.slice(8), "stored chat id"), selection: decodeChatMarker(value).selection }));
   }
+  /** Removes bindings and pending drafts for deleted selections in one preference edit. */
+  async deleteSelections(selections: readonly string[]): Promise<void> {
+    const removed = new Set(selections);
+    if (removed.size === 0) return;
+    await this.storage.chats.edit(preferences => {
+      for (const [key, value] of preferences.entries()) {
+        if ((key.startsWith("binding_") || key.startsWith("draft_")) && removed.has(decodeChatMarker(value).selection)) preferences.remove(key);
+      }
+    });
+  }
   /** Reads selected chat identities from a single JSON preference snapshot. */
   async bindingsForChats(chatIds: readonly string[]): Promise<Map<string, string>> {
     const preferences = await this.storage.chats.data(), result = new Map<string, string>();
