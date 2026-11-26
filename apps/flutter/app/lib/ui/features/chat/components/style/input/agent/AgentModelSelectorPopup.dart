@@ -1732,7 +1732,7 @@ List<Widget> _modelMetaChips(
   BuildContext context,
   core_proxy.ProviderModelSummary? summary,
 ) {
-  final contextLabel = _formatContextChip(summary?.context.maxContextLength);
+  final contextLabel = _formatContextChip(summary?.context.maxContextTokens);
   final chips = <Widget>[
     if (summary?.capabilities.directImage == true)
       const _ModelMetaChip(label: '视觉', outlined: true),
@@ -1752,20 +1752,19 @@ List<Widget> _modelMetaChips(
 }
 
 /// Formats a context length token count as a compact chip label.
-String? _formatContextChip(double? length) {
-  if (length == null || length <= 0) {
+String? _formatContextChip(int? maxContextTokens) {
+  if (maxContextTokens == null || maxContextTokens <= 0) {
     return null;
   }
-  final k = length >= 10000 ? length / 1000.0 : length;
-  if (k >= 950) {
-    final millions = k / 1000.0;
+  if (maxContextTokens >= 950000) {
+    final millions = maxContextTokens / 1000000.0;
     final millionsRounded = millions.round();
     if ((millions - millionsRounded).abs() < 0.08) {
       return '${millionsRounded}M';
     }
     return '${millions.toStringAsFixed(1)}M';
   }
-  return '${k.round()}K';
+  return '${(maxContextTokens / 1000).round()}K';
 }
 
 class _SettingsHeaderRow extends StatelessWidget {

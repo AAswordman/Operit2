@@ -100,7 +100,7 @@ impl EditorState {
             direct_image: config.capabilities.directImage,
             direct_audio: config.capabilities.directAudio,
             direct_video: config.capabilities.directVideo,
-            max_context_length: format!("{:.0}", config.context.maxContextLength),
+            max_context_length: format!("{:.0}", config.context.kilo_tokens()),
             enable_summary: config.summary.enableSummary,
             summary_token_threshold: config.summary.summaryTokenThreshold.to_string(),
             builtin_tools: config.builtinTools.clone(),
@@ -187,7 +187,7 @@ impl EditorState {
                 directVideo: self.direct_video,
             },
             context: ModelContextSpec {
-                maxContextLength: ctx_len,
+                maxContextTokens: ModelContextSpec::from_kilo_tokens(f64::from(ctx_len)),
             },
             request: ModelRequestSpec {
                 supportsStructuredTools: self.supports_structured_tools,

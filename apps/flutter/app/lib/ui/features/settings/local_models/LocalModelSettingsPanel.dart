@@ -2010,7 +2010,7 @@ class _LocalChatInferenceDialogState extends State<_LocalChatInferenceDialog> {
           ...profile.toJson(),
           'localRuntime': settings.toJson(),
           'contextOverride': <String, Object?>{
-            'maxContextLength': settings.llamaContextSize / 1000,
+            'maxContextTokens': settings.llamaContextSize,
           },
         }),
       );

@@ -138,7 +138,7 @@ impl ModelConfigManager {
             })
     }
 
-    const PREFERENCES_VERSION: u32 = 9;
+    const PREFERENCES_VERSION: u32 = 10;
     pub const DEFAULT_PROVIDER_ID: &'static str = ModelConfigDefaults::DEFAULT_PROVIDER_ID;
     pub const DEFAULT_MODEL_ID: &'static str = ModelConfigDefaults::DEFAULT_MODEL_ID;
 
@@ -619,7 +619,7 @@ impl ModelConfigManager {
         let (provider, mut model) = self.findModel(providerId, modelId)?;
         let inherited = ModelSpecResolver::new(&provider)?.inherited(&model);
         model.contextOverride = ModelSpecResolver::contextOverride(&inherited, ModelContextSpec {
-            maxContextLength: ModelContextSpec::normalize_length(f64::from(context.maxContextLength)),
+            maxContextTokens: ModelContextSpec::normalize_tokens(f64::from(context.maxContextTokens)),
         });
         self.updateModelProfile(providerId, model)
     }
@@ -1377,8 +1377,63 @@ impl ModelConfigManager {
                 }
                 Ok(())
             }
+            9 => {
+                // Context windows became exact tokens instead of decimal kilo-tokens.
+                let records = preferences
+                    .iterEntries()
+                    .filter_map(|(key, value)| {
+                        (key != "provider_list" && key.starts_with("provider_"))
+                            .then(|| (key.to_owned(), value.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                for (key, value) in records {
+                    let mut record = match value {
+                        serde_json::Value::String(encoded) => serde_json::from_str(&encoded)?,
+                        record => record,
+                    };
+                    if let Some(models) = record
+                        .get_mut("models")
+                        .and_then(serde_json::Value::as_array_mut)
+                    {
+                        for model in models.iter_mut().filter_map(serde_json::Value::as_object_mut) {
+                            if let Some(context) = model
+                                .get_mut("contextOverride")
+                                .and_then(serde_json::Value::as_object_mut)
+                            {
+                                Self::migrateLegacyContextSpec(context);
+                            }
+                            if let Some(context) = model
+                                .get_mut("listed")
+                                .and_then(serde_json::Value::as_object_mut)
+                                .and_then(|listed| listed.get_mut("context"))
+                                .and_then(serde_json::Value::as_object_mut)
+                            {
+                                Self::migrateLegacyContextSpec(context);
+                            }
+                        }
+                    }
+                    preferences.set(&stringPreferencesKey(&key), record);
+                }
+                Ok(())
+            }
             from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
         }
+    }
+
+    /// Rewrites one persisted kilo-token context into exact tokens.
+    fn migrateLegacyContextSpec(context: &mut serde_json::Map<String, serde_json::Value>) {
+        if context.contains_key("maxContextTokens") {
+            context.remove("maxContextLength");
+            return;
+        }
+        let Some(length) = context.remove("maxContextLength") else {
+            return;
+        };
+        let tokens = length
+            .as_f64()
+            .map(ModelContextSpec::from_kilo_tokens)
+            .unwrap_or(ModelConfigDefaults::DEFAULT_MAX_CONTEXT_TOKENS);
+        context.insert("maxContextTokens".into(), serde_json::json!(tokens));
     }
 
     /// Provider type ids that earlier builds could persist but that no longer exist in
@@ -1584,7 +1639,9 @@ impl ModelConfigManager {
             }
             if model.contextOverride.is_none() {
                 model.contextOverride = Some(ModelContextSpec {
-                    maxContextLength: model.localRuntime.llamaContextSize as f32 / 1000.0,
+                    maxContextTokens: ModelContextSpec::normalize_tokens(f64::from(
+                        model.localRuntime.llamaContextSize,
+                    )),
                 });
             }
             if model.capabilitiesOverride.toolCall.is_none() {
@@ -2546,13 +2603,13 @@ mod tests {
         let manager = ModelConfigManager::default();
         let providerId = ModelConfigManager::DEFAULT_PROVIDER_ID;
         for (index, (context, expectedThreshold)) in [
-            (128.0, 0.85),
-            (300.0, 0.85),
-            (301.0, 0.99),
-            (400.0, 0.75),
-            (1000.0, 0.30),
-            (1048.576, 0.28),
-            (2000.0, 0.15),
+            (128_000, 0.85),
+            (300_000, 0.85),
+            (301_000, 0.99),
+            (400_000, 0.75),
+            (1_000_000, 0.30),
+            (1_048_576, 0.28),
+            (2_000_000, 0.15),
         ]
         .into_iter()
         .enumerate()
@@ -2565,7 +2622,7 @@ mod tests {
                         &modelId,
                         Some(ModelListedSpec {
                             context: Some(ModelContextSpec {
-                                maxContextLength: context,
+                                maxContextTokens: context,
                             }),
                             ..ModelListedSpec::default()
                         }),
@@ -2767,6 +2824,85 @@ mod tests {
         assert!(!model.hasSpecOverrides());
         assert_eq!(model.requestOverride.enableClaude1hPromptCache, Some(true));
         assert_eq!(store.schemaVersion().unwrap(), 6);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Context windows saved as decimal kilo-tokens become exact tokens once.
+    #[test]
+    fn schema_nine_migration_rewrites_context_windows_as_tokens() {
+        use operit_model::ModelConfigData::{
+            ModelContextSpec, ModelListedSpec, ModelProfile, ProviderProfile,
+        };
+        use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStore};
+        let root = unique_test_root("schema_nine_context_tokens");
+        let host: Arc<dyn RuntimeStorageHost> =
+            Arc::new(TestRuntimeStorageHost { root: root.clone() });
+        let path = "runtime/config/model-schema-nine.preferences.json";
+        let mut model = ModelProfile::new("context-model".into());
+        model.contextOverride = Some(ModelContextSpec {
+            maxContextTokens: 1_048_576,
+        });
+        model.listed = Some(ModelListedSpec {
+            context: Some(ModelContextSpec {
+                maxContextTokens: 4_000,
+            }),
+            ..ModelListedSpec::default()
+        });
+        let mut provider = ProviderProfile::new(
+            "p".into(),
+            "P".into(),
+            ApiProviderType::OTHER,
+            String::new(),
+        );
+        provider.models.push(model);
+        let mut record = serde_json::to_value(provider).unwrap();
+        let model = record["models"][0].as_object_mut().unwrap();
+        let to_kilo = |value: &mut serde_json::Value| {
+            let context = value.as_object_mut().unwrap();
+            let tokens = context
+                .remove("maxContextTokens")
+                .unwrap()
+                .as_i64()
+                .unwrap();
+            context.insert(
+                "maxContextLength".into(),
+                serde_json::json!(tokens as f64 / 1000.0),
+            );
+        };
+        to_kilo(model.get_mut("contextOverride").unwrap());
+        to_kilo(model.get_mut("listed").unwrap().get_mut("context").unwrap());
+        let legacy = serde_json::json!({
+            "__operit_preferences_schema_version": "9",
+            "provider_p": record
+        });
+        host.writeBytes(path, &serde_json::to_vec(&legacy).unwrap())
+            .unwrap();
+
+        let store = PreferencesDataStore::newWithStorage(host, path)
+            .withSchema(10, ModelConfigManager::migratePreferences);
+        let migrated = store.data().unwrap();
+        let record = migrated.get(&stringPreferencesKey("provider_p")).unwrap();
+        assert_eq!(
+            record["models"][0]["contextOverride"]["maxContextTokens"],
+            serde_json::json!(1_048_576)
+        );
+        assert!(record["models"][0]["contextOverride"]
+            .get("maxContextLength")
+            .is_none());
+        assert_eq!(
+            record["models"][0]["listed"]["context"]["maxContextTokens"],
+            serde_json::json!(4_000)
+        );
+        let provider: ProviderProfile = serde_json::from_value(record.clone()).unwrap();
+        assert_eq!(
+            provider.models[0]
+                .contextOverride
+                .as_ref()
+                .unwrap()
+                .maxContextTokens,
+            1_048_576
+        );
+        assert_eq!(store.schemaVersion().unwrap(), 10);
         let _ = fs::remove_dir_all(root);
     }
 

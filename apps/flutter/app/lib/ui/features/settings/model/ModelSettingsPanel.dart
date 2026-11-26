@@ -1987,7 +1987,7 @@ class _AvailableModelItemCard extends StatelessWidget {
     final colorScheme = theme.colorScheme;
     final textTheme = theme.textTheme;
     final l10n = AppLocalizations.of(context)!;
-    final contextLength = model.context?.maxContextLength;
+    final contextLength = model.context?.maxContextTokens;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -2048,7 +2048,7 @@ class _AvailableModelItemCard extends StatelessWidget {
                               ),
                               child: Text(
                                 _formatContextLength(contextLength) ??
-                                    '${contextLength.round()}K',
+                                    '${(contextLength / 1000).round()}K',
                                 style: textTheme.labelSmall?.copyWith(
                                   color: colorScheme.primary,
                                   fontWeight: FontWeight.w600,
@@ -2426,7 +2426,7 @@ class _ProviderCard extends StatelessWidget {
         ? null
         : _summaryForModelOrNull(summaries, provider.id, displayedModel.id);
     final contextLabel = _formatContextLength(
-      displayedSummary?.context.maxContextLength,
+      displayedSummary?.context.maxContextTokens,
     );
     final multimodal = _isMultimodalCapabilities(
       displayedSummary?.capabilities,
@@ -3814,20 +3814,19 @@ bool _isMultimodalCapabilities(core_proxy.ModelCapabilities? capabilities) {
       capabilities.directVideo;
 }
 
-String? _formatContextLength(double? maxContextLength) {
-  if (maxContextLength == null || maxContextLength <= 0) {
+String? _formatContextLength(int? maxContextTokens) {
+  if (maxContextTokens == null || maxContextTokens <= 0) {
     return null;
   }
-  final k = _normalizedContextLength(maxContextLength);
-  if (k >= 950) {
-    final millions = k / 1000.0;
+  if (maxContextTokens >= 950000) {
+    final millions = maxContextTokens / 1000000.0;
     final millionsRounded = millions.round();
     if ((millions - millionsRounded).abs() < 0.08) {
       return '${millionsRounded}M';
     }
     return '${millions.toStringAsFixed(1)}M';
   }
-  return '${k.round()}K';
+  return '${(maxContextTokens / 1000).round()}K';
 }
 
 class _ProviderModelList extends StatelessWidget {
@@ -4114,7 +4113,7 @@ class _ProviderModelTile extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final contextLabel = _formatContextLength(summary.context.maxContextLength);
+    final contextLabel = _formatContextLength(summary.context.maxContextTokens);
 
     return Material(
       color: highlighted
@@ -4971,7 +4970,7 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
     _claude1hPromptCache = config.request.enableClaude1HPromptCache;
     _builtinTools = config.builtinTools;
     _thinking = widget.initialThinking;
-    _savedContext = _contextLengthInputText(config.context.maxContextLength);
+    _savedContext = _contextLengthInputText(config.context.maxContextTokens);
     _contextController = TextEditingController(text: _savedContext);
     final summary = config.summary;
     final rawRatio = summary.summaryTokenThreshold;
@@ -5124,7 +5123,7 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
   /// Saves a normalized context window and shows the effective kilo-token value.
   void _commitContext({bool disposing = false}) {
     final parsed = double.tryParse(_contextController.text.trim());
-    if (parsed == null) {
+    if (parsed == null || !parsed.isFinite) {
       if (!disposing && !_contextInvalid) {
         setState(() {
           _contextInvalid = true;
@@ -5132,8 +5131,9 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
       }
       return;
     }
-    final value = _normalizedContextLength(parsed);
-    final text = _contextLengthInputText(value);
+    final kilo = parsed.round().clamp(1, _maxContextKiloTokens).toInt();
+    final value = kilo * 1000;
+    final text = kilo.toString();
     _contextController.text = text;
     if (!disposing && _contextInvalid) {
       setState(() {
@@ -5149,7 +5149,7 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
       () => widget.clients.preferencesModelConfigManager.updateContextForModel(
         providerId: widget.provider.id,
         modelId: widget.model.id,
-        context: core_proxy.ModelContextSpec(maxContextLength: value),
+        context: core_proxy.ModelContextSpec(maxContextTokens: value),
       ),
       undo: () {
         _savedContext = previous;
@@ -5563,17 +5563,15 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
   }
 }
 
-/// Matches ModelContextSpec's finite kilo-token bounds for the signed token budget.
-double _normalizedContextLength(double value) {
-  return value.isNaN ? 200.0 : value.clamp(1.0, 2147483.0).toDouble();
-}
+/// The largest whole-thousand token value that still fits the signed token budget.
+const int _maxContextKiloTokens = 2147483;
 
-/// Displays the exact kilo-token value without interpreting large values as token counts.
-String _contextLengthInputText(double value) {
-  final normalized = _normalizedContextLength(value);
-  return normalized == normalized.roundToDouble()
-      ? normalized.toStringAsFixed(0)
-      : normalized.toString();
+/// Displays an exact token window as the whole-thousand token value the field edits.
+String _contextLengthInputText(int maxContextTokens) {
+  return (maxContextTokens / 1000.0)
+      .round()
+      .clamp(1, _maxContextKiloTokens)
+      .toString();
 }
 
 /// Height of the compact controls in a model's settings, roomier where people tap.
@@ -8144,7 +8142,7 @@ String _availableModelSubtitle(
   }
   final context = model.context;
   if (context != null) {
-    final formatted = _formatContextLength(context.maxContextLength);
+    final formatted = _formatContextLength(context.maxContextTokens);
     if (formatted != null) {
       labels.add(formatted);
     }
