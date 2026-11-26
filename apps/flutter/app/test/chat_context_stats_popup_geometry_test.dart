@@ -8,6 +8,7 @@ import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/common/components/AdaptiveSidePanel.dart';
 import 'package:operit2/ui/features/chat/components/workspace/ChatContextStatsTopBarButton.dart';
+import 'package:operit2/ui/features/chat/components/workspace/context_stats/TopBarDynamicCapsule.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 
 /// Keeps the real context menu inside the primary pane of a split workspace.
@@ -86,7 +87,7 @@ void main() {
           for (final expanded in <bool>[false, if (hostWidth >= 600) true]) {
             open.value = expanded;
             await tester.pumpAndSettle();
-            await tester.tap(find.byIcon(Icons.data_usage_rounded));
+            await tester.tap(find.byType(TopBarDynamicCapsule));
             await tester.pumpAndSettle();
             final menu = find.ancestor(
               of: find.text('上下文占用'),
@@ -96,7 +97,7 @@ void main() {
             final chatRect = tester.getRect(find.byKey(chatKey));
             expect(menuRect.left, greaterThanOrEqualTo(chatRect.left));
             expect(menuRect.right, lessThanOrEqualTo(chatRect.right));
-            expect(menuRect.width, closeTo(300, 0.1));
+            expect(menuRect.width, closeTo(276, 0.1));
             expect(find.text('添加设备'), findsNothing);
             final addDevice = find.byTooltip('添加设备');
             expect(addDevice, findsOneWidget);
@@ -109,19 +110,19 @@ void main() {
             );
             expect(
               tester.getCenter(addDevice).dy,
-              closeTo(tester.getCenter(find.text('设备')).dy, 0.1),
+              closeTo(tester.getCenter(find.text('节点与路由')).dy, 0.1),
             );
             expect(
               tester.getCenter(addDevice).dx,
               direction == TextDirection.ltr
-                  ? greaterThan(tester.getCenter(find.text('设备')).dx)
-                  : lessThan(tester.getCenter(find.text('设备')).dx),
+                  ? greaterThan(tester.getCenter(find.text('节点与路由')).dx)
+                  : lessThan(tester.getCenter(find.text('节点与路由')).dx),
             );
             if (expanded) {
               expect(menuRect.overlaps(tester.getRect(find.byKey(panelKey))), isFalse);
             }
             expect(tester.takeException(), isNull);
-            await tester.tap(find.byIcon(Icons.data_usage_rounded));
+            await tester.tap(find.byType(TopBarDynamicCapsule));
             await tester.pumpAndSettle();
             expect(find.text('上下文占用'), findsNothing);
           }

@@ -21,6 +21,7 @@ use crate::chat::enhance::ConversationService::{
 use crate::chat::enhance::MultiServiceManager::{MultiServiceManager, SharedAIServiceHandle};
 use crate::chat::enhance::ConversationContext::{ConversationContext, ConversationContextCache};
 use crate::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
+use crate::chat::llmprovider::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
 use crate::chat::llmprovider::AIService::{
     ensure_response_completed, response_stream_from_chunks, AiServiceError, SendMessageRequest, SharedAiResponseStream,
@@ -33,6 +34,7 @@ use crate::runtime_support::{
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::CoreValue;
+use operit_model::ContextWindowBreakdown::ContextWindowBreakdown;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::ModelConfigData::ResolvedModelConfig;
@@ -91,6 +93,7 @@ pub struct EnhancedAIService {
     pub tool_handler: AIToolHandler,
     pub input_processing_state: MutableStateFlow<InputProcessingState>,
     pub request_window_estimate_flow: MutableStateFlow<Option<i64>>,
+    pub request_window_breakdown_flow: MutableStateFlow<Option<ContextWindowBreakdown>>,
     pub api_preferences: ApiPreferencesMirror,
     pub tool_processing_scope: ToolProcessingScopeMirror,
     pub package_manager: PackageManagerMirror,
@@ -104,6 +107,7 @@ pub struct EnhancedAISharedState {
     pub responseRound: i32,
     pub turn_token_usage: TurnTokenUsage,
     pub request_window_estimate: Option<i64>,
+    pub request_window_breakdown: Option<ContextWindowBreakdown>,
     pub active_execution_contexts: BTreeMap<i32, MessageExecutionContext>,
     pub next_execution_context_id: i32,
     /// Invalidates sends that are still waiting to register their response task.
@@ -868,6 +872,7 @@ impl EnhancedAIService {
             tool_handler,
             input_processing_state: mutableStateFlow(InputProcessingState::Idle),
             request_window_estimate_flow: mutableStateFlow(None),
+            request_window_breakdown_flow: mutableStateFlow(None),
             api_preferences: ApiPreferencesMirror,
             tool_processing_scope: ToolProcessingScopeMirror,
             package_manager: PackageManagerMirror,
@@ -938,7 +943,20 @@ impl EnhancedAIService {
     }
 
     pub fn publishRequestWindowEstimate(&mut self, windowSize: i64) {
-        self.shared_state().request_window_estimate = Some(windowSize);
+        self.publishRequestWindowEstimateWithBreakdown(windowSize, None);
+    }
+
+    pub fn publishRequestWindowEstimateWithBreakdown(
+        &mut self,
+        windowSize: i64,
+        breakdown: Option<ContextWindowBreakdown>,
+    ) {
+        {
+            let mut shared = self.shared_state();
+            shared.request_window_estimate = Some(windowSize);
+            shared.request_window_breakdown = breakdown;
+        }
+        self.request_window_breakdown_flow.set_value(breakdown);
         self.request_window_estimate_flow
             .set_value(Some(windowSize));
     }
@@ -950,16 +968,36 @@ impl EnhancedAIService {
         availableTools: &[ToolPrompt],
         publishEstimate: bool,
     ) -> Result<i64, AiServiceError> {
+        let (windowSize, _) = self
+            .estimatePreparedRequestWindowWithBreakdown(
+                serviceForFunction,
+                preparedHistory,
+                availableTools,
+                publishEstimate,
+            )
+            .await?;
+        Ok(windowSize)
+    }
+
+    pub async fn estimatePreparedRequestWindowWithBreakdown(
+        &mut self,
+        serviceForFunction: SharedAIServiceHandle,
+        preparedHistory: &[PromptTurn],
+        availableTools: &[ToolPrompt],
+        publishEstimate: bool,
+    ) -> Result<(i64, Option<ContextWindowBreakdown>), AiServiceError> {
         let windowSize = {
             let service = serviceForFunction.lock().await;
             service
                 .calculate_input_tokens(preparedHistory, availableTools)
                 .await?
         };
+        let breakdown =
+            calculate_context_window_breakdown(preparedHistory, availableTools, windowSize);
         if publishEstimate {
-            self.publishRequestWindowEstimate(windowSize);
+            self.publishRequestWindowEstimateWithBreakdown(windowSize, breakdown);
         }
-        Ok(windowSize)
+        Ok((windowSize, breakdown))
     }
 
     /// Applies final prompt hooks and preserves execution failures for the caller.
@@ -1378,8 +1416,44 @@ impl EnhancedAIService {
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
         publishEstimate: bool,
-        mut runtime: SendMessageRuntime,
+        runtime: SendMessageRuntime,
     ) -> Result<i64, AiServiceError> {
+        let (windowSize, _) = self
+            .estimateRequestWindowFromMemoryWithBreakdown(
+                message,
+                chatHistory,
+                chatId,
+                workspacePath,
+                workspaceFolders,
+                promptFunctionType,
+                participantId,
+                proxySenderName,
+                chatProviderIdOverride,
+                chatModelIdOverride,
+                publishEstimate,
+                runtime,
+            )
+            .await?;
+        Ok(windowSize)
+    }
+
+    /// Estimates the request window and category breakdown using the same workspace context as message sending.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn estimateRequestWindowFromMemoryWithBreakdown(
+        &mut self,
+        message: String,
+        chatHistory: Vec<PromptTurn>,
+        chatId: Option<String>,
+        workspacePath: Option<String>,
+        workspaceFolders: Vec<String>,
+        promptFunctionType: PromptFunctionType,
+        participantId: Option<String>,
+        proxySenderName: Option<String>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
+        publishEstimate: bool,
+        mut runtime: SendMessageRuntime,
+    ) -> Result<(i64, Option<ContextWindowBreakdown>), AiServiceError> {
         let preparedHistory = self
             .prepareConversationHistory(
                 chatHistory,
@@ -1443,7 +1517,7 @@ impl EnhancedAIService {
         let preparedHistory = self.applyFinalizedCurrentUserTurn(
             finalized.prepared_history, &message, &processedInput,
         );
-        self.estimatePreparedRequestWindow(
+        self.estimatePreparedRequestWindowWithBreakdown(
             serviceForFunction,
             &preparedHistory,
             &availableTools,
@@ -1531,6 +1605,11 @@ impl EnhancedAIService {
     #[allow(non_snake_case)]
     pub fn requestWindowEstimateFlow(&self) -> MutableStateFlow<Option<i64>> {
         self.request_window_estimate_flow.clone()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn requestWindowBreakdownFlow(&self) -> MutableStateFlow<Option<ContextWindowBreakdown>> {
+        self.request_window_breakdown_flow.clone()
     }
 
     /// Sends a user message through the prompt, provider, and tool loop.
@@ -2351,13 +2430,13 @@ impl EnhancedAIService {
             || execContext.roundManager.getCurrentRoundContent(),
         );
         let contextWindowStart = runtimeSupport.messageTimingNow();
-        let completedContextWindow = match self.estimatePreparedRequestWindow(
+        let completedContextWindow = match self.estimatePreparedRequestWindowWithBreakdown(
             runtime.aiService.clone(),
             &execContext.conversationHistory,
             &preparedRequest.availableTools,
             false,
         ).await {
-            Ok(windowSize) => Some(windowSize),
+            Ok((windowSize, breakdown)) => Some((windowSize, breakdown)),
             Err(error) => {
                 AppLogger::w(TAG, &format!("Completed request window estimate failed: {error}"));
                 None
@@ -2369,8 +2448,8 @@ impl EnhancedAIService {
             self.unregisterExecutionContext(&execContext);
             return Ok(());
         }
-        if let Some(windowSize) = completedContextWindow {
-            self.publishRequestWindowEstimate(windowSize);
+        if let Some((windowSize, breakdown)) = completedContextWindow {
+            self.publishRequestWindowEstimateWithBreakdown(windowSize, breakdown);
         }
         if !isSubTask && !runtime.textOnly {
             self.recordConversationContext(
@@ -2401,7 +2480,8 @@ impl EnhancedAIService {
         {
             let mut shared = self.shared_state();
             shared.last_reply_content = Some(execContext.roundManager.getDisplayContent());
-            shared.last_turn_context_window = completedContextWindow;
+            shared.last_turn_context_window =
+                completedContextWindow.map(|(windowSize, _)| windowSize);
         }
         let _ = finalProcessedInput;
         let _ = requestHistory;
@@ -3274,6 +3354,11 @@ impl EnhancedAIService {
     }
 
     #[allow(non_snake_case)]
+    pub fn getRequestWindowBreakdown(&self) -> Option<ContextWindowBreakdown> {
+        self.shared_state().request_window_breakdown
+    }
+
+    #[allow(non_snake_case)]
     pub fn getLastProviderModel(&self) -> Option<String> {
         self.shared_state().last_provider_model.clone()
     }
@@ -3351,6 +3436,7 @@ impl Clone for EnhancedAIService {
             tool_handler: self.tool_handler.clone(),
             input_processing_state: self.input_processing_state.clone(),
             request_window_estimate_flow: self.request_window_estimate_flow.clone(),
+            request_window_breakdown_flow: self.request_window_breakdown_flow.clone(),
             api_preferences: self.api_preferences.clone(),
             tool_processing_scope: self.tool_processing_scope.clone(),
             package_manager: self.package_manager.clone(),
@@ -4407,5 +4493,215 @@ mod package_proxy_json_tests {
         assert_eq!(parameter.r#type, "object");
         assert!(parameter.description.contains("JSON"));
         assert!(!parameter.description.contains("YAML"));
+    }
+}
+
+/// Computes category token breakdown across system prompt, tools, files, tool results, and conversation.
+pub fn calculate_context_window_breakdown(
+    prepared_history: &[PromptTurn],
+    available_tools: &[ToolPrompt],
+    total_window_size: i64,
+) -> Option<ContextWindowBreakdown> {
+    if total_window_size <= 0 {
+        return None;
+    }
+    let mut raw_system = 0i64;
+    let mut raw_tools = if available_tools.is_empty() {
+        0
+    } else {
+        let tools_json = StructuredToolCallBridge::buildToolsArray(Some(available_tools)).to_string();
+        ChatUtils::estimate_token_count(&tools_json)
+    };
+    let mut raw_files = 0i64;
+    let mut raw_tool_results = 0i64;
+    let mut raw_conversation = 0i64;
+
+    for turn in prepared_history {
+        match turn.kind {
+            PromptTurnKind::SYSTEM => {
+                raw_system += ChatUtils::estimate_token_count(&turn.content);
+            }
+            PromptTurnKind::TOOL_CALL => {
+                raw_tools += ChatUtils::estimate_token_count(&turn.content);
+            }
+            PromptTurnKind::TOOL_RESULT => {
+                raw_tool_results += ChatUtils::estimate_token_count(&turn.content);
+            }
+            PromptTurnKind::ASSISTANT | PromptTurnKind::SUMMARY => {
+                raw_conversation += ChatUtils::estimate_token_count(&turn.content);
+            }
+            PromptTurnKind::USER => {
+                let (file_tokens, text_tokens) =
+                    estimate_user_turn_file_and_text_tokens(&turn.content);
+                raw_files += file_tokens;
+                raw_conversation += text_tokens;
+            }
+        }
+    }
+
+    let raw = [
+        raw_system,
+        raw_tools,
+        raw_files,
+        raw_tool_results,
+        raw_conversation,
+    ];
+    if raw.iter().all(|&value| value <= 0) {
+        return None;
+    }
+    let allocated = distribute_tokens_proportionally(raw, total_window_size);
+    Some(ContextWindowBreakdown {
+        systemPromptTokens: allocated[0],
+        toolTokens: allocated[1],
+        fileTokens: allocated[2],
+        toolResultTokens: allocated[3],
+        conversationTokens: allocated[4],
+    })
+}
+
+fn estimate_user_turn_file_and_text_tokens(content: &str) -> (i64, i64) {
+    let mut ranges = ChatMarkupRegex::attachment_ranges(content);
+    ranges.extend(ChatMarkupRegex::workspace_attachment_ranges(content));
+    if ranges.is_empty() {
+        return (0, ChatUtils::estimate_token_count(content));
+    }
+    ranges.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        if start >= end {
+            continue;
+        }
+        if let Some(last) = merged.last_mut() {
+            if start <= last.1 {
+                last.1 = last.1.max(end);
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+    if merged.is_empty() {
+        return (0, ChatUtils::estimate_token_count(content));
+    }
+    let mut file_tokens = 0i64;
+    let mut remainder = String::with_capacity(content.len());
+    let mut cursor = 0usize;
+    for (start, end) in merged {
+        if cursor < start {
+            remainder.push_str(&content[cursor..start]);
+        }
+        file_tokens += ChatUtils::estimate_token_count(&content[start..end]);
+        cursor = end;
+    }
+    if cursor < content.len() {
+        remainder.push_str(&content[cursor..]);
+    }
+    let trimmed_remainder = remainder.trim();
+    let text_tokens = if trimmed_remainder.is_empty() {
+        0
+    } else {
+        ChatUtils::estimate_token_count(trimmed_remainder)
+    };
+    (file_tokens, text_tokens)
+}
+
+fn distribute_tokens_proportionally<const N: usize>(raw: [i64; N], total: i64) -> [i64; N] {
+    let clean = raw.map(|value| value.max(0));
+    let raw_sum: i128 = clean.iter().map(|&value| i128::from(value)).sum();
+    if raw_sum <= 0 || total <= 0 {
+        return [0; N];
+    }
+    let total_i128 = i128::from(total);
+    let mut allocated = [0i64; N];
+    let mut remainders = [(-1i128, 0usize); N];
+    let mut assigned = 0i128;
+    for (index, &value) in clean.iter().enumerate() {
+        if value == 0 {
+            remainders[index] = (-1, index);
+            continue;
+        }
+        let numerator = i128::from(value) * total_i128;
+        let base = numerator / raw_sum;
+        allocated[index] = base as i64;
+        assigned += base;
+        remainders[index] = (numerator % raw_sum, index);
+    }
+    let mut leftover = (total_i128 - assigned) as usize;
+    remainders.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    for (remainder, index) in remainders {
+        if leftover == 0 {
+            break;
+        }
+        if remainder < 0 {
+            continue;
+        }
+        allocated[index] += 1;
+        leftover -= 1;
+    }
+    allocated
+}
+
+#[cfg(test)]
+mod context_window_breakdown_tests {
+    use super::calculate_context_window_breakdown;
+    use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
+    use operit_model::ToolPrompt::ToolPrompt;
+
+    #[test]
+    fn splits_all_five_categories_and_conserves_total_tokens() {
+        let history = vec![
+            PromptTurn::new(
+                PromptTurnKind::SYSTEM,
+                "You are an autonomous systems engineer working carefully.",
+            ),
+            PromptTurn::new(
+                PromptTurnKind::USER,
+                "Please review this config <attachment id=\"a\" filename=\"cfg.json\" type=\"application/json\">{\"port\":8080,\"tls\":true}</attachment> <workspace_attachment>/workspace/app</workspace_attachment>",
+            ),
+            PromptTurn::new(
+                PromptTurnKind::TOOL_CALL,
+                "<tool name=\"read_file\"><param name=\"path\">cfg.json</param></tool>",
+            ),
+            PromptTurn::new(
+                PromptTurnKind::TOOL_RESULT,
+                "<tool_result name=\"read_file\" status=\"success\">{\"port\":8080}</tool_result>",
+            ),
+            PromptTurn::new(
+                PromptTurnKind::ASSISTANT,
+                "Configuration verified cleanly.",
+            ),
+        ];
+        let tools = vec![ToolPrompt::new(
+            "read_file".to_string(),
+            "Reads a UTF-8 file from the workspace.".to_string(),
+        )];
+        let breakdown = calculate_context_window_breakdown(&history, &tools, 1200)
+            .expect("breakdown should be computed when turns or tools exist");
+        assert!(breakdown.systemPromptTokens > 0);
+        assert!(breakdown.toolTokens > 0);
+        assert!(breakdown.fileTokens > 0);
+        assert!(breakdown.toolResultTokens > 0);
+        assert!(breakdown.conversationTokens > 0);
+        assert_eq!(
+            breakdown.systemPromptTokens
+                + breakdown.toolTokens
+                + breakdown.fileTokens
+                + breakdown.toolResultTokens
+                + breakdown.conversationTokens,
+            1200
+        );
+    }
+
+    #[test]
+    fn zero_window_or_empty_categories_return_none_without_inventing_buckets() {
+        let history = vec![PromptTurn::new(PromptTurnKind::USER, "Hello world")];
+        assert!(calculate_context_window_breakdown(&history, &[], 0).is_none());
+        assert!(calculate_context_window_breakdown(&[], &[], 500).is_none());
+        let text_only = calculate_context_window_breakdown(&history, &[], 50)
+            .expect("single user turn should produce conversation breakdown");
+        assert_eq!(text_only.systemPromptTokens, 0);
+        assert_eq!(text_only.toolTokens, 0);
+        assert_eq!(text_only.fileTokens, 0);
+        assert_eq!(text_only.toolResultTokens, 0);
+        assert_eq!(text_only.conversationTokens, 50);
     }
 }

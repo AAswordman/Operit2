@@ -30,6 +30,8 @@ pub mod ChatMessagePresentation;
 pub mod ChatMessageTimestampAllocator;
 #[path = "ChatTurnOptions.rs"]
 pub mod ChatTurnOptions;
+#[path = "ContextWindowBreakdown.rs"]
+pub mod ContextWindowBreakdown;
 #[path = "CustomEmoji.rs"]
 pub mod CustomEmoji;
 #[path = "DragonBones.rs"]
@@ -105,6 +107,7 @@ pub use ChatMessageDisplayMode::*;
 pub use ChatMessageLocatorPreview::*;
 pub use ChatMessageTimestampAllocator::*;
 pub use ChatTurnOptions::*;
+pub use ContextWindowBreakdown::*;
 pub use CustomEmoji::*;
 pub use DragonBones::*;
 pub use FunctionType::*;

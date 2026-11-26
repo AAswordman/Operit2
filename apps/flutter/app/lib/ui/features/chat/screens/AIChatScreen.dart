@@ -311,6 +311,11 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   late final ValueNotifier<_ChatContentData> _chatContentDataNotifier;
   late final ValueNotifier<bool> _autoScrollToBottomNotifier;
   late final ValueNotifier<String?> _toastMessageNotifier;
+  final ValueNotifier<core_proxy.InputProcessingState>
+  _topBarProcessingStateNotifier =
+      ValueNotifier<core_proxy.InputProcessingState>(
+        core_proxy.InputProcessingState.idle(),
+      );
 
   bool _loading = true;
   final Set<String> _regeneratingChatIds = <String>{};
@@ -469,6 +474,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _chatContentDataNotifier.dispose();
     _autoScrollToBottomNotifier.dispose();
     _toastMessageNotifier.dispose();
+    _topBarProcessingStateNotifier.dispose();
     _currentChatIdSubscription?.cancel();
     _messagesSubscription?.cancel();
     _chatStateSubscription?.cancel();
@@ -2472,6 +2478,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       _isPreparingChatSwitch = false;
       ChatSelectionTransition.complete(state.currentChatId);
     }
+    _topBarProcessingStateNotifier.value = _inputProcessingState;
     _chatContentDataNotifier.value = _currentChatContentData(
       pendingQueueMessages: state.pendingQueueMessages,
       isPendingQueueExpanded: state.isPendingQueueExpanded,
@@ -3199,6 +3206,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         ChatContextStatsTopBarButton(
           viewModel: _viewModel,
           currentChatId: _currentChatId,
+          processingStateListenable: _topBarProcessingStateNotifier,
         ),
         WorkspaceTopBarButton(
           open: _workspaceOpen,
@@ -3557,6 +3565,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   }
 
   void _publishChatContentData() {
+    _topBarProcessingStateNotifier.value = _inputProcessingState;
     final previousContentData = _chatContentDataNotifier.value;
     _chatContentDataNotifier.value = _currentChatContentData(
       pendingQueueMessages: previousContentData.pendingQueueMessages,

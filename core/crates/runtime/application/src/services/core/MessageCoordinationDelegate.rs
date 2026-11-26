@@ -22,6 +22,7 @@ use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
 use operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
+use operit_model::ContextWindowBreakdown::ContextWindowBreakdown;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::MessagePart::MessagePart;
@@ -191,44 +192,43 @@ impl MessageCoordinationDelegate {
             ))
     }
 
-    /// Recalculates the stable context window size for a chat and prompt mode.
-    pub async fn recalculateStableWindowSize(
-        &mut self,
+    /// Calculates the stable context window and category breakdown from explicit delegates.
+    pub(crate) async fn calculateStableWindowWithBreakdownFromDelegates(
+        chatHistoryDelegate: &ChatHistoryDelegate,
         service: &mut EnhancedAIService,
-        chatId: String,
+        chatId: &str,
         participantId: Option<String>,
         promptFunctionType: PromptFunctionType,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
-    ) -> Result<i64, String> {
-        let history = self.chatHistoryDelegate.getRuntimeChatHistory(chatId.clone());
-        self.calculateStableWindowForHistory(
-            service, chatId, participantId, promptFunctionType,
+    ) -> Result<(i64, Option<ContextWindowBreakdown>), String> {
+        let history = chatHistoryDelegate.getRuntimeChatHistory(chatId.to_string());
+        Self::calculateStableWindowForHistoryFromDelegates(
+            chatHistoryDelegate, service, chatId, participantId, promptFunctionType,
             chatProviderIdOverride, chatModelIdOverride, history,
         ).await
     }
 
-    /// Estimates the same captured history for every configured participant.
-    async fn calculateStableWindowForHistory(
-        &mut self,
+    /// Estimates one captured history while preserving its category breakdown.
+    async fn calculateStableWindowForHistoryFromDelegates(
+        chatHistoryDelegate: &ChatHistoryDelegate,
         service: &mut EnhancedAIService,
-        chatId: String,
+        chatId: &str,
         participantId: Option<String>,
         promptFunctionType: PromptFunctionType,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
         history: Vec<ChatMessage>,
-    ) -> Result<i64, String> {
-        let currentChat = self
-            .chatHistoryDelegate
+    ) -> Result<(i64, Option<ContextWindowBreakdown>), String> {
+        let currentChat = chatHistoryDelegate
             .chatHistoriesFlow()
             .value()
             .into_iter()
             .find(|history| history.id == chatId)
             .ok_or_else(|| format!("Chat not found for context estimation: {chatId}"))?;
         let runtimeOptions = SendMessageOptions {
-            chatId: Some(chatId.clone()),
-            executionParticipantId: participantId.clone(),
+            chatId: Some(chatId.to_string()),
+            executionParticipantId: participantId,
             promptFunctionType: promptFunctionType.clone(),
             chatProviderIdOverride: chatProviderIdOverride.clone(),
             chatModelIdOverride: chatModelIdOverride.clone(),
@@ -246,30 +246,58 @@ impl MessageCoordinationDelegate {
             let runtime = service
                 .createSendMessageRuntime(&runtimeOptions, configuration)
                 .map_err(|error| error.to_string())?;
-            let window = AIMessageManager::calculateStableContextWindow(StableContextWindowRequest {
-                enhancedAiService: service,
-                chatId: Some(chatId.clone()),
-                messageContent: String::new(),
-                chatHistory: history.clone(),
-                workspacePath: self.chatHistoryDelegate.primaryWorkspacePathForChat(&currentChat),
-                workspaceFolders: self.chatHistoryDelegate.workspaceFolderPathsForChat(&currentChat),
-                promptFunctionType: promptFunctionType.clone(),
-                proxySenderName: None,
-                chatProviderIdOverride: chatProviderIdOverride.clone(),
-                chatModelIdOverride: chatModelIdOverride.clone(),
-                publishEstimate: false,
-                runtime,
-            })
+            let estimate = AIMessageManager::calculateStableContextWindowWithBreakdown(
+                StableContextWindowRequest {
+                    enhancedAiService: service,
+                    chatId: Some(chatId.to_string()),
+                    messageContent: String::new(),
+                    chatHistory: history.clone(),
+                    workspacePath: chatHistoryDelegate.primaryWorkspacePathForChat(&currentChat),
+                    workspaceFolders: chatHistoryDelegate.workspaceFolderPathsForChat(&currentChat),
+                    promptFunctionType: promptFunctionType.clone(),
+                    proxySenderName: None,
+                    chatProviderIdOverride: chatProviderIdOverride.clone(),
+                    chatModelIdOverride: chatModelIdOverride.clone(),
+                    publishEstimate: false,
+                    runtime,
+                },
+            )
             .await
             .map_err(|error| error.to_string())?;
-            windows.push(window);
+            windows.push(estimate);
         }
-        windows.into_iter().max().ok_or_else(|| {
-            "Conversation context requires a current bound participant".to_string()
-        })
+        windows
+            .into_iter()
+            .max_by_key(|(windowSize, _)| *windowSize)
+            .ok_or_else(|| {
+                "Conversation context requires a current bound participant".to_string()
+            })
     }
 
-    /// Recalculates and persists the stable context window for a chat.
+    /// Recalculates the stable context window size for a chat and prompt mode.
+    pub async fn recalculateStableWindowSize(
+        &mut self,
+        service: &mut EnhancedAIService,
+        chatId: String,
+        participantId: Option<String>,
+        promptFunctionType: PromptFunctionType,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
+    ) -> Result<i64, String> {
+        let (windowSize, _) = Self::calculateStableWindowWithBreakdownFromDelegates(
+            &self.chatHistoryDelegate,
+            service,
+            &chatId,
+            participantId,
+            promptFunctionType,
+            chatProviderIdOverride,
+            chatModelIdOverride,
+        )
+        .await?;
+        Ok(windowSize)
+    }
+
+    /// Recalculates and persists the stable context window and category breakdown for a chat.
     pub async fn refreshStableContextWindow(
         &mut self,
         service: &mut EnhancedAIService,
@@ -286,18 +314,18 @@ impl MessageCoordinationDelegate {
             chatModelIdOverride.or_else(|| self.currentChatModelIdOverride.clone());
         let effectiveChatProviderIdOverride =
             chatProviderIdOverride.or_else(|| self.currentChatProviderIdOverride.clone());
-        let newWindowSize = match self
-            .recalculateStableWindowSize(
-                service,
-                targetChatId.clone(),
-                participantId,
-                effectivePromptFunctionType,
-                effectiveChatProviderIdOverride,
-                effectiveChatModelIdOverride,
-            )
-            .await
+        let (newWindowSize, breakdown) = match Self::calculateStableWindowWithBreakdownFromDelegates(
+            &self.chatHistoryDelegate,
+            service,
+            &targetChatId,
+            participantId,
+            effectivePromptFunctionType,
+            effectiveChatProviderIdOverride,
+            effectiveChatModelIdOverride,
+        )
+        .await
         {
-            Ok(newWindowSize) => newWindowSize,
+            Ok(result) => result,
             Err(error) => {
                 ChainLogger::error(
                     SEND_CHAIN,
@@ -330,11 +358,12 @@ impl MessageCoordinationDelegate {
             }
         };
         let (inputTokens, outputTokens) = (chat.inputTokens, chat.outputTokens);
-        self.tokenStatisticsDelegate.setTokenCounts(
+        self.tokenStatisticsDelegate.setTokenCountsWithBreakdown(
             Some(targetChatId.clone()),
             inputTokens,
             outputTokens,
             newWindowSize,
+            breakdown,
         );
         Some(newWindowSize)
     }
@@ -1085,9 +1114,10 @@ impl MessageCoordinationDelegate {
         if let Some(trigger) = request.trigger.as_mut() {
             let current = self.chatHistoryDelegate.getRuntimeChatHistory(request.chatId.clone());
             messages = summaryHistoryForExecution(messages, current);
-            let window = self.calculateStableWindowForHistory(
+            let (window, _) = Self::calculateStableWindowForHistoryFromDelegates(
+                &self.chatHistoryDelegate,
                 enhancedAiService,
-                request.chatId.clone(),
+                &request.chatId,
                 request.participantId.clone(),
                 request.promptFunctionType.clone(),
                 request.chatProviderIdOverride.clone(),
