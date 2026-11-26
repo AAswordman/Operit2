@@ -1,6 +1,7 @@
 /** Results from the actual Xtensa build and espflash image generator. */
 export interface FirmwareCheck {
   status: 'not-checked' | 'checking' | 'passed' | 'failed';
+  profile?: 'standalone-apps' | 'remote-display';
   stage?: 'compile' | 'abi' | 'partition';
   checkedAt?: string;
   compilePassed?: boolean;

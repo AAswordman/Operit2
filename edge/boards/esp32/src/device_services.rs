@@ -44,6 +44,7 @@ struct UiRequest {
 }
 static UI_REQUEST: std::sync::Mutex<Option<UiRequest>> = std::sync::Mutex::new(None);
 async fn callUi(action: &str, args: CoreValue) -> Result<CoreValue, EdgeServiceError> {
+        #[cfg(feature = "standalone-apps")]
         if action == "chat" { return operit_link::toCoreValue(crate::edge_chat::snapshot()).map_err(|e| EdgeServiceError::new(e.to_string())); }
         if !["screen", "tree", "tap", "swipe", "draft"].contains(&action) { return Err(EdgeServiceError::new("Unsupported UI action")); }
         let argument = match args {

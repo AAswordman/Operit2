@@ -28,9 +28,15 @@ const firmwareTarget = 'xtensa-esp32-espidf';
 const firmwareRoot = path.join(root, 'edge/boards/esp32');
 const shortTargetDir = path.join(path.parse(root).root, 'esp32');
 const firmwareTargetDir = path.resolve(shortTargetDir);
-const firmwareOnly = process.argv.includes('--firmware-check');
+const remoteDisplay = process.argv.includes('--remote-display');
+if (remoteDisplay && !process.argv.includes('--firmware-check') && !process.argv.includes('--firmware')) {
+  throw new Error('--remote-display 需要 --firmware-check 或 --firmware');
+}
+// The remote display package does not replace the full application's UI preview.
+const firmwareOnly = process.argv.includes('--firmware-check') || remoteDisplay;
 const firmware = firmwareOnly || process.argv.includes('--firmware');
-const firmwareCheck: FirmwareCheck = {status: 'checking', stage: 'compile'};
+const firmwareCheck: FirmwareCheck = {status: 'checking', stage: 'compile',
+  profile: remoteDisplay ? 'remote-display' : 'standalone-apps'};
 if (process.argv.includes('--lvgl') || process.argv.includes('--minimal-ui')) {
   throw new Error('UI 后端切换参数已移除；默认使用唯一的自绘 UI');
 }
@@ -57,6 +63,7 @@ const exports = [
   '_operit_ui_pump',
   '_operit_ui_navigate_home',
   '_operit_ui_navigate_apps',
+  '_operit_ui_set_remote_display',
   '_operit_ui_set_connection',
   '_operit_ui_set_paired',
   '_operit_ui_set_expression',
@@ -240,7 +247,7 @@ async function buildFirmware(): Promise<string> {
   }
   const logPath = path.join(out, 'firmware-build.log');
   const compilerEnv = await xtensaCompilerEnvironment(firmwareRoot);
-  const cargo = await run(['cargo', 'build', '--locked', '--release'], {
+  const cargo = await run(['cargo', 'build', '--locked', '--release', ...(remoteDisplay ? ['--no-default-features'] : [])], {
     cwd: firmwareRoot,
     env: {...process.env, ...compilerEnv, ...(idfSetting ? {IDF_PATH: path.resolve(idfSetting)} : {}),
       CARGO_TARGET_DIR: firmwareTargetDir, CARGO_WORKSPACE_DIR: firmwareRoot},
@@ -313,8 +320,28 @@ async function checkedFirmware(): Promise<string> {
   }
 }
 
+/** Package one checked profile without replacing the other profile's images. */
+async function packageFirmware(elf: string, dist: string): Promise<void> {
+  await mkdir(dist, {recursive: true});
+  const image = await saveFirmwareImage(elf, path.join(dist, 'operit-esp32.bin'));
+  if (image.code !== 0) throw new Error('espflash save-image failed: ' + image.stderr);
+  const merged = await saveFirmwareImage(elf, path.join(dist, 'operit-esp32-4mb-full.bin'), true);
+  if (merged.code !== 0) throw new Error('espflash merge failed');
+  for (const name of ['bootloader.bin', 'partition-table.bin']) {
+    await copyFile(path.join(path.dirname(elf), name), path.join(dist, name));
+  }
+  await writeFile(path.join(dist, 'firmware-check.json'), JSON.stringify(firmwareCheck, null, 2));
+}
+
 const builtFirmwareElf = firmware ? await checkedFirmware() : undefined;
-if (firmwareOnly) process.exit(0);
+if (firmwareOnly) {
+  if (remoteDisplay && process.argv.includes('--firmware')) {
+    if (!builtFirmwareElf) throw new Error('Firmware was not built');
+    await packageFirmware(builtFirmwareElf, path.join(firmwareRoot, 'dist/remote-display'));
+    console.log('Remote display firmware packaged in dist/remote-display');
+  }
+  process.exit(0);
+}
 const emcc = emccCommand(emsdk);
 await mkdir(out, {recursive: true});
 const staging = await mkdtemp(path.join(out, '.build-'));
@@ -428,16 +455,7 @@ if (firmware) {
   manifest.firmwareCheck = firmwareCheck;
   manifest.firmwareElf = firmwareElf;
   manifest.firmwareSha256 = sha256(await readFile(firmwareElf));
-  const release = path.dirname(firmwareElf);
-  const dist = path.join(root, 'edge/boards/esp32/dist');
-  await mkdir(dist, {recursive: true});
-  const image = await saveFirmwareImage(firmwareElf, path.join(dist, 'operit-esp32.bin'));
-  if (image.code !== 0) throw new Error('espflash save-image failed: ' + image.stderr);
-  const merged = await saveFirmwareImage(firmwareElf, path.join(dist, 'operit-esp32-4mb-full.bin'), true);
-  if (merged.code !== 0) throw new Error('espflash merge failed');
-  for (const name of ['bootloader.bin', 'partition-table.bin']) {
-    await copyFile(path.join(release, name), path.join(dist, name));
-  }
+  await packageFirmware(firmwareElf, path.join(firmwareRoot, 'dist'));
 }
 
 if (sourceHash !== await sharedHash()) {

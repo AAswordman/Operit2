@@ -35,6 +35,7 @@ unsafe extern "C" {
     fn operit_ui_set_scene(active: bool, revision: u32, tick: u32);
     fn operit_ui_pump(elapsed_ms: u32);
     fn operit_ui_set_touch(x: u16, y: u16, pressed: bool);
+    fn operit_ui_set_remote_display(enabled: bool);
     fn operit_ui_set_connection(wifi_ready: bool, edge_ready: bool);
     fn operit_ui_set_paired(paired: bool);
     fn operit_ui_set_expression(expression: *const c_char);
@@ -119,6 +120,7 @@ impl Esp32Ui {
             log::info!("operit-esp32 UI renderer=mini static_bytes={} draw_bytes={} ui_heap=0",
                 operit_mini_static_bytes(), operit_mini_draw_bytes());
         }
+        unsafe { operit_ui_set_remote_display(!cfg!(feature = "standalone-apps")); }
         Ok(runtime)
     }
 
@@ -360,6 +362,7 @@ impl Esp32Ui {
                 let snapshot = crate::runtimeHealthSnapshot().to_string();
                 io.respond(request.id(), snapshot.as_bytes());
             }
+            #[cfg(feature = "standalone-apps")]
             7 => {
                 let result=std::str::from_utf8(request.argument()).map_err(|e|e.to_string()).and_then(crate::audio::debug);
                 let value=result.unwrap_or_else(|error|serde_json::json!({"error":error})).to_string();

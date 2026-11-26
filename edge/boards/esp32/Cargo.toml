@@ -10,6 +10,11 @@ description = "Operit Edge firmware for ESP32-2432S028."
 name = "operit-esp32"
 path = "src/main.rs"
 
+[features]
+# Keep the existing application by default; omit it for a Core-driven display.
+default = ["standalone-apps"]
+standalone-apps = []
+
 [dependencies]
 operit-edge-sdk = { path = "../../sdk", features = ["space", "scene"] }
 uuid = { version = "1", features = ["v4"] }

@@ -2,7 +2,7 @@ import {readFile, writeFile} from 'node:fs/promises';
 import {createInterface} from 'node:readline/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {editorRoot, configFile, firmwareElf, loadDeviceConfig, listSerialPorts, selectSerialPort,
+import {editorRoot, configFile, firmwareElf, firmwareDist, loadDeviceConfig, listSerialPorts, selectSerialPort,
   buildFlashPlan, executeFlashPlan, runTool} from './device-tools.mts';
 
 const debugActions = new Set(['screen', 'tree', 'tap', 'swipe', 'health', 'draft']);
@@ -23,7 +23,7 @@ export async function deviceMain(args: string[]): Promise<void> {
   const action = args[0] ?? 'help';
   const flags = args.slice(1);
   const valueFlags = new Set(['--port', '--emsdk', '--idf', '--id', '--direction', '--timeout', '--bridge', '--text']);
-  const booleanFlags = new Set(['--reset-data', '--confirm-reset', '--no-monitor', '--dry-run', '--help']);
+  const booleanFlags = new Set(['--reset-data', '--confirm-reset', '--no-monitor', '--dry-run', '--help', '--remote-display']);
   const values = new Map<string, string>();
   const enabled = new Set<string>();
   for (let i = 0; i < flags.length; i++) {
@@ -35,8 +35,11 @@ export async function deviceMain(args: string[]): Promise<void> {
     } else if (booleanFlags.has(flag)) enabled.add(flag);
     else throw new Error(`未知参数 ${flag}`);
   }
+  if (enabled.has('--remote-display') && !['dev', 'flash'].includes(action)) {
+    throw new Error('--remote-display 仅支持 dev / flash');
+  }
   if (action === 'help' || enabled.has('--help')) {
-    console.log('npm run dev        构建 → 更新固件 → 串口日志\nnpm run flash      更新已有固件，保留 Wi-Fi/配对/空间/布局\nnpm run flash:fresh 清空设备后安装（需确认，配对身份也会删除）\nnpm run dev:fresh   重新构建 → 清空安装 → 串口日志（需确认）\nnpm run monitor    串口日志（不主动重启）\nnpm run ports      查看串口\nnpm run device:setup -- --emsdk <路径> [--port COMxx]\n真机读屏：npm run device:screen -- --port COMxx\n真机对象树：npm run device:tree -- --port COMxx\n真机内存：npm run device:health -- --port COMxx\n真机点击：npm run device:tap -- --port COMxx --id <屏幕节点ID>\n自绘 UI：npm run dev（唯一渲染后端）\nSDK 配置：npm run device:setup -- --idf <ESP-IDF目录>\n追加参数：--port COMxx / --dry-run（仅 flash）/ --no-monitor（仅 dev）');
+    console.log('npm run dev        构建 → 更新固件 → 串口日志\nnpm run flash      更新已有固件，保留 Wi-Fi/配对/空间/布局\nnpm run flash:fresh 清空设备后安装（需确认，配对身份也会删除）\nnpm run dev:fresh   重新构建 → 清空安装 → 串口日志（需确认）\nnpm run monitor    串口日志（不主动重启）\nnpm run ports      查看串口\nnpm run device:setup -- --emsdk <路径> [--port COMxx]\n真机读屏：npm run device:screen -- --port COMxx\n真机对象树：npm run device:tree -- --port COMxx\n真机内存：npm run device:health -- --port COMxx\n真机点击：npm run device:tap -- --port COMxx --id <屏幕节点ID>\n自绘 UI：npm run dev（唯一渲染后端）\nSDK 配置：npm run device:setup -- --idf <ESP-IDF目录>\n追加参数：--port COMxx / --dry-run（仅 flash）/ --no-monitor（仅 dev）/ --remote-display（dev 或 flash）');
     return;
   }
   if (!['setup', 'ports', 'flash', 'monitor', 'dev', 'screen', 'tree', 'tap', 'swipe', 'health', 'draft'].includes(action)) throw new Error(`未知命令 ${action}`);
@@ -97,7 +100,7 @@ export async function deviceMain(args: string[]): Promise<void> {
     if (!confirmReset) throw new Error('已取消；未擦除或烧录');
   }
   if (action === 'dev') {
-    const buildFlags = ['--firmware'];
+    const buildFlags = ['--firmware', ...(enabled.has('--remote-display') ? ['--remote-display'] : [])];
     for (const name of ['--emsdk', '--idf']) {
       const value = values.get(name);
       if (value) buildFlags.push(name, value);
@@ -107,7 +110,8 @@ export async function deviceMain(args: string[]): Promise<void> {
       {cwd: editorRoot, inherit: true});
   }
   if (action === 'flash' || action === 'dev') {
-    const plan = await buildFlashPlan(port, {resetData, confirmReset: confirmReset || enabled.has('--dry-run')});
+    const plan = await buildFlashPlan(port, {resetData, confirmReset: confirmReset || enabled.has('--dry-run'),
+      ...(enabled.has('--remote-display') ? {dist: path.join(firmwareDist, 'remote-display')} : {})});
     if (enabled.has('--dry-run')) {
       console.log(JSON.stringify({port, resetData, commands: plan}, null, 2));
       return;

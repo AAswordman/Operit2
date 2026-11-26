@@ -2,15 +2,18 @@
 
 mod config;
 mod runtime_profile;
+#[cfg(feature = "standalone-apps")]
 mod edge_chat;
+#[cfg(feature = "standalone-apps")]
 mod standalone_chat;
 mod device_preferences;
-#[cfg(target_os = "espidf")]
+#[cfg(all(target_os = "espidf", feature = "standalone-apps"))]
 mod device_http;
+#[cfg(feature = "standalone-apps")]
 mod device_speech;
-#[cfg(target_os = "espidf")]
+#[cfg(all(target_os = "espidf", feature = "standalone-apps"))]
 mod audio;
-#[cfg(target_os = "espidf")]
+#[cfg(all(target_os = "espidf", feature = "standalone-apps"))]
 mod wav;
 mod device_space_ui;
 mod space_work;
@@ -201,8 +204,9 @@ fn runFirmware(
         .installIntoHostManager()
         .withSerialPortHost(serialHost)
         .withRuntimeStorageHost(runtimeStorage.clone())
-        .withHttpHost(Arc::new(device_http::DeviceHttpHost::default()))
         .withHostRuntimeTaskSchedulerHost(scheduler.clone());
+    #[cfg(feature = "standalone-apps")]
+    { hostManager.httpHost = Some(Arc::new(device_http::DeviceHttpHost::default())); }
     let status = Arc::new(FirmwareStatus::new(INITIAL_EXPRESSION));
     let setExpression = |expression: &str| -> operit_host_api::HostResult<()> {
         let state = faceHost.setExpression(operit_host_api::RobotFaceExpressionRequest {
@@ -318,9 +322,12 @@ fn runFirmware(
     let mut deviceSpaceUi = crate::device_space_ui::DeviceSpaceUi::new(
         NodeServices::new(peerService.clone()), spaceService.clone(), scheduler.clone(),
     );
-    let speech = Arc::new(device_speech::DeviceSpeech::default());
-    audio::install(scheduler.clone(),speech.clone());
-    let (speechOutput, speechInput) = speech.handlers();
+    #[cfg(feature = "standalone-apps")]
+    let speech = {
+        let speech = Arc::new(device_speech::DeviceSpeech::default());
+        audio::install(scheduler.clone(), speech.clone());
+        speech
+    };
     let preferenceSpace = spaceService.clone();
     scheduler.scheduleHostRuntimeAsyncTask("device-preferences", Box::new(move || Box::pin(async move {
         loop {
@@ -340,8 +347,12 @@ fn runFirmware(
         })
     });
     let mut edgeNode = operit_edge_sdk::device::EdgeNode::fromHostManager(hostManager.clone())
-        .withCallHandler(handler)
-        .withStreamHandlers(speechOutput, speechInput);
+        .withCallHandler(handler);
+    #[cfg(feature = "standalone-apps")]
+    {
+        let (speechOutput, speechInput) = speech.handlers();
+        edgeNode = edgeNode.withStreamHandlers(speechOutput, speechInput);
+    }
     edgeNode = edgeNode.withNodeServices(NodeServices::new(peerService.clone()));
     let edgeNode = Arc::new(edgeNode);
     edgeRouter
@@ -399,21 +410,26 @@ fn runFirmware(
         }
         Err(_) => false,
     };
-    updateStatus(&mut ui, &status, crate::edge_chat::isConnected(), paired);
+    updateStatus(&mut ui, &status, false, paired);
     ui.pump(1);
+    #[cfg(feature = "standalone-apps")]
     let mut lastSpeechResult=0;
+    #[cfg(feature = "standalone-apps")]
     let mut pendingSpeechResult = None;
     let mut lastExpression = status.snapshot().expression;
     let mut lastStatusRevision = status.revision();
-    let mut lastEdgeReady = crate::edge_chat::isConnected();
+    let mut lastEdgeReady = false;
     let mut lastPaired = paired;
     let mut nextPairingPoll = std::time::Instant::now();
     let mut nextWifiPoll = std::time::Instant::now();
     logRuntimeHealth("ready");
+    #[cfg(feature = "standalone-apps")]
     let mut lastChatRevision = u32::MAX;
+    #[cfg(feature = "standalone-apps")]
     let mut lastChatConnected = false;
+    #[cfg(feature = "standalone-apps")]
     let mut chatRoute = crate::edge_chat::SpaceChatRoute::default();
-    let mut nextChatRoutePoll = std::time::Instant::now();
+    let mut nextRoutePoll = std::time::Instant::now();
     loop {
         if std::time::Instant::now() >= nextWifiPoll {
             status.setWifiConnected(wifiMode == crate::wifi::Esp32WifiMode::Station && _wifi.stationConnected());
@@ -534,6 +550,7 @@ fn runFirmware(
                     match result {
                         Ok(()) => {
                             deviceSpaceUi.reset();
+                            #[cfg(feature = "standalone-apps")]
                             chatRoute.reset();
                             status.setPairingCode("");
                             setExpression("neutral")?;
@@ -541,32 +558,41 @@ fn runFirmware(
                         Err(error) => ui.actionError(&error),
                     }
                 }
+                #[cfg(feature = "standalone-apps")]
                 action if action.starts_with("edge_plugins_") || action.starts_with("edge_plugin_") => {
                     if let Err(error) = crate::edge_chat::pluginsAction(action) { ui.actionError(&error); }
                 }
+                #[cfg(feature = "standalone-apps")]
                 "edge_chat" => {}
+                #[cfg(feature = "standalone-apps")]
                 "edge_history_older" | "edge_history_newer" => {
                     if let Err(error) = crate::edge_chat::moveHistory(action == "edge_history_older") { ui.actionError(&error); }
                 }
+                #[cfg(feature = "standalone-apps")]
                 "edge_conversations_refresh" => {
                     if let Err(error) = crate::edge_chat::conversationsAction() { ui.actionError(&error); }
                 }
+                #[cfg(feature = "standalone-apps")]
                 "edge_new" => {
                     if let Err(error) = crate::edge_chat::newChat() {
                         ui.actionError(&error);
                     }
                 }
+                #[cfg(feature = "standalone-apps")]
                 action if action.starts_with("edge_select:") => {
                     if let Err(error) = crate::edge_chat::selectChat(&action[12..]) {
                         ui.actionError(&error);
                     }
                 }
+                #[cfg(feature = "standalone-apps")]
                 "edge_voice" => {
                     if let Err(error)=audio::toggleRecording() {ui.actionError(&error);}
                 }
+                #[cfg(feature = "standalone-apps")]
                 "edge_audio_test" => {
                     if let Err(error)=audio::test() {ui.actionError(&error);}
                 }
+                #[cfg(feature = "standalone-apps")]
                 "edge_send" => {
                     let draft = ui.chatDraft();
                     if let Err(error) = crate::edge_chat::send(draft) {
@@ -577,25 +603,28 @@ fn runFirmware(
                 _ => log::debug!("operit-esp32 UI action: {action}"),
             }
         }
-        audio::pump();
-        if let Some(result)=audio::takeResult() {
-            if let Err(error)=result {ui.actionError(&error);}
-        }
-        // Scalar speech state remains responsive while native audio owns the
-        // device work guard. Defer chat materialization until that guard releases.
-        let (phase, result) = speech.takeNativeUpdate(&mut lastSpeechResult);
-        ui.setSpeechState(phase);
-        if result.is_some() { pendingSpeechResult = result; }
-        if !spaceJoinUi.isBusy() && !deviceSpaceUi.isBusy() {
-            if let Some(result)=pendingSpeechResult.take() {
-                match result {
-                    Ok(text)=>if let Err(error)=crate::edge_chat::send(text) {ui.actionError(&error);},
-                    Err(error)=>ui.actionError(&error),
+        #[cfg(feature = "standalone-apps")]
+        {
+            audio::pump();
+            if let Some(result)=audio::takeResult() {
+                if let Err(error)=result {ui.actionError(&error);}
+            }
+            // Scalar speech state remains responsive while native audio owns the
+            // device work guard. Defer chat materialization until that guard releases.
+            let (phase, result) = speech.takeNativeUpdate(&mut lastSpeechResult);
+            ui.setSpeechState(phase);
+            if result.is_some() { pendingSpeechResult = result; }
+            if !spaceJoinUi.isBusy() && !deviceSpaceUi.isBusy() {
+                if let Some(result)=pendingSpeechResult.take() {
+                    match result {
+                        Ok(text)=>if let Err(error)=crate::edge_chat::send(text) {ui.actionError(&error);},
+                        Err(error)=>ui.actionError(&error),
+                    }
                 }
             }
-        }
-        if let Some(result) = crate::edge_chat::takeSendResult() {
-            ui.chatSendResult(result);
+            if let Some(result) = crate::edge_chat::takeSendResult() {
+                ui.chatSendResult(result);
+            }
         }
         if let Ok(face) = faceHost.getExpression() {
             if face.expression != lastExpression {
@@ -613,28 +642,33 @@ fn runFirmware(
         // Keep the previous indicators until the shared operation completes.
         // Poll first so a newly accepted Core carrier is reflected on the
         // display in the same loop iteration.
-        if !spaceStateBusy && std::time::Instant::now() >= nextChatRoutePoll {
-            nextChatRoutePoll = std::time::Instant::now() + std::time::Duration::from_millis(500);
-            let settings = (|| {
-                let scope = operit_edge_sdk::runtime::NodeSpaceService::NodeSpaceContext::spaceStore(spaceService.as_ref())
-                    .space().map_err(|error| error.to_string())?;
-                let preferences = operit_edge_sdk::storage::DevicePreferencesStore::DevicePreferencesStore::new(runtimeStorage.clone())
-                    .read(&scope.spaceId, &identity.nodeId).map_err(|error| error.to_string())?;
-                Ok::<_, String>((scope.spaceId, preferences))
-            })();
-            match settings {
-                Ok((spaceId, preferences)) => {
-                    if let Err(error) = standalone_chat::configure(hostManager.httpHost.clone(), &spaceId, preferences.values().get("chat")) {
+        if !spaceStateBusy && std::time::Instant::now() >= nextRoutePoll {
+            nextRoutePoll = std::time::Instant::now() + std::time::Duration::from_millis(500);
+            #[cfg(feature = "standalone-apps")]
+            {
+                let settings = (|| {
+                    let scope = operit_edge_sdk::runtime::NodeSpaceService::NodeSpaceContext::spaceStore(spaceService.as_ref())
+                        .space().map_err(|error| error.to_string())?;
+                    let preferences = operit_edge_sdk::storage::DevicePreferencesStore::DevicePreferencesStore::new(runtimeStorage.clone())
+                        .read(&scope.spaceId, &identity.nodeId).map_err(|error| error.to_string())?;
+                    Ok::<_, String>((scope.spaceId, preferences))
+                })();
+                match settings {
+                    Ok((spaceId, preferences)) => {
+                        if let Err(error) = standalone_chat::configure(hostManager.httpHost.clone(), &spaceId, preferences.values().get("chat")) {
+                            ui.actionError(&error);
+                        }
+                    }
+                    Err(error) => {
+                        standalone_chat::reset();
                         ui.actionError(&error);
                     }
                 }
-                Err(error) => {
-                    standalone_chat::reset();
-                    ui.actionError(&error);
-                }
+                chatRoute.poll(NodeServices::new(peerService.clone()));
+                edgeReady = crate::edge_chat::isConnected();
             }
-            chatRoute.poll(NodeServices::new(peerService.clone()));
-            edgeReady = crate::edge_chat::isConnected();
+            #[cfg(not(feature = "standalone-apps"))]
+            { edgeReady = peerService.spaceConnection().is_some(); }
         }
         let mut pairingChanged = false;
         loop {
@@ -674,16 +708,19 @@ fn runFirmware(
             lastEdgeReady = edgeReady;
             lastPaired = paired;
         }
-        let chatRevision = crate::edge_chat::revision();
-        let chatConnected = edgeReady;
-        if chatRevision != lastChatRevision || chatConnected != lastChatConnected {
-            let chatState = crate::edge_chat::snapshot();
-            ui.setChatState(&chatState);
-            ui.setPlugins(&crate::edge_chat::pluginsSnapshot());
-            ui.setChatScreen(&crate::edge_chat::screenTextFromSnapshot(&chatState));
-            ui.setChatTask(&crate::edge_chat::taskStatus());
-            lastChatRevision = chatRevision;
-            lastChatConnected = chatConnected;
+        #[cfg(feature = "standalone-apps")]
+        {
+            let chatRevision = crate::edge_chat::revision();
+            let chatConnected = edgeReady;
+            if chatRevision != lastChatRevision || chatConnected != lastChatConnected {
+                let chatState = crate::edge_chat::snapshot();
+                ui.setChatState(&chatState);
+                ui.setPlugins(&crate::edge_chat::pluginsSnapshot());
+                ui.setChatScreen(&crate::edge_chat::screenTextFromSnapshot(&chatState));
+                ui.setChatTask(&crate::edge_chat::taskStatus());
+                lastChatRevision = chatRevision;
+                lastChatConnected = chatConnected;
+            }
         }
         // Health is now polled via the UART mailbox under the Link write lock.
         // Unsolicited console telemetry can interleave with a binary OPS1 frame.

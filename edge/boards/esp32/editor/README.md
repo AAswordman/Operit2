@@ -263,3 +263,23 @@ GPIO26 DAC 喇叭适配，详见[原生音频接线与自检](../README.md#nativ
 远端消息超过 2048 字节时，Edge 通过现有 Link Push / ReverseStream 向 Core 的 `sendUserMessageStream` 逐块传送，单块最多 2048 UTF-8 字节。设备当前保留有上限的临时输入字符串，完整输入不写入 NVS。Core 校验声明长度、分块上限、显式空提交包及 EOF 后，调用原有 `sendUserMessage`，复用权限、输入钩子、历史和生成逻辑。中断、缺块、提交后追加数据或 30 秒无输入都会失败，不提交已收到的前缀；不会自动重发不确定的聊天操作。需要配套的新 Core；旧 Core 缺少该方法时明确报错。
 
 聊天显示的 640 字节窗口和分页保持原有设计。长回复在 Core 保留全文，Edge 按页读取；显示窗口截短不代表正文丢失。“朗读当前显示的回复”使用该窗口中的片段，不等同于朗读 Core 中保存的完整长回复。集成测试验证超过 8 KiB 的中文/emoji 输入完整到达模型供应商并进入 Core 历史，末尾标记只提交一次。
+
+
+## Core 驱动的远程显示固件
+
+`--remote-display` 组合省去设备侧聊天和音频应用，保留现有配对、Space 授权、
+Wi-Fi 配置、设备偏好和通用 `edge.scene` 渲染。任务猫 ToolPkg 在 Core 上运行。
+固件单独打包，编辑器的完整应用预览和桌面运行时继续使用默认组合。
+
+在本编辑器目录运行：
+
+```sh
+npm run check:firmware -- --remote-display
+npm run build:firmware -- --remote-display
+npm run flash -- --remote-display --port COM5
+```
+
+请使用实际设备端口。此组合仅生成原生固件，不需要 Emscripten。镜像位于
+`../dist/remote-display`；烧录要求该目录已有完整固件包，正常更新保留 NVS 和布局。
+`npm run dev -- --remote-display --port COM5` 可连续执行构建和更新。
+默认命令继续使用完整应用。实际体积和功能限制见板卡 README。

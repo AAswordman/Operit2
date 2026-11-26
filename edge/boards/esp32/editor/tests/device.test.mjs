@@ -180,3 +180,10 @@ test('UART and bridge drafts use the debug handler and retain text including an 
   }
   assert.throws(() => deviceDebugArgs('monitor', ['--port', 'COM27'], new Map()), /未知调试命令/);
 });
+
+
+test('remote display selection is rejected for commands that cannot choose a firmware image', async () => {
+  for (const action of ['health', 'monitor', 'setup']) {
+    await assert.rejects(deviceMain([action, '--remote-display']), /仅支持 dev \/ flash/);
+  }
+});

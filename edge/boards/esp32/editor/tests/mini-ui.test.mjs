@@ -582,3 +582,29 @@ test('native overlong input reports an error instead of sending a truncated pref
   call('set_chat_draft',['string'],['短消息']);call('submit_chat');
   assert.deepEqual(actions,['edge_send']);
 });
+
+
+test('remote display keeps pairing and scenes while hiding unavailable device apps',options,async()=>{
+  const {call,inspect,tap}=await fixture();
+  call('set_remote_display',['number'],[1]);
+  assert(inspect().nodes.some(n=>n.id==='settings_space'));
+  assert.equal(tap('sidebar_toggle'),1);
+  assert(!inspect().nodes.some(n=>n.id==='sidebar_chat'||n.id==='sidebar_plugins'));
+  assert.equal(tap('sidebar_settings'),1);
+  assert.equal(tap('settings_device'),1);
+  assert(!inspect().nodes.some(n=>n.id==='audio_test'||n.id==='edge_new'));
+  call('navigate_home');
+  call('set_pairing_code',['string'],['001234']);
+  assert.equal(tap('settings_space'),1);
+  assert.equal(tap('space_pair_code'),1);
+  assert(inspect().nodes.some(n=>n.id==='pairing_code'&&n.text==='001234'));
+  call('navigate_apps');
+  assert(inspect().nodes.some(n=>n.id==='settings_space'));
+  call('set_scene',['number','number','number'],[1,1,0]);
+  assert.equal(inspect().page,'edge_scene');
+  assert(inspect().nodes.some(n=>n.id==='scene_exit'));
+  call('set_scene',['number','number','number'],[0,2,0]);
+  assert(inspect().nodes.some(n=>n.id==='settings_space'));
+  call('set_remote_display',['number'],[0]);
+  assert.equal(inspect().page,'Chat');
+});

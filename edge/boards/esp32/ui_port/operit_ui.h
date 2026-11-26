@@ -31,6 +31,7 @@ void operit_ui_set_scene(bool active, uint32_t revision, uint32_t tick);
 void operit_ui_pump(uint32_t elapsed_ms);
 void operit_ui_set_touch(uint16_t x, uint16_t y, bool pressed);
 void operit_ui_navigate_home(void);
+void operit_ui_set_remote_display(bool enabled);
 void operit_ui_set_connection(bool wifi_ready, bool edge_ready);
 void operit_ui_set_paired(bool paired);
 void operit_ui_set_expression(const char *expression);

@@ -370,8 +370,124 @@ mapping by 377,082 bytes; lowering LLVM inline thresholds to zero produced a
 size improvement. These options are not part of the release configuration.
 Compressing the earlier image as an ordinary XZ file produced 2,008,824 bytes;
 that archive is not a bootable firmware image and does not count as partition
-headroom. This work does not establish a theoretical minimum or achieve a 10%
-reduction. Further changes must still run the real firmware capacity check.
+headroom. The initial target was **10% of the original image**, about
+**399,755 bytes** (a 90% reduction). The current image is still **97.98%** of
+the original. The target was subsequently relaxed: about 30% is also acceptable;
+there is no mandatory 10% limit. These compiler optimizations do not establish
+a theoretical minimum or meet either size target. Further changes must still run the real firmware capacity check.
+
+### Remote display composition (2026-11-26)
+
+The board now has two application compositions. The default `standalone-apps`
+feature retains the existing chat client, independent HTTP/HTTPS model requests,
+STT/TTS stream handlers and native audio. Building without default features omits
+those modules and their Host installation. Both compositions reuse the same node
+identity, saved pairings, encrypted Link sessions, Space admission/authorization,
+preferences, NVS carrier, Wi-Fi setup, discovery and `edge.scene` renderer.
+
+In remote display mode the Core ToolPkg still selects task-cat moods and sends
+assets and scene configuration. The device decodes the bounded packs and paints
+its screen. It does not subscribe to Core chat, provision a conversation or run
+an independent model request. The connection indicator reads the shared Space
+connection directly. Local settings, pairing and Space consent remain available;
+chat browsing, plugin browsing, new-conversation and audio controls are hidden.
+
+The checked remote display image is **3,602,160 bytes**, **90.11%** of the original
+3,997,552-byte task-cat image. It leaves **395,536 bytes** in the unchanged
+application partition and saves **395,392 bytes (9.89%)** against that original.
+Compared with the previously optimized complete image, it saves **314,576 bytes**.
+It has **not** reached the accepted approximate 30% target (about 1,199,266 bytes).
+The result shows that removing device applications alone is insufficient; shared
+node/Space persistence, protocol processing and the native networking build still
+contribute substantial code. The protocol and stored formats are unchanged.
+
+Both application compositions passed actual Xtensa release compilation, ABI
+inspection and image capacity checks. The current default complete build is
+3,919,136 bytes; profile selection adds 2,400 bytes relative to the earlier
+3,916,736-byte build above. On COM5, the remote package booted with Wi-Fi connected
+and saved pairing present. NVS usage remained 335 entries. Twenty consecutive
+health requests showed increasing uptime with no session/allocation diagnostic;
+the last sample had 71,076 free heap bytes and a 65,536-byte largest block.
+The physical screen hid chat/plugin browsing and audio controls and retained
+connection/settings navigation. All 122 editor tests and the TypeScript check
+passed, along with three real-TCP pairing/admission regressions and the three
+production package parser tests. This run did not verify a live Core reconnection,
+new physical pairing/admission, or end-to-end task-cat rendering.
+
+Check or package this composition without Emscripten:
+
+```sh
+npm run check:firmware --prefix edge/boards/esp32/editor -- --remote-display
+npm run build:firmware --prefix edge/boards/esp32/editor -- --remote-display
+```
+
+The remote package is written to `dist/remote-display`; the default full package
+is retained separately in `dist`. The report records `profile: "remote-display"`.
+The editor preview and desktop runtime retain the complete application composition;
+the remote build packages native firmware only and does not replace their UI assets.
+
+Select the same profile when updating hardware, supplying the actual port:
+
+```sh
+npm run flash --prefix edge/boards/esp32/editor -- --remote-display --port COM5
+```
+
+`npm run dev --prefix edge/boards/esp32/editor -- --remote-display --port COM5`
+builds and updates this profile in one operation. Normal updates preserve Wi-Fi,
+pairing, Space and layout data. A missing remote package fails without falling back
+to the default package. Switching to the complete composition uses the existing
+build/update commands without `--remote-display`.
+
+### Startup and Wi-Fi size probes (2026-11-26)
+
+Two build-only examples isolate the startup and networking costs from the Edge
+application. They use the same release profile, ESP-IDF 5.3.2, SDK configuration
+and 4 MB partition table as the production firmware. Fat LTO and linker section
+collection discard unused application dependencies. The Wi-Fi probe initializes
+NVS, the event loop, STA/AP network-interface wrappers, and a WPA2 station client.
+It does not load or implement Edge identity, pairing, Space, discovery, HTTP,
+display, fonts, audio or task-cat services.
+
+| Build | Application image bytes | Percentage of original task-cat image |
+| --- | ---: | ---: |
+| Rust/ESP-IDF startup and idle loop | 169,888 | 4.25% |
+| WPA2 Wi-Fi probe | 681,968 | 17.06% |
+| Current complete Edge application | 3,916,736 | 97.98% |
+| Initial 10% target | about 399,755 | 10% |
+| Subsequently accepted 30% target | about 1,199,266 | 30% |
+
+The networking probe alone exceeds the initial 10% target by about 282 KB.
+It fits below the subsequently accepted 30% target, leaving about 517 KB for
+the rest of a hypothetical implementation. It does not include pairing or rendering.
+Removing application features while retaining this networking build cannot meet
+the initial 10% target.
+This measurement is specific to the current SDK configuration and wrappers; it
+is not a lower bound for every possible ESP32 networking stack or a measurement
+of a complete paired/display Edge. A different SDK configuration or network stack
+would need a separate measurement before claiming a smaller minimum. Changing
+node composition must preserve shared pairing, authentication and Space approval.
+
+After setting up the normal firmware toolchain and build environment, build the
+examples from `edge/boards/esp32`:
+
+```sh
+cargo build --locked --release --example footprint_idle --example footprint_wifi
+```
+
+The ELFs are in `<target-dir>/xtensa-esp32-espidf/release/examples/`. Measure each
+with the same image generator used by the firmware capacity check:
+
+```sh
+espflash save-image --chip esp32 --flash-mode dio --flash-size 4mb --skip-update-check --partition-table partitions.csv <example-elf> <application.bin>
+```
+
+Read the generated application file length, not the ELF file length or a
+compressed download archive. These measurements exclude the separately stored
+bootloader and partition table, matching the production application measurement.
+Both examples passed release compilation and image generation. Neither was
+flashed or tested for actual Wi-Fi connectivity; the Wi-Fi probe uses dummy
+credentials. They are measurement fixtures, not usable Edge firmware. Keep the
+working application and saved pairing data on the device.
 
 ### Task cat firmware update (2026-11-26)
 

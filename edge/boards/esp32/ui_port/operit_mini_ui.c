@@ -32,6 +32,7 @@ typedef struct {
     operit_ui_action_cb_t action;
     void *context;
     bool wifi, connected, paired, busy, pressed, dirty, refresh_again, sending, sidebar, dimmed;
+    bool remote_display;
     uint8_t expression, speech_phase;
     int page, pressed_node, render_y;
     uint16_t press_x, press_y;
@@ -292,8 +293,8 @@ static void scene(void) {
         icon_node("sidebar_toggle","","close_sidebar",136,0,44,40,true,ICON_CLOSE);
         node("sidebar_face","","expression",49,43,82,51,true,1);
         icon_node("sidebar_expression","表情","expression",12,102,156,36,true,ICON_FACE);
-        icon_node("sidebar_chat","对话列表","conversations",12,143,156,36,ui.connected&&!ui.sending&&!ui.speech_phase,ICON_CHAT);
-        icon_node("sidebar_plugins","插件","plugins",12,190,48,44,true,ICON_PLUGIN);
+        if(!ui.remote_display) icon_node("sidebar_chat","对话列表","conversations",12,143,156,36,ui.connected&&!ui.sending&&!ui.speech_phase,ICON_CHAT);
+        if(!ui.remote_display) icon_node("sidebar_plugins","插件","plugins",12,190,48,44,true,ICON_PLUGIN);
         icon_node("sidebar_settings","设置","settings",120,190,48,44,true,ICON_SETTINGS);
         node("sidebar_backdrop","","close_sidebar",180,0,140,240,true,1);
         return;
@@ -344,9 +345,9 @@ static void scene(void) {
         node("space_review",ui.prompt[0]?"审批加入申请：点此查看":"暂无待审批的空间申请",ui.prompt[0]?"edge_space_review":NULL,14,169,292,34,ui.prompt[0]&&!ui.busy,1);
         icon_node("space_manage","空间与配对管理","space_manage",14,208,292,28,true,ICON_SETTINGS);
     } else if (page()==11) {
-        icon_node("edge_new","新建对话","edge_new",14,66,292,44,ui.connected&&!ui.sending&&!ui.speech_phase,ICON_CHAT);
+        if(!ui.remote_display) icon_node("edge_new","新建对话","edge_new",14,66,292,44,ui.connected&&!ui.sending&&!ui.speech_phase,ICON_CHAT);
         icon_node("operations_space","设备空间与配对","space_settings",14,122,292,44,true,ICON_SPACE);
-        icon_node("audio_test","音频自检（短提示音与采样）","edge_audio_test",14,178,292,44,true,ICON_DEVICE);
+        if(!ui.remote_display) icon_node("audio_test","音频自检（短提示音与采样）","edge_audio_test",14,178,292,44,true,ICON_DEVICE);
     } else if (page()==14) {
         static const char *ids[]={"space_peer_0","space_peer_1","space_peer_2"};
         static const char *actions[]={"edge_pair_candidate:0","edge_pair_candidate:1","edge_pair_candidate:2"};
@@ -820,8 +821,13 @@ void operit_ui_set_touch(uint16_t x,uint16_t y,bool down) {
     }
     ui.pressed=down;
 }
-void operit_ui_navigate_home(void) { ui.sidebar=false;ui.page=2;if(!ui.sending)ui.submitted[0]=0;invalidate(); }
-void operit_ui_navigate_apps(void) { ui.sidebar=false;ui.page=6;invalidate(); }
+void operit_ui_navigate_home(void) { ui.sidebar=false;ui.page=ui.remote_display?1:2;if(!ui.sending)ui.submitted[0]=0;invalidate(); }
+void operit_ui_navigate_apps(void) { ui.sidebar=false;ui.page=ui.remote_display?1:6;invalidate(); }
+void operit_ui_set_remote_display(bool enabled) {
+    if(ui.remote_display!=enabled) {
+        ui.remote_display=enabled;ui.sidebar=false;ui.page=enabled?1:2;invalidate();
+    }
+}
 void operit_ui_set_connection(bool wifi,bool edge) { if(ui.wifi!=wifi||ui.connected!=edge){ui.wifi=wifi;ui.connected=edge;invalidate();} }
 void operit_ui_set_paired(bool paired) { if(ui.paired!=paired){ui.paired=paired;invalidate();} }
 void operit_ui_set_pairing_code(const char *code) {
