@@ -78,6 +78,13 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
   StreamSubscription<void>? _syncCompletions;
   Timer? _syncReport;
 
+  /// Observes text and IME composition commits through the same editing value.
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(_onSearchChanged);
+  }
+
   @override
   void onPageActivityChanged(bool active) {
     if (active == _active) {
@@ -127,6 +134,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
     _syncReport?.cancel();
     _tab.dispose();
     _searchOpen.dispose();
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _searchFocus.dispose();
     super.dispose();
@@ -216,10 +224,12 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
     });
   }
 
-  void _onSearchChanged(String value) {
-    // Wait for IME composition to finish before filtering on partial pinyin.
-    if (_searchController.value.composing.isValid) return;
-    setState(() => _query = value);
+  /// Applies committed input even when only the composing range has changed.
+  void _onSearchChanged() {
+    final value = _searchController.value;
+    if (value.composing.isValid && !value.composing.isCollapsed) return;
+    if (_query == value.text) return;
+    setState(() => _query = value.text);
   }
 
   @override
@@ -234,7 +244,6 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
         searchController: _searchController,
         searchFocus: _searchFocus,
         onSelect: _selectTab,
-        onSearchChanged: _onSearchChanged,
       ),
       actions: (context) {
         // Phones keep the title wide enough for the section switcher.
@@ -518,7 +527,6 @@ class _TopBarTitle extends StatelessWidget {
     required this.searchController,
     required this.searchFocus,
     required this.onSelect,
-    required this.onSearchChanged,
   });
 
   final ValueNotifier<PackageTab> tab;
@@ -527,7 +535,6 @@ class _TopBarTitle extends StatelessWidget {
   final TextEditingController searchController;
   final FocusNode searchFocus;
   final ValueChanged<PackageTab> onSelect;
-  final ValueChanged<String> onSearchChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -546,7 +553,6 @@ class _TopBarTitle extends StatelessWidget {
               PackageTab.extensions => l10n.extensionsSearchInstalled,
               PackageTab.market => l10n.extensionsSearchMarket,
             },
-            onChanged: onSearchChanged,
           );
         } else {
           final snapshot = controller.snapshot;
@@ -676,13 +682,11 @@ class _SearchField extends StatelessWidget {
     required this.controller,
     required this.focusNode,
     required this.hintText,
-    required this.onChanged,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
   final String hintText;
-  final ValueChanged<String> onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -692,7 +696,6 @@ class _SearchField extends StatelessWidget {
       controller: controller,
       focusNode: focusNode,
       autofocus: true,
-      onChanged: onChanged,
       maxLines: 1,
       textInputAction: TextInputAction.search,
       cursorColor: contentColor,

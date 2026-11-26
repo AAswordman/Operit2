@@ -1231,6 +1231,89 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  for (final committedRange in [
+    TextRange.empty,
+    const TextRange.collapsed(2),
+  ]) {
+    testWidgets(
+      'market search updates on composition-only commit $committedRange',
+      (tester) async {
+        tester.platformDispatcher.localesTestValue = const [Locale('zh')];
+        addTearDown(tester.platformDispatcher.clearLocalesTestValue);
+        final bridge = _CatalogBridge()..marketTotal = 4;
+        bridge.marketPages[('updated', 1)] = [
+          core_proxy.MarketEntrySummary.fromJson({
+            'id': 'unrelated',
+            'type': 'package',
+            'title': 'Other plugin',
+          }),
+        ];
+        bridge.marketPages[('updated', 2)] = [
+          core_proxy.MarketEntrySummary.fromJson({
+            'id': 'search',
+            'type': 'package',
+            'title': '搜索助手',
+          }),
+        ];
+        await tester.pumpWidget(_manager(bridge));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('市场'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('搜索（Ctrl+F）'));
+        await tester.pumpAndSettle();
+
+        tester.testTextInput.updateEditingValue(
+          const TextEditingValue(
+            text: '搜索',
+            selection: TextSelection.collapsed(offset: 2),
+            composing: TextRange(start: 0, end: 2),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.widget<MarketPane>(find.byType(MarketPane)).query, '');
+
+        tester.testTextInput.updateEditingValue(
+          TextEditingValue(
+            text: '搜索',
+            selection: const TextSelection.collapsed(offset: 2),
+            composing: committedRange,
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.widget<MarketPane>(find.byType(MarketPane)).query, '搜索');
+        expect(find.text('搜索助手'), findsOneWidget);
+        expect(find.text('Other plugin'), findsNothing);
+
+        await tester.enterText(find.byType(TextField), 'no-match');
+        await tester.pumpAndSettle();
+        expect(find.text('市场里没有找到「no-match」'), findsOneWidget);
+
+        tester.testTextInput.updateEditingValue(
+          const TextEditingValue(
+            text: '搜索',
+            selection: TextSelection.collapsed(offset: 2),
+            composing: TextRange(start: 0, end: 2),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<MarketPane>(find.byType(MarketPane)).query,
+          'no-match',
+        );
+        await tester.testTextInput.receiveAction(TextInputAction.search);
+        await tester.pumpAndSettle();
+        expect(tester.widget<MarketPane>(find.byType(MarketPane)).query, '搜索');
+        expect(find.text('搜索助手'), findsOneWidget);
+
+        await tester.tap(find.byTooltip('关闭搜索'));
+        await tester.pumpAndSettle();
+        expect(tester.widget<MarketPane>(find.byType(MarketPane)).query, '');
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+
   for (final failExtraPage in [false, true]) {
     testWidgets(
       'recommendations read at most three recent pages (failure: $failExtraPage)',
