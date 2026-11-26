@@ -51,11 +51,11 @@ import '../components/workspace/ChatContextStatsTopBarButton.dart';
 import '../components/workspace/WorkspaceLayoutMetrics.dart';
 import '../components/workspace/WorkspaceSession.dart';
 import '../components/workspace/WorkspaceTopBarButton.dart';
-import '../../../../core/host/LocalSpeechRecorder.dart';
+import '../voice_input/ChatVoiceInputSession.dart';
+import '../voice_input/CoreChatVoiceInput.dart';
 import '../viewmodel/ChatSelectionTransition.dart';
 import '../viewmodel/ChatViewModel.dart';
 
-const String _localSttLogTag = 'LocalSTT';
 const String _packageAttachmentPrefix = 'package_attach:';
 const String _workspaceMentionAttachmentPrefix = 'workspace_mention:';
 
@@ -254,8 +254,6 @@ class _ChatContentData {
     required this.isPendingQueueExpanded,
     required this.toolPermissionRequests,
     required this.attachments,
-    required this.isSpeechRecording,
-    required this.isSpeechTranscribing,
   });
 
   final List<ChatUiMessage> messages;
@@ -280,8 +278,6 @@ class _ChatContentData {
   final List<core_proxy.RuntimeHostInteractionToolPermissionRequest>
   toolPermissionRequests;
   final List<AttachmentInfo> attachments;
-  final bool isSpeechRecording;
-  final bool isSpeechTranscribing;
 }
 
 class _MentionDeletionNormalization {
@@ -302,7 +298,12 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   final FocusNode _inputFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   final _messageNavigation = ChatMessageNavigationController();
-  final LocalSpeechRecorder _speechRecorder = LocalSpeechRecorder();
+  late final ChatVoiceInputSession _voiceInput = ChatVoiceInputSession(
+    core: CoreChatVoiceInput(_viewModel.clients.servicesSttRecognitionService),
+    selectedConfigId: () =>
+        _viewModel.clients.preferencesSttConfigManager.getSelectedSttConfigId(),
+    commit: _commitVoiceTranscript,
+  );
   late final Map<String?, TextEditingValue> _inputDraftsByChatId;
   final List<ChatUiMessage> _messages = <ChatUiMessage>[];
   List<AttachmentInfo> _attachments = const <AttachmentInfo>[];
@@ -367,8 +368,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   bool _pendingQueueEnqueueInFlight = false;
   bool _cameraRequestInFlight = false;
   bool _isApplyingChatDraft = false;
-  bool _isSpeechRecording = false;
-  bool _isSpeechTranscribing = false;
   List<core_proxy.RuntimeHostInteractionToolPermissionRequest>
   _toolPermissionRequests =
       const <core_proxy.RuntimeHostInteractionToolPermissionRequest>[];
@@ -477,7 +476,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _workspacesSubscription?.cancel();
     unawaited(_chatUiCatalogSubscription?.cancel());
     PluginHotReload.revision.removeListener(_requestChatUiContextRefresh);
-    unawaited(_speechRecorder.dispose());
+    _voiceInput.dispose();
     _topBarController?.clearActions(owner: _topBarActionsOwner);
     _topBarController?.clearTitleContent(owner: _topBarTitleOwner);
     _mainLayoutController?.clearAttachment(owner: _mainLayoutOwner);
@@ -2685,97 +2684,16 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _startSendMessageText(submittedText, chatId);
   }
 
-  /// Starts or stops local speech input from the chat action button.
-  Future<void> _toggleSpeechInput() async {
-    if (_isSpeechTranscribing) {
-      return;
-    }
-    try {
-      if (_isSpeechRecording) {
-        await _finishSpeechInput();
-      } else {
-        await _startSpeechInput();
-      }
-    } catch (error, stackTrace) {
-      ClientLogger.e(
-        'speech input failed',
-        tag: _localSttLogTag,
-        error: error,
-        stackTrace: stackTrace,
-      );
-      if (!mounted) {
-        return;
-      }
-      _mutateChatContentData(() {
-        _isSpeechRecording = false;
-        _isSpeechTranscribing = false;
-      });
-      _showLocalToast(
-        AppLocalizations.of(context)!.chatSpeechInputFailed('$error'),
-      );
-    }
-  }
-
-  /// Starts one WAV recording after validating the selected STT provider config.
-  Future<void> _startSpeechInput() async {
-    final selectedConfigId = await _viewModel
-        .clients
-        .preferencesSttConfigManager
-        .getSelectedSttConfigId();
+  /// Replaces the draft with a finished voice transcript and refocuses it.
+  void _commitVoiceTranscript(String text) {
     if (!mounted) {
       return;
     }
-    if (selectedConfigId == null) {
-      _showLocalToast(
-        AppLocalizations.of(context)!.chatSpeechInputConfigurationRequired,
-      );
-      return;
-    }
-    await _speechRecorder.start();
-    if (!mounted) {
-      return;
-    }
-    _mutateChatContentData(() {
-      _isSpeechRecording = true;
-    });
-  }
-
-  /// Stops recording, transcribes its bytes, and updates the current draft.
-  Future<void> _finishSpeechInput() async {
-    _mutateChatContentData(() {
-      _isSpeechRecording = false;
-      _isSpeechTranscribing = true;
-    });
-    final recordedAudio = await _speechRecorder.stop();
-    try {
-      final response = await _viewModel.clients.servicesSttRecognitionService
-          .transcribeCurrent(
-            audioBytes: recordedAudio.bytes,
-            fileName: recordedAudio.fileName,
-            contentType: recordedAudio.contentType,
-            language: null,
-          );
-      final text = response.text.trim();
-      if (text.isEmpty) {
-        if (mounted) {
-          _showLocalToast(
-            AppLocalizations.of(context)!.chatSpeechNoTextRecognized,
-          );
-        }
-        return;
-      }
-      _messageController.value = TextEditingValue(
-        text: text,
-        selection: TextSelection.collapsed(offset: text.length),
-      );
-      _inputFocusNode.requestFocus();
-    } finally {
-      if (mounted) {
-        _mutateChatContentData(() {
-          _isSpeechTranscribing = false;
-        });
-      }
-    }
+    _messageController.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+    _inputFocusNode.requestFocus();
   }
 
   /// Starts one send while retaining the chat id that accepted the submit hook.
@@ -3491,9 +3409,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
           isMultiSelectMode: data.isMultiSelectMode,
           selectedMessageTimestamps: data.selectedMessageTimestamps,
           isPreparingChatSwitch: data.isPreparingChatSwitch,
-          isSpeechRecording: data.isSpeechRecording,
-          isSpeechTranscribing: data.isSpeechTranscribing,
-          onSpeechInput: _toggleSpeechInput,
+          voiceInput: _voiceInput,
           onSendMessage: _sendMessage,
           onQueueMessage: _enqueueDraftToPendingQueue,
           onGuideMessage: _guideMessage,
@@ -3675,8 +3591,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
             core_proxy.RuntimeHostInteractionToolPermissionRequest
           >.unmodifiable(_toolPermissionRequests),
       attachments: List<AttachmentInfo>.unmodifiable(_attachments),
-      isSpeechRecording: _isSpeechRecording,
-      isSpeechTranscribing: _isSpeechTranscribing,
     );
   }
 

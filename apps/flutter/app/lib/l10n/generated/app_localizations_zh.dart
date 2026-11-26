@@ -931,6 +931,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatSpeechNoTextRecognized => '未识别到文本';
 
   @override
+  String get chatVoiceListening => '正在聆听…';
+
+  @override
+  String get chatVoiceStopListening => '停止录音';
+
+  @override
+  String get chatVoiceThinking => '识别中';
+
+  @override
   String get history => '历史记录';
 
   @override

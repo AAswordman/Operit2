@@ -575,6 +575,7 @@ class ThemeComposerIconTarget extends StatelessWidget {
     required this.color,
     required this.onTap,
     required this.tooltip,
+    this.iconWidget,
     this.imageAsset,
     this.imageSize,
     this.size = 20,
@@ -585,6 +586,7 @@ class ThemeComposerIconTarget extends StatelessWidget {
   final Color color;
   final VoidCallback? onTap;
   final String tooltip;
+  final Widget? iconWidget;
   final String? imageAsset;
   final double? imageSize;
   final double size;
@@ -616,7 +618,7 @@ class ThemeComposerIconTarget extends StatelessWidget {
                       fit: BoxFit.contain,
                     ),
                   )
-                : Icon(icon, size: size, color: color),
+                : (iconWidget ?? Icon(icon, size: size, color: color)),
           ),
         ),
       ),

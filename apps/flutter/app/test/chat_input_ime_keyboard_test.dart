@@ -13,6 +13,7 @@ import 'package:operit2/ui/features/chat/components/style/input/classic/ClassicC
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 import 'package:operit2/ui/main/layout/NavigationLayoutMetrics.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
+import 'support/chat_voice_input_session.dart';
 
 /// Verifies composer keyboard behavior across display layouts and input methods.
 void main() {
@@ -327,9 +328,7 @@ Future<void> _pumpComposer(
                 onSendMessage: onSend,
                 onQueueMessage: () {},
                 onCancelMessage: () {},
-                isSpeechRecording: false,
-                isSpeechTranscribing: false,
-                onSpeechInput: () {},
+                voiceInput: createIdleVoiceInputSession(),
               )
             : AgentChatInputSection(
                 controller: controller,
@@ -341,9 +340,7 @@ Future<void> _pumpComposer(
                 onSendMessage: onSend,
                 onQueueMessage: () {},
                 onCancelMessage: () {},
-                isSpeechRecording: false,
-                isSpeechTranscribing: false,
-                onSpeechInput: () {},
+                voiceInput: createIdleVoiceInputSession(),
               ),
       ),
     ),

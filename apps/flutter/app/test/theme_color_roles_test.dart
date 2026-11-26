@@ -8,6 +8,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/ui/features/chat/components/style/input/agent/AgentChatInputSection.dart';
 import 'package:operit2/ui/features/chat/components/style/input/classic/ClassicChatInputSection.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
+import 'support/chat_voice_input_session.dart';
 
 /// Preserves existing component roles while custom palette values stay distinct.
 void main() {
@@ -54,9 +55,7 @@ void main() {
                     onSendMessage: _noOp,
                     onQueueMessage: _noOp,
                     onCancelMessage: _noOp,
-                    isSpeechRecording: false,
-                    isSpeechTranscribing: false,
-                    onSpeechInput: _noOp,
+                    voiceInput: createIdleVoiceInputSession(),
                   )
                 : AgentChatInputSection(
                     controller: controller,
@@ -68,9 +67,7 @@ void main() {
                     onSendMessage: _noOp,
                     onQueueMessage: _noOp,
                     onCancelMessage: _noOp,
-                    isSpeechRecording: false,
-                    isSpeechTranscribing: false,
-                    onSpeechInput: _noOp,
+                    voiceInput: createIdleVoiceInputSession(),
                   );
             await tester.pumpWidget(
               OperitTheme(
