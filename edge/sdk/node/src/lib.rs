@@ -1,7 +1,6 @@
 #![allow(non_snake_case)]
 
 pub mod PeerRouter;
-pub mod NativeClient;
 pub mod peer;
 
 use operit_node_runtime::NodeServices::NodeServices;

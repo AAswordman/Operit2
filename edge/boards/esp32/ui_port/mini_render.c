@@ -114,18 +114,7 @@ const char *mini_chat_line(unsigned wanted) {
     while(next_chat_row(&s,&row)){if(line++==wanted)return row.text;}
     return s;
 }
-const char *mini_plugin_info_line(unsigned wanted) {
-    const char *s=mini_ui.plugin_info; if(!wanted)return s; unsigned line=0; int width=0;
-    while(*s) {
-        const char *before=s; uint32_t cp=decode(&s);
-        const mini_glyph_t *g=text_glyph(cp); int advance=g?g->advance:8;
-        if(cp=='\n'){++line;width=0;}
-        else if(width+advance>294){++line;width=advance;if(line==wanted)return before;}
-        else width+=advance;
-        if(line==wanted)return s;
-    }
-    return s;
-}
+
 /* Small integer-only SVG painter. Geometry lives in flash, not a framebuffer. */
 static void vector_line(int x,int y,int endX,int endY,int width,uint16_t color) {
     if ((y>endY?y:endY)+width<=mini_ui.render_y || (y<endY?y:endY)-width>=mini_ui.render_y+ROWS)return;
@@ -191,26 +180,6 @@ static const icon_line_t icon_lines[] = {
     {ICON_FACE, 7, 21, 3, 17},
     {ICON_FACE, 3, 17, 3, 7},
     {ICON_FACE, 3, 7, 7, 3},
-    {ICON_PLUGIN, 3, 3, 9, 3},
-    {ICON_PLUGIN, 9, 3, 9, 1},
-    {ICON_PLUGIN, 9, 1, 15, 1},
-    {ICON_PLUGIN, 15, 1, 15, 3},
-    {ICON_PLUGIN, 15, 3, 21, 3},
-    {ICON_PLUGIN, 21, 3, 21, 9},
-    {ICON_PLUGIN, 21, 9, 18, 9},
-    {ICON_PLUGIN, 18, 9, 18, 15},
-    {ICON_PLUGIN, 18, 15, 21, 15},
-    {ICON_PLUGIN, 21, 15, 21, 21},
-    {ICON_PLUGIN, 21, 21, 15, 21},
-    {ICON_PLUGIN, 15, 21, 15, 18},
-    {ICON_PLUGIN, 15, 18, 9, 18},
-    {ICON_PLUGIN, 9, 18, 9, 21},
-    {ICON_PLUGIN, 9, 21, 3, 21},
-    {ICON_PLUGIN, 3, 21, 3, 15},
-    {ICON_PLUGIN, 3, 15, 6, 15},
-    {ICON_PLUGIN, 6, 15, 6, 9},
-    {ICON_PLUGIN, 6, 9, 3, 9},
-    {ICON_PLUGIN, 3, 9, 3, 3},
     {ICON_SETTINGS, 9, 2, 15, 2},
     {ICON_SETTINGS, 15, 2, 16, 5},
     {ICON_SETTINGS, 16, 5, 19, 5},
@@ -324,44 +293,11 @@ static void paint_nodes(void) {
         const node_t *item=mini_ui.nodes+i;
         node_t label=*item;
         if(same(item->id,"chat_text")){paint_chat(item);continue;}
-        if(same(item->id,"plugin_dialog_title")){draw_icon(ICON_PLUGIN,item->x+6,item->y+7,16,rgb(0xb1c7b8));label.x+=24;label.w-=24;}
-        if(same(item->id,"plugin_info")){label.text=mini_plugin_info_line(mini_ui.plugin_info_scroll);if(mini_ui.plugin_test_error[0])label.h=84;text(&label);continue;}
-        if(same(item->id,"plugins_exclusive")||same(item->id,"plugins_general")) {
-            bool selected=same(item->id,"plugins_exclusive")==mini_ui.plugins_exclusive;
-            if(selected){rect(item->x,item->y,item->w,item->h,rgb(0x263e31));rect(item->x,item->y+item->h-2,item->w,2,rgb(0xb1f2d8));}
-        }
-        if(!strncmp(item->id,"plugin_probe_",13)) {
-            unsigned index=(unsigned)(item->id[strlen(item->id)-1]-'0');
-            const plugin_t *p=mini_ui.plugins+index;
-            rect(item->x,item->y,item->w,item->h,rgb(0x17271f));
-            outline(item->x,item->y,item->w,item->h,rgb(0x344d3d));
-            label.x+=1;label.y-=1;label.w-=8;label.h=22;
-            text(&label);
-            draw_icon(ICON_PLUGIN,item->x+6,item->y+23,14,rgb(0xb1c7b8));
-            label.text=p->latency;label.x=item->x+25;label.y=item->y+18;label.w=item->w-32;label.h=22;
-            label.color=rgb(p->status==2?0x71e5a2:p->status==3?0xf07878:0x849c8d);
-            /* Right-align the numeric result in its own plugin cell. */
-            int width=0;for(const char *t=label.text;*t;){uint32_t cp=decode(&t);const mini_glyph_t *g=text_glyph(cp);width+=g?g->advance:8;}
-            width+=10;if(width<label.w){label.x+=label.w-width;label.w=width;}
-            text(&label);continue;
-        }
-        if(same(item->id,"plugins_test_all")) {
-            draw_icon(ICON_BOLT,item->x+12,item->y+9,20,rgb(0xffffff));continue;
-        }
-        if(same(item->id,"plugin_test_connection")||same(item->id,"plugin_test_tool")) {
-            outline(item->x,item->y,item->w,item->h,rgb(item->enabled?0x50745c:0x344d3d));
-        }
-        if(same(item->id,"plugin_connection_result")||same(item->id,"plugin_tool_result")) {
-            unsigned state=same(item->id,"plugin_connection_result")?mini_ui.plugins[mini_ui.plugin_selected].status:mini_ui.plugin_tool_status;
-            label.color=rgb(state==2?0x71e5a2:state==3?0xf07878:state==1?0xe4c778:0x849c8d);
-        }
-        if(same(item->id,"plugin_test_error"))label.color=rgb(0xf07878);
-        bool footer=same(item->id,"sidebar_plugins")||same(item->id,"sidebar_settings");
+        bool footer=same(item->id,"sidebar_settings");
         bool row=item->icon&&!footer&&item->text[0];
         bool active=(same(item->id,"sidebar_chat")&&mini_ui.page==2)||(same(item->id,"sidebar_expression")&&mini_ui.page==7);
         bool confirm=same(item->id,"unpair_confirm")||same(item->id,"space_leave_confirm");
         bool filled=active||same(item->id,"edge_space_approve");
-        if(!strncmp(item->id,"conversation_",13))filled=mini_ui.conversations[item->id[13]-'0'].selected;
         if(filled)rect(item->x,item->y,item->w,item->h,rgb(0x263e31));
         if(confirm||same(item->id,"edge_space_reject")||same(item->id,"unpair_cancel")||same(item->id,"space_leave_cancel"))
             outline(item->x,item->y,item->w,item->h,rgb(confirm?0x73534d:0x344d3d));
@@ -370,12 +306,12 @@ static void paint_nodes(void) {
             label.color=rgb(mini_ui.connected?0xa6c5b3:0x84918c);
             if(mini_ui.connected)rect(item->x+1,item->y+11,3,3,rgb(0xb1f2d8));
         }
-        if(same(item->id,"settings_label")||same(item->id,"wifi")||same(item->id,"space")||same(item->id,"chat_task")||same(item->id,"plugins_empty")||same(item->id,"expression_caption"))
+        if(same(item->id,"settings_label")||same(item->id,"wifi")||same(item->id,"space")||same(item->id,"chat_task")||same(item->id,"expression_caption"))
             label.color=rgb(0x849c8d);
         if(same(item->id,"sidebar_backdrop"))continue;
         if(is_face(item)){face(item);continue;}
         if(item->icon) {
-            int size=same(item->id,"plugins_icon")?30:18;
+            int size=18;
             int x=row?item->x+6:item->x+(item->w-size)/2;
             int y=footer?item->y:item->y+(item->h-size)/2;
             draw_icon(item->icon,x,y,size,item->enabled?rgb(0xb1c7b8):rgb(0x647c6d));
@@ -415,9 +351,7 @@ void operit_ui_pump(uint32_t elapsed) {
     /* Bound SPI work per main-loop iteration; no whole-frame stack buffer. */
     for (unsigned n=0;n<8&&mini_ui.render_y<HEIGHT;++n) {
         memset(mini_strip,0,sizeof(mini_strip));
-        if(mini_page()==6&&mini_ui.plugin_dialog&&!mini_ui.error[0]) {
-            rect(0,0,WIDTH,HEIGHT,rgb(0x11171b));paint_nodes();
-        } else if(mini_page()==8&&!mini_ui.error[0]) {
+        if(mini_page()==8&&!mini_ui.error[0]) {
             // Paint the real current page underneath, then the full-height
             // drawer. Scrim is a fixed RGB565 darken, not an alpha buffer.
             mini_ui.sidebar=false;mini_ui.dimmed=true;mini_scene();paint_page();

@@ -15,32 +15,6 @@ export interface DeviceState {
         active: boolean;
         revision: number;
     };
-    plugins?: {
-        category?: string;
-        details?: {
-            id?: string;
-            description?: string;
-            tools?: string[];
-            toolOffset?: number;
-            toolTotal?: number;
-            loading?: boolean;
-            error?: string;
-        };
-        items?: {
-            id: string;
-            name: string;
-            status?: string;
-            latencyMs?: number;
-            toolStatus?: string;
-            toolLatencyMs?: number;
-            testError?: string;
-        }[];
-        offset?: number;
-        total?: number;
-        loading?: boolean;
-        testing?: boolean;
-        error?: string | null;
-    };
     speech?: {ready?: boolean; phase?: number; requestId?: string | null; resultId?: number; text?: string | null; error?: string | null};
     playback?: {type: string; id: string; audio?: string; contentType?: string}[];
     running?: boolean;
@@ -58,19 +32,10 @@ export interface DeviceState {
     chatTask?: string;
     chat?: {
         connected?: boolean;
-        hasOlder?: boolean;
-        hasNewer?: boolean;
         chatId?: string;
         messages?: {
             sender: string;
             text: string;
-        }[];
-        conversationsLoading?: boolean;
-        conversationsError?: string | null;
-        conversations?: {
-            id: string;
-            title: string;
-            characterCardName?: string;
         }[];
         error?: string;
     };
@@ -82,7 +47,7 @@ export interface DeviceState {
     } | null;
 }
 /** One shared projection for browser events; native scene summaries must reach
- * the renderer just like chat/plugin state. Never include cached bytes or leases. */
+ * the renderer just like chat state. Never include cached bytes or leases. */
 export function simulatorViewState(state: {
     ready?: boolean;
     device?: DeviceState | null;
@@ -99,7 +64,7 @@ export function simulatorViewState(state: {
         chatPreview: device?.chatPreview ?? '尚未连接对话',
         speech: device?.speech, playback: device?.playback,
         scene: device?.scene,
-        plugins: device?.plugins, chat: device?.chat, chatScreen: device?.chatScreen, chatTask: device?.chatTask,
+        chat: device?.chat, chatScreen: device?.chatScreen, chatTask: device?.chatTask,
         chatSendResult: device?.chatSendResult,
     };
 }

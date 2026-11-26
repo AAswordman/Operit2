@@ -6,22 +6,20 @@ int mini_page(void) { return mini_ui.scene_active&&!mini_ui.error[0] ? 12 : mini
 const char *operit_ui_current_page(void) {
     switch(mini_page()) {
         case 14: return "PairDiscovery"; case 15: return "PairCodeEntry"; case 16: return "SpaceManage";
-        case 13: return "Conversations";
         case 12: return "edge_scene";
         case 0:return "Pairing"; case 1:return "Settings"; case 2:return "Chat";
         case 3:return "Space"; case 4:return "Unpair"; case 5:return "LeaveSpace";
-        case 6:return "Plugins"; case 7:return "Expression"; case 8:return "Sidebar";
+        case 7:return "Expression"; case 8:return "Sidebar";
         case 9:return "Connection"; case 10:return "SpaceSettings"; default:return "DeviceSettings";
     }
 }
 static const char *page_title(void) {
     switch(mini_page()) {
         case 14: return "发现节点"; case 15: return "输入配对码"; case 16: return "空间管理";
-        case 13: return "对话列表";
         case 12: return "edge_scene";
         case 0:return "配对码"; case 1:return "设置"; case 2:return "Operit";
         case 3:return "空间审批"; case 4:return "解除配对"; case 5:return "退出空间";
-        case 6:return "插件"; case 7:return "表情"; case 8:return "Operit";
+        case 7:return "表情"; case 8:return "Operit";
         case 9:return "网络连接"; case 10:return "设备空间"; default:return "设备操作";
     }
 }
@@ -40,50 +38,24 @@ void mini_scene(void) {
         icon_node("scene_exit","","edge_scene_exit",276,0,44,24,true,ICON_CLOSE);
         return;
     }
-    if(mini_page()==6&&mini_ui.plugin_dialog&&!mini_ui.error[0]) {
-        const plugin_t *p=mini_ui.plugins+mini_ui.plugin_selected;
-        node("plugin_dialog_title",p->name,NULL,8,2,260,30,true,1);
-        icon_node("plugin_dialog_close","","plugin_dialog_close",276,0,44,36,true,ICON_CLOSE);
-        node("plugin_info",mini_ui.plugin_info,NULL,8,36,304,105,true,1);
-        if(mini_ui.plugin_info_scroll||*mini_plugin_info_line(5)) {
-            node("plugin_info_up","上翻","plugin_info_up",8,144,56,26,mini_ui.plugin_info_scroll>0,1);
-            node("plugin_info_down","下翻","plugin_info_down",68,144,56,26,*mini_plugin_info_line(mini_ui.plugin_info_scroll+5)!=0,1);
-        }
-        if(mini_ui.plugin_tool_total>3) {
-            node("plugin_tools_prev","前组","edge_plugin_tools_prev",192,144,56,26,!mini_ui.plugin_details_loading&&mini_ui.plugin_tool_offset>0,1);
-            node("plugin_tools_next","后组","edge_plugin_tools_next",252,144,56,26,!mini_ui.plugin_details_loading&&mini_ui.plugin_tool_offset+3<mini_ui.plugin_tool_total,1);
-        }
-        bool enabled=mini_ui.connected&&!mini_ui.plugins_testing&&!mini_ui.plugin_details_loading&&p->status!=1&&mini_ui.plugin_tool_status!=1;
-        node("plugin_test_connection","测试连通性","plugin_test_connection",8,176,150,28,enabled,1);
-        node("plugin_connection_result",mini_ui.plugin_connect_text,NULL,166,172,146,38,true,1);
-        if(mini_ui.plugin_tool_total) {
-            node("plugin_test_tool","测试工具调用","plugin_test_tool",8,208,150,28,enabled,1);
-            node("plugin_tool_result",mini_ui.plugin_tool_text,NULL,166,204,146,38,true,1);
-        }
-        if(mini_ui.plugin_test_error[0]) node("plugin_test_error",mini_ui.plugin_test_error,NULL,8,120,304,21,true,1);
-        return;
-    }
     if(mini_page()==8 && !mini_ui.error[0]) {
         node("title","Operit",NULL,10,8,118,26,true,1);
         icon_node("sidebar_toggle","","close_sidebar",136,0,44,40,true,ICON_CLOSE);
         node("sidebar_face","","expression",49,43,82,51,true,1);
         icon_node("sidebar_expression","表情","expression",12,102,156,36,true,ICON_FACE);
-        if(!mini_ui.remote_display) icon_node("sidebar_chat","对话列表","conversations",12,143,156,36,mini_ui.connected&&!mini_ui.sending&&!mini_ui.speech_phase,ICON_CHAT);
-        if(!mini_ui.remote_display) icon_node("sidebar_plugins","插件","plugins",12,190,48,44,true,ICON_PLUGIN);
+        icon_node("sidebar_chat","当前对话","chat",12,143,156,36,mini_ui.connected&&!mini_ui.sending&&!mini_ui.speech_phase,ICON_CHAT);
         icon_node("sidebar_settings","设置","settings",120,190,48,44,true,ICON_SETTINGS);
         node("sidebar_backdrop","","close_sidebar",180,0,140,240,true,1);
         return;
     }
-    bool detail=mini_page()==13||mini_page()==9||mini_page()==10||mini_page()==11||mini_page()==14||mini_page()==15||mini_page()==16||mini_page()==0||mini_page()==3;
+    bool detail=mini_page()==9||mini_page()==10||mini_page()==11||mini_page()==14||mini_page()==15||mini_page()==16||mini_page()==0||mini_page()==3;
     bool menuEnabled=mini_page()!=4&&mini_page()!=5;
     if(mini_page()==15) icon_node("pair_input_back","","edge_pair_cancel",0,0,44,42,mini_ui.device_space_phase!=4,ICON_BACK);
-    else if(detail)icon_node("page_back","",mini_page()==13?"chat":(mini_page()==14||mini_page()==16||mini_page()==0||mini_page()==3)?"space_settings":"settings",0,0,44,42,true,ICON_BACK);
+    else if(detail)icon_node("page_back","",(mini_page()==14||mini_page()==16||mini_page()==0||mini_page()==3)?"space_settings":"settings",0,0,44,42,true,ICON_BACK);
     else icon_node("sidebar_toggle","","sidebar",0,0,44,42,menuEnabled,ICON_MENU);
     if(mini_page()!=15) node("title",page_title(),NULL,44,6,142,30,true,1);
     // The large digit font needs 36 pixels plus the text inset to avoid clipping.
     if(mini_page()==15) node("pair_input",mini_ui.pair_input[0]?mini_ui.pair_input:"输入Core六位配对码",NULL,48,1,270,40,true,mini_ui.pair_input[0]?2:1);
-    else if(mini_page()==6)icon_node("plugins_test_all","","edge_plugins_test_all",276,0,44,42,mini_ui.connected&&!mini_ui.plugins_loading&&!mini_ui.plugins_testing,ICON_BOLT);
-    else if(mini_page()==13)icon_node("edge_new","新建","edge_new",216,0,104,42,mini_ui.connected&&!mini_ui.sending&&!mini_ui.speech_phase,ICON_CHAT);
     else node("link_status",mini_ui.connected ? "已连接" : mini_ui.paired ? "已配对 / 离线" : "未配对",NULL,188,6,130,30,true,1);
     if (mini_ui.error[0] && mini_page()!=0 && mini_page()!=3) {
         node("error",mini_ui.error,NULL,16,50,288,122,true,1);
@@ -120,9 +92,9 @@ void mini_scene(void) {
         node("space_review",mini_ui.prompt[0]?"审批加入申请：点此查看":"暂无待审批的空间申请",mini_ui.prompt[0]?"edge_space_review":NULL,14,169,292,34,mini_ui.prompt[0]&&!mini_ui.busy,1);
         icon_node("space_manage","空间与配对管理","space_manage",14,208,292,28,true,ICON_SETTINGS);
     } else if (mini_page()==11) {
-        if(!mini_ui.remote_display) icon_node("edge_new","新建对话","edge_new",14,66,292,44,mini_ui.connected&&!mini_ui.sending&&!mini_ui.speech_phase,ICON_CHAT);
+        icon_node("edge_new","新建对话","edge_new",14,66,292,44,mini_ui.connected&&!mini_ui.sending&&!mini_ui.speech_phase,ICON_CHAT);
         icon_node("operations_space","设备空间与配对","space_settings",14,122,292,44,true,ICON_SPACE);
-        if(!mini_ui.remote_display) icon_node("audio_test","音频自检（短提示音与采样）","edge_audio_test",14,178,292,44,true,ICON_DEVICE);
+        icon_node("audio_test","音频自检（短提示音与采样）","edge_audio_test",14,178,292,44,true,ICON_DEVICE);
     } else if (mini_page()==14) {
         static const char *ids[]={"space_peer_0","space_peer_1","space_peer_2"};
         static const char *actions[]={"edge_pair_candidate:0","edge_pair_candidate:1","edge_pair_candidate:2"};
@@ -148,31 +120,6 @@ void mini_scene(void) {
         node("space_join",mini_ui.device_space_phase==3?"取消当前配对":mini_ui.device_space_pending?"取消加入申请":"申请加入已配对节点的空间",(mini_ui.device_space_pending||mini_ui.device_space_phase==3)?"edge_pair_cancel":"edge_space_join",14,114,292,32,mini_ui.device_space_phase==0||mini_ui.device_space_phase==3,1);
         icon_node("space_leave","退出当前设备空间","space_leave",14,154,292,32,!mini_ui.busy&&mini_ui.device_space_phase==0&&!mini_ui.device_space_pending,ICON_SPACE);
         icon_node("edge_unpair","解除本机配对","edge_unpair",14,194,292,32,mini_ui.paired&&mini_ui.device_space_phase==0&&!mini_ui.device_space_pending,ICON_LINK);
-    } else if (mini_page()==6) {
-        bool tabs=mini_ui.connected&&!mini_ui.plugins_loading&&!mini_ui.plugins_testing;
-        node("plugins_exclusive","专属","edge_plugins_exclusive",10,40,146,32,tabs,1);
-        node("plugins_general","一般","edge_plugins_general",164,40,146,32,tabs,1);
-        static const char *ids[]={"plugin_probe_0","plugin_probe_1","plugin_probe_2","plugin_probe_3","plugin_probe_4","plugin_probe_5"};
-        for(unsigned i=0;i<mini_ui.plugin_count;++i) {
-            plugin_t *p=mini_ui.plugins+i;
-            node(ids[i],p->name,p->action,10+(i%2)*154,76+(i/2)*40,146,38,mini_ui.connected&&!mini_ui.plugins_loading,1);
-            mini_ui.nodes[mini_ui.node_count-1].icon=ICON_PLUGIN;
-        }
-        if(!mini_ui.plugin_count)node("plugins_empty",mini_ui.plugins_error[0]?mini_ui.plugins_error:mini_ui.plugins_loading?"读取 Core 插件…":mini_ui.connected?(mini_ui.plugins_exclusive?"暂无开启的专属插件":"暂无开启的一般插件"):"等待 Core 连接",NULL,22,84,276,76,true,1);
-        node("plugins_prev","上一页","edge_plugins_prev",10,199,70,32,mini_ui.connected&&!mini_ui.plugins_loading&&!mini_ui.plugins_testing&&mini_ui.plugin_offset>0,1);
-        node("plugins_refresh",mini_ui.plugins_testing?"测试中":mini_ui.plugins_loading?"读取中":"刷新","edge_plugins_refresh",123,199,70,32,mini_ui.connected&&!mini_ui.plugins_loading&&!mini_ui.plugins_testing,1);
-        node("plugins_next","下一页","edge_plugins_next",240,199,70,32,mini_ui.connected&&!mini_ui.plugins_loading&&!mini_ui.plugins_testing&&mini_ui.plugin_offset+mini_ui.plugin_count<mini_ui.plugin_total,1);
-    } else if (mini_page()==13) {
-        static const char *ids[]={"conversation_0","conversation_1","conversation_2"};
-        for(unsigned i=0;i<mini_ui.conversation_count;++i) {
-            conversation_t *p=mini_ui.conversations+i;
-            node(ids[i],p->title,p->action,14,52+i*47,292,43,mini_ui.connected&&!mini_ui.sending&&!mini_ui.speech_phase&&!mini_ui.conversations_loading&&p->action[0],1);
-            mini_ui.nodes[mini_ui.node_count-1].icon=ICON_CHAT;
-        }
-        if(!mini_ui.conversation_count)node("conversations_empty",!mini_ui.connected?"等待 Core 连接":mini_ui.conversations_loading?"读取对话列表…":"暂无对话",NULL,22,76,276,76,true,1);
-        node("conversations_prev","上一页","conversations_prev",10,199,70,32,mini_ui.connected&&!mini_ui.conversations_loading&&mini_ui.conversation_offset>0,1);
-        node("conversations_refresh",mini_ui.conversations_loading?"读取中":"刷新","conversations_refresh",123,199,70,32,mini_ui.connected&&!mini_ui.sending&&!mini_ui.speech_phase&&!mini_ui.conversations_loading,1);
-        node("conversations_next","下一页","conversations_next",240,199,70,32,mini_ui.connected&&!mini_ui.conversations_loading&&mini_ui.conversation_offset+3<mini_ui.conversation_total,1);
     } else if (mini_page()==7) {
         node("expression_face","",NULL,70,68,180,112,true,1);
         node("expression_caption","Operit",NULL,134,191,100,26,true,1);

@@ -6,7 +6,7 @@
 修改系统页面后需要重新构建预览和固件。
 
 聊天图片原件发送至 Core，设备显示有界预览；Core 插件可通过可选
-`display.scene` 服务上传像素素材、播放本地动画并接收事件。
+`edge.scene` 服务上传像素素材、播放本地动画并接收事件。
 插件开发见 [Edge 插件指南](../../../../plugins/docs/edge-plugin-guide.md)。
 
 ## 文件边界
@@ -25,8 +25,8 @@
 | 设备页面与触摸目标 | `../ui_port/mini_pages.c` |
 | 条带绘图、文字与表情 | `../ui_port/mini_render.c` |
 | UI 状态、触摸动作与检查接口 | `../ui_port/operit_mini_ui.c` |
-| 状态更新与设备动作处理 | `../../edge/boards/esp32/src/ui.rs`、`../../edge/boards/esp32/src/main.rs` |
-| 表情图形 | `../../edge/boards/esp32/ui_port/face.svg` |
+| 状态更新与设备动作处理 | `../src/ui.rs`、`../src/main.rs` |
+| 表情图形 | `../ui_port/face.svg` |
 
 网页 CSS 只改变调试台外观。Canvas 显示 C/Wasm 的输出，不能通过网页样式改变设备控件。
 新增前端模块时同步注册 `src/server.mts` 的静态路由。

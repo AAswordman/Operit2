@@ -5,7 +5,7 @@ import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import http from 'node:http';
 import {mkdtemp, mkdir, readFile, writeFile, rm, realpath} from 'node:fs/promises';
-import {tmpdir, networkInterfaces} from 'node:os';
+import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
@@ -16,12 +16,6 @@ import {probeSpeech} from './speech-probe.mjs';
 
 const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-// Public v1 connection coordinates contain no pairing credential. The CLI still
-// completes the shared handshake using the code rendered by the device.
-const simulatorConnectionCode = (node, address) => 'operit://connect/v1/' + Buffer.from(JSON.stringify({
-  n: node, d: 'ESP32-2432S028-SIM', a: [`tcp://${address}`],
-})).toString('base64url');
-
 async function buildCli() {
   if (process.env.OPERIT_SIM_TEST_CLI) return path.resolve(process.env.OPERIT_SIM_TEST_CLI);
   const child = spawn('cargo', ['build', '--locked', '--manifest-path', 'apps/cli/Cargo.toml', '--bin', 'operit2', '--target-dir', path.join(root, 'apps/cli/target')],
@@ -93,9 +87,7 @@ class CoreSession {
 // This opt-in integration test uses a real independent Core CLI, the editor's
 // real TCP Edge child, and the same C renderer compiled to WASM. No fake approval
 // replies, manually written membership, or developer's real profile are used.
-test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
-  ? 'ESP pairs, syncs preferences and chats after CLI exits and device restarts'
-  : process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY === '1'
+test(process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY === '1'
   ? 'Edge device-space UI pairs, replaces retained credentials, reviews consent and syncs approval after restart'
   : process.env.OPERIT_SIM_TEST_ACCESS_ONLY === '1'
   ? 'Simulated device initiates TCP pairing and Core consent'
@@ -112,16 +104,8 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
       activeIdentityId: identity, identities: [{id: identity, name: 'Simulator workflow test', createdAt: Date.now()}],
     }));
     process.env.OPERIT_SIM_STATE_DIR = edgeDirectory;
-    const coreInitiates = !process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY &&
-      !process.env.OPERIT_SIM_TEST_STANDALONE_ONLY && !process.env.OPERIT_SIM_TEST_ACCESS_ONLY;
-    // Public QR coordinates deliberately reject loopback. Exercise that API on
-    // a real local interface rather than weakening its address validation.
-    const lan = Object.values(networkInterfaces()).flat().find(address => address &&
-      address.family === 'IPv4' && !address.internal && !address.address.startsWith('169.254.') &&
-      !/^198\.(18|19)\./.test(address.address));
-    if (coreInitiates) assert(lan, 'Core-initiated QR pairing requires a reachable local IPv4 interface');
     process.env.OPERIT_SIM_BIND = process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY === '1'
-      ? '0.0.0.0:0' : `${coreInitiates ? lan.address : '127.0.0.1'}:0`;
+      ? '0.0.0.0:0' : '127.0.0.1:0';
     process.env.OPERIT_SIM_DISCOVERY = process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY==='1'?'true':'false';
     const {simulatorRoute, stopSimulator} = await import('../../src/api/simulator-api.mts');
     // Only the model provider boundary is deterministic. Pairing, admission,
@@ -134,7 +118,6 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
           for await (const chunk of req) body += chunk;
           const input = JSON.parse(body);
           providerRequests.push(input);
-          if (input.model === 'sim-direct') assert.equal(req.headers.authorization, 'Bearer simulator-direct-key');
           const prompt = JSON.stringify(input.messages);
           // XML tool results also arrive as user turns; do not mistake them
           // for the user's latest request when selecting the fixture response.
@@ -168,7 +151,6 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
             res.writeHead(200, {'Content-Type': 'text/event-stream'});
             // Send more than one small read without exceeding the per-event limit;
             // the real stream must keep reading through comments to completion.
-            if (input.model === 'sim-direct') res.write((': keepalive ' + 'x'.repeat(480) + '\n\n').repeat(20));
             for (const content of [text.slice(0, 4), text.slice(4)]) {
               res.write('data: ' + JSON.stringify({id: 'sim-chat', object: 'chat.completion.chunk',
                 choices: [{index: 0, delta: {content}, finish_reason: null}]}) + '\n\n');
@@ -326,74 +308,7 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
       assert.equal((await update()).device.paired, true, 'leaving must not unpair');
     };
     await startCore();
-    const first = await startEdge();
-    const node = first.device.deviceId;
-    if (process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1') {
-      await probeDeviceAccess();
-      const policy = await core.command(['control','show']);
-      assert.equal(policy.deviceIdentityIds[node], 'edge', 'approved ESP must have the durable edge identity');
-      assert(!policy.roles.edge.capabilities.includes('storage.provide'));
-      await core.command(['space','preference-set',node,'chat',JSON.stringify({
-        endpoint:base+'/v1/chat/completions',model:'sim-direct',apiKey:'simulator-direct-key',
-        systemPrompt:'You are the device assistant.',
-      })]);
-      await core.command(['space','sync']);
-      await waitDevice('synced device preference enables native chat', device => device.chat.mode === 'direct');
-      const sendDirect = async (prompt, expected, sendId) => {
-        await update(); call('navigate_home');
-        await tap('sidebar_toggle'); await tap('sidebar_chat'); await update();
-        await tap('conversation_0');
-        assert.equal(screen().page, 'Chat');
-        directSendId = sendId;
-        call('set_chat_draft', ['string'], [prompt]);
-        actionError = ''; await tap('edge_send'); assert.equal(actionError, '');
-        const value = await waitDevice('native streamed reply', device =>
-          device.chatSendResult?.sendId === sendId && !device.chat.generating &&
-          device.chat.messages.some(message => message.text === expected));
-        assert.equal(value.chat.error, null);
-        assert.equal(value.chatSendResult.ok, true);
-        await update();
-        assert(screen().nodes.find(node => node.id === 'chat_text')?.text.includes(expected), 'native reply reaches the rendered chat screen');
-        const memory = (await state()).device.memory;
-        t.diagnostic(`${sendId}: heap peak=${memory.heapPeakBytes}/${memory.heapCapacityBytes}, failures=${memory.allocationFailures}`);
-        return value;
-      };
-      await sendDirect('SIM_CHAT before disconnect', 'SIM_CHAT_OK', 'direct-before');
-      assert.equal(providerRequests.length, 1);
-      await core.stop();
-      assert.equal(core.closed, true, 'the CLI process really exited');
-      await waitDevice('all peer links disconnected', device => device.activePeers.length === 0);
-      const standalone = await sendDirect('SIM_RECONNECT after CLI exit', 'SIM_RECONNECT_OK', 'direct-after');
-      assert.equal(standalone.chat.mode, 'direct');
-      assert.equal(providerRequests.length, 2);
-      assert.equal(providerRequests[1].model, 'sim-direct');
-      assert(providerRequests[1].messages.some(message => message.content === 'SIM_CHAT_OK'), 'ESP keeps its own bounded context');
-      if (process.env.OPERIT_SIM_TEST_SCREENSHOT) {
-        const pointer = ui._simulator_frame();
-        await writeFile(process.env.OPERIT_SIM_TEST_SCREENSHOT, ui.HEAPU8.subarray(pointer, pointer+320*240*2));
-      }
-      const extraTurns = process.env.OPERIT_SIM_TEST_MEMORY_STRESS === '1' ? 12 : 0;
-      for (let turn = 0; turn < extraTurns; turn++) {
-        await sendDirect(`SIM_RECONNECT round ${turn} ${'x'.repeat(160)}`, 'SIM_RECONNECT_OK', `stress-${turn}`);
-        assert.equal(providerRequests.length, 3 + turn, 'each completed turn reached the real HTTP provider');
-      }
-      if (extraTurns) {
-        assert(!providerRequests.at(-1).messages.some(message => message.content === 'SIM_CHAT before disconnect'),
-          'continued standalone chat retires old turns instead of accumulating unlimited context');
-      }
-      const directId = standalone.chat.chatId;
-      await post('/api/simulator/stop'); await startEdge();
-      await waitDevice('direct configuration restored without CLI', device => device.chat.mode === 'direct');
-      const rebooted = await sendDirect('SIM_CHAT after ESP restart without CLI', 'SIM_CHAT_OK', 'direct-reboot');
-      assert.notEqual(rebooted.chat.chatId, directId, 'transient context is not a hidden chat database');
-      assert.equal(providerRequests.length, 3 + extraTurns);
-      const persisted = await (await fetch(base + '/api/simulator/storage')).json();
-      assert(persisted.some(file => file.startsWith('runtime/node_preferences/')), persisted.join(', '));
-      assert(!persisted.some(file => /(?:\.db(?:-|$)|\.sqlite|(?:^|\/)(?:sync|plugins|extensions)(?:\/|$))/.test(file)),
-        'ESP must not receive a chat database, business journal, plugin or file replica: '+persisted.join(', '));
-      t.diagnostic('CLI → real TCP pairing → Core approval → formal edge identity → encrypted preference sync → native chat → CLI process exit → standalone streamed chat → ESP restart → standalone chat passed');
-      return;
-    }
+    const node = (await startEdge()).device.deviceId;
     if (process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY === '1') {
       const coreNode=(await core.command(['space','show'])).members[0];
       await update(); await openSpace(); await tap('space_pair');
@@ -440,7 +355,7 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
       await leave();
       await core.command(['unpair',await core.pairedName(node)]);
       assert((await update()).device.paired,'Core unpair remains one-sided');
-      const renewed=await core.command(['pair',simulatorConnectionCode(node,(await state()).device.address)]);
+      const renewed=await core.command(['pair','ESP32-2432S028-SIM']);
       assert.equal(renewed.awaitingConfirmation, true);
       await update();assert.notEqual(screen().page,'Pairing','incoming code does not steal the current page');
       await openSpace();await tap('space_pair_code');
@@ -489,14 +404,9 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
     const edgePortArgs={node_id:node,interface_info:{target:'edge.status',method:'read'},args:{}};
     await assert.rejects(()=>core.command(['core','tool','exec','edge_execute',JSON.stringify(edgePortArgs)]),
       'plugin port API must not pair, route to a guessed address, or grant access to an unadmitted node');
-    const pairing = await core.command(['pair', simulatorConnectionCode(node, first.device.address)]);
-    assert.equal(pairing.awaitingConfirmation, true);
-    await update(); await openSpace(); await tap('space_pair_code');
-    assert.equal(screen().page, 'Pairing');
-    const code = screen().nodes.find(node => node.id === 'pairing_code')?.text;
-    assert.match(code, /^\d{6}$/, 'read the pairing code from the actual rendered screen');
-    assert.equal((await core.command(['confirm', code])).nodeId, node);
-    assert.equal((await update()).device.paired, true);
+    await probeDeviceAccess();
+    await leave();
+    await core.command(['space', 'leave']);
     const credentials = await core.command(['peers']);
     const request = await core.command(['space', 'join', await core.pairedName(node)]).catch(async error => {
       error.message += '; simulator: ' + JSON.stringify(await state()) + '; Core: ' + core.output;
@@ -526,7 +436,7 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
     t.diagnostic('NVS exhaustion and interrupted write surfaced through approval UI; retry admitted the same paired Core');
     const former = await core.command(['space', 'show']);
     assert(former.members.includes(node));
-    t.diagnostic('paired using the C-rendered screen code; first UI approval completed');
+    t.diagnostic('device-initiated pairing and Core-reviewed admission; reverse admission approved through the C UI');
     const initialChat = await waitDevice('automatic remote chat provisioning after admission',
       device => device.chat.connected && device.chat.chatId && !device.chat.initializing && !device.chat.error);
     assert.match(initialChat.chat.chatId, /^[0-9a-f-]{36}$/i, 'first admitted session has a valid nonempty chat ID');
@@ -679,45 +589,6 @@ ${JSON.stringify(fixtureMetadata)}
     const stored = await core.command(['core', 'chat', 'show', chatId]);
     assert(JSON.stringify(stored).includes('SIM_CHAT_OK'), 'reply must be stored on Core, not fabricated by simulator');
     t.diagnostic('automatic Space chat route, rendered new-chat action, Edge send and real Core streamed reply passed (local deterministic provider)');
-    assert.equal(initialChat.chat.conversations, null, 'metadata must not load before list browsing');
-    const coreSelectionBefore = await core.command(['core','chat','current']);
-    let lastCreatedId=chatId;
-    for(let i=0;i<3;i++) {
-      await update();await tap('sidebar_toggle');await tap('sidebar_chat');await tap('edge_new');
-      const extra=await waitDevice('another Edge-created conversation',device=>device.chat.chatId!==lastCreatedId&&!device.chat.initializing&&!device.chat.sending);
-      lastCreatedId=extra.chat.chatId;
-    }
-    const browse = async () => {
-      await update();call('navigate_home');await tap('sidebar_toggle');await tap('sidebar_chat');
-      const listed=await waitDevice('bounded conversation metadata',device=>!device.chat.conversationsLoading&&device.chat.conversations?.length>=5&&!device.chat.conversationsError);
-      await update();assert.equal(screen().page,'Conversations');return listed.chat.conversations.length;
-    };
-    const selectRendered = async target => {
-      let hit;
-      for(let page=0;page<8;page++) {
-        hit=screen().nodes.find(n=>n.action==='edge_select:'+target);if(hit)break;
-        await tap('conversations_next');await update();
-      }
-      assert(hit,`missing rendered conversation ${target}`);
-      await tap(hit.id);
-      await waitDevice('selected Edge conversation',device=>device.chat.chatId===target&&!device.chat.initializing);
-      await update();assert.equal(screen().page,'Chat');
-    };
-    const listedCount=await browse();assert.equal(screen().nodes.filter(n=>/^conversation_/.test(n.id)).length,3);
-    assert(screen().nodes.some(n=>n.selected===true),'current conversation is visibly marked');
-    await tap('conversations_next');await update();
-    assert.equal(screen().nodes.filter(n=>/^conversation_/.test(n.id)).length,Math.min(3,listedCount-3));
-    await tap('conversations_prev');await update();
-    await selectRendered(initialChat.chat.chatId);
-    assert(!(await state()).device.chat.messages.some(m=>m.text==='SIM_CHAT_OK'),'switching does not retain another chat transcript');
-    await browse();await selectRendered(chatId);
-    await waitDevice('selected chat history restored',device=>device.chat.messages.some(m=>m.text==='SIM_CHAT_OK'));
-    assert.deepEqual(await core.command(['core','chat','current']),coreSelectionBefore,'Edge selection must not change Core desktop selection');
-    assert.equal(providerRequests.length,1,'browsing and selection must not resend messages');
-    await assert.rejects(()=>post('/api/simulator/action',{action:'edge_select:missing-chat'}),/不存在|刷新/);
-    assert.equal((await state()).device.chat.chatId,chatId);
-    t.diagnostic('rendered list/new/pagination/current mark/switch and history restoration passed; Core UI selection and provider send count unchanged');
-
     // Exercise the same Edge send/Binding route with a real bundled Core
     // ToolPkg. Inspect structured persisted parts, not just a model's claim.
     const beforePlugin = providerRequests.length;
@@ -751,95 +622,8 @@ ${JSON.stringify(fixtureMetadata)}
       'Core projects the public tool name as scrollable ordinary display text');
     assert(!JSON.stringify(pluginReply.chat.messages).includes('\\"timestamp\\"'), 'raw tool result JSON must not enter Edge display rows');
     t.diagnostic('Edge chat triggered the real Core daily_life plugin; public name rendered without tool state or payloads');
-    await update();await tap('sidebar_toggle');await tap('sidebar_plugins');
-    const pluginList=await waitDevice('enabled Core plugins in Edge page',device=>
-      device.plugins?.items?.some(item=>item.id==='com.operit.daily_life')&&!device.plugins.loading);
-    const enabledPlugins=(await core.command(['core','plugin','list'])).filter(item=>item.enabled);
-    assert.equal(pluginList.plugins.total, enabledPlugins.length);
-    const displayedPlugins = pluginList.plugins.items.map(item => item.id);
-    let pluginPage = pluginList.plugins;
-    while (pluginPage.offset + pluginPage.items.length < pluginPage.total) {
-      await update(); await tap('plugins_next');
-      const offset = pluginPage.offset + 6;
-      pluginPage = (await waitDevice('next bounded plugin page', device =>
-        !device.plugins.loading && device.plugins.offset === offset)).plugins;
-      assert(pluginPage.items.length > 0 && pluginPage.items.length <= 6);
-      displayedPlugins.push(...pluginPage.items.map(item => item.id));
-    }
-    assert.deepEqual(displayedPlugins.sort(), enabledPlugins.map(item => item.name).sort());
-    while (pluginPage.offset > 0) {
-      await update(); await tap('plugins_prev');
-      const offset = pluginPage.offset - 6;
-      pluginPage = (await waitDevice('previous bounded plugin page', device =>
-        !device.plugins.loading && device.plugins.offset === offset)).plugins;
-    }
-    assert(!pluginList.plugins.items.some(item=>item.id==='com.operit.workflow'),'disabled plugins are not shown');
-    await update();const pluginNodes=screen().nodes.filter(item=>item.id.startsWith('plugin_probe_'));
-    assert.equal(new Set(pluginNodes.map(item=>item.rect.x)).size,2);
-    const pluginIndex=pluginList.plugins.items.findIndex(item=>item.id==='com.operit.daily_life');
-    await tap('plugin_probe_'+pluginIndex);
-    assert.equal(screen().pluginDialogOpen,true);
-    const metadata=await waitDevice('bounded Core package details',device=>device.plugins.details?.id==='com.operit.daily_life'&&!device.plugins.details.loading);
-    assert(metadata.plugins.details.description.length>0);
-    assert.equal(metadata.plugins.details.tools.length,3,'tools are paginated, not copied wholesale');
-    assert(metadata.plugins.details.toolTotal>=4);
-    assert(metadata.plugins.details.tools.every(tool=>typeof tool==='string'&&!tool.includes('function')));
-    await update();assert.match(screen().nodes.find(n=>n.id==='plugin_info').text,/包 ID: com.operit.daily_life/);
-    await tap('plugin_tools_next');
-    await waitDevice('second bounded Core tool page',device=>!device.plugins.details.loading&&device.plugins.details.toolOffset===3);
-    await update();await tap('plugin_tools_prev');
-    await waitDevice('first Core tool page restored',device=>!device.plugins.details.loading&&device.plugins.details.toolOffset===0);
-    await update();await tap('plugin_test_connection');
-    const probe=await waitDevice('Core plugin availability probe',device=>
-      device.plugins.items[pluginIndex]?.status==='success');
-    assert(probe.plugins.items[pluginIndex].latencyMs>=0);
-    await update();await tap('plugin_test_tool');
-    const toolProbe=await waitDevice('real plugin diagnostic tool call',device=>
-      device.plugins.items[pluginIndex]?.toolStatus==='success');
-    assert(toolProbe.plugins.items[pluginIndex].toolLatencyMs>=0);
-    await update();assert(screen().nodes.find(n=>n.id==='plugin_tool_result').text.includes('成功'));
-    await tap('plugin_dialog_close');
-    await tap('plugins_test_all');
-    const batch=await waitDevice('all enabled plugin connection functions executed',device=>
-      !device.plugins.testing&&device.plugins.tested===enabledPlugins.length);
-    assert(batch.plugins.failed >= batch.plugins.items.filter(item=>item.status==='failure').length);
-    assert(batch.plugins.failed <= batch.plugins.tested);
-    assert(batch.plugins.items.every(item=>item.status==='success'||(item.status==='failure'&&item.testError)),
-      'each enabled plugin must report its actual diagnostic result, including optional dependencies');
-    assert.equal(batch.plugins.items.find(item=>item.id==='com.operit.daily_life').status,'success');
-    await tap('plugins_exclusive');
-    await waitDevice('exclusive tab is an explicit empty category',device=>device.plugins.category==='exclusive'&&!device.plugins.loading&&device.plugins.total===0);
-    await update();assert.equal(screen().pluginCategory,'exclusive');
-    assert.match(screen().nodes.find(n=>n.id==='plugins_empty').text,/专属/);
-    await tap('plugins_general');
-    await waitDevice('general tab restores enabled Core packages',device=>device.plugins.category==='general'&&!device.plugins.loading&&device.plugins.total===enabledPlugins.length);
-    await update();
-    // Stale enabled row must turn red if the Core disabled it in the meantime.
-    await core.command(['core','plugin','disable','com.operit.daily_life']);
-    await update();await tap('plugin_probe_'+pluginIndex);
-    await waitDevice('disabled package metadata reports bounded error',device=>device.plugins.details?.id==='com.operit.daily_life'&&!device.plugins.details.loading);
-    await update();await tap('plugin_test_connection');
-    const failedProbe=await waitDevice('disabled plugin probe failure',device=>
-      device.plugins.items[pluginIndex]?.status==='failure');
-    assert(failedProbe.plugins.items[pluginIndex].latencyMs>=0);
-    // A package change may also reopen Core chat watches. Paint the exact
-    // acknowledged probe projection rather than racing that next session.
-    failedProbe.plugins.items.forEach((item,index)=>call('set_plugin',
-      ['number','string','string','number','number'],[index,item.id,item.name,
-        item.status==='success'?2:item.status==='failure'?3:0,item.latencyMs??0]));
-    call('finish_plugins',['number','number','number','number','string'],
-      [failedProbe.plugins.items.length,failedProbe.plugins.offset,failedProbe.plugins.total,0,'']);
-    call('set_plugin_test',['number','number','number','string'],[pluginIndex,0,0,'']);
-    if(screen().pluginDialogOpen)call('debug_tap',['string'],['plugin_dialog_close']);
-    const failedNode=screen().nodes.find(item=>item.id==='plugin_probe_'+pluginIndex);
-    assert(failedNode,'failed plugin row must stay visible: '+JSON.stringify(screen()));
-    assert.equal(failedNode.probeState,3);
-    await core.command(['core','plugin','enable','com.operit.daily_life']);
-    await tap('plugins_refresh');
-    await waitDevice('plugin refresh clears old probe latency',device=>!device.plugins.loading&&
-      device.plugins.items.some(item=>item.id==='com.operit.daily_life'&&item.status==='untested'));
-    t.diagnostic('exclusive/general tabs, bounded package ID/description/tools, hidden empty tools and pagination verified; existing Core diagnostic exports report real RTT');
     call('navigate_home');
+
     const requestsBeforeRestart = providerRequests.length;
     await core.stop();
     await waitDevice('chat offline after Core stops', device => !device.chat.connected);
@@ -859,30 +643,12 @@ ${JSON.stringify(fixtureMetadata)}
     await core.command(['core', 'chat', 'send', '--chat', chatId, 'SIM_EXTERNAL_SYNC']);
     let external = await waitDevice('Core-originated long message reaches the Edge', device =>
       device.chat.messages.some(message => message.text.includes('SYNC_LINE_089')) && !device.chat.generating);
-    const seenLines = new Set();
-    let turns = 0;
-    while (true) {
-      const text = external.chat.messages.map(message => message.text).join('\n');
-      assert(Buffer.byteLength(text) <= 640 + external.chat.messages.length, 'one bounded device display window');
-      for (const match of text.matchAll(/SYNC_LINE_\d{3}/g)) seenLines.add(match[0]);
-      if (seenLines.size === 90) break;
-      assert(external.chat.hasOlder && turns++ < 20, 'the complete long message must be reachable');
-      const previous = JSON.stringify(external.chat.messages);
-      await post('/api/simulator/action', {action:'edge_history_older'});
-      external = await waitDevice('older byte/line page of the same message', device =>
-        JSON.stringify(device.chat.messages) !== previous);
-    }
-    assert.deepEqual([...seenLines].sort(), Array.from({length:90}, (_, index) => 'SYNC_LINE_' + String(index).padStart(3, '0')));
-    while (external.chat.hasNewer) {
-      assert(turns-- > 0);
-      const previous = JSON.stringify(external.chat.messages);
-      await post('/api/simulator/action', {action:'edge_history_newer'});
-      external = await waitDevice('restore the latest long-message page', device =>
-        JSON.stringify(device.chat.messages) !== previous);
-    }
-    assert(external.chat.messages.some(message => message.text.includes('SYNC_LINE_089')));
-    assert.equal(providerRequests.length, requestsBeforeExternal + 1, 'sync and pagination must not replay the send');
-    t.diagnostic('Core CLI wrote the active chat; Edge subscription received it and recovered all 90 lines through bounded pages without resending');
+    const displayed = external.chat.messages.map(message => message.text).join('\n');
+    assert(Buffer.byteLength(displayed) <= 640 + external.chat.messages.length, 'bounded current display');
+    const full = await core.command(['core', 'chat', 'show', chatId]);
+    assert(JSON.stringify(full).includes('SYNC_LINE_000') && JSON.stringify(full).includes('SYNC_LINE_089'),
+      'Core retains the complete message while Edge displays the latest window');
+    assert.equal(providerRequests.length, requestsBeforeExternal + 1, 'display subscription must not replay a send');
     const longInput = 'SIM_LONG_INPUT\n' + '流式长文本🙂'.repeat(850) + '\n完整末尾标记';
     assert(Buffer.byteLength(longInput) > 8192 && Buffer.byteLength(longInput) <= 16384);
     const beforeLong = providerRequests.length;

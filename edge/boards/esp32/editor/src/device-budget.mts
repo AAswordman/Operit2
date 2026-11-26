@@ -57,9 +57,6 @@ const integrationEnv: NodeJS.ProcessEnv = {
 };
 await run('isolated pairing, admission and restart', process.execPath, integration,
   {...integrationEnv, OPERIT_SIM_TEST_ACCESS_ONLY: '1', OPERIT_SIM_TEST_CLI: cliExecutable});
-await run('standalone chat, twelve extra turns and restart', process.execPath, integration,
-  {...integrationEnv, OPERIT_SIM_TEST_STANDALONE_ONLY: '1', OPERIT_SIM_TEST_MEMORY_STRESS: '1',
-    OPERIT_SIM_TEST_CLI: cliExecutable});
 await run('remote chat, admission storage failures and binary speech recovery', process.execPath, integration,
   {...integrationEnv, OPERIT_SIM_TEST_CLI: cliExecutable});
 console.log('\nDevice budget scenarios passed. These simulator budgets do not measure whole-board ESP-IDF/Wi-Fi/TLS/C memory.');

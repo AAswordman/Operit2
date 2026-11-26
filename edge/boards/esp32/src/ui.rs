@@ -35,7 +35,6 @@ unsafe extern "C" {
     fn operit_ui_set_scene(active: bool, revision: u32, tick: u32);
     fn operit_ui_pump(elapsed_ms: u32);
     fn operit_ui_set_touch(x: u16, y: u16, pressed: bool);
-    fn operit_ui_set_remote_display(enabled: bool);
     fn operit_ui_set_connection(wifi_ready: bool, edge_ready: bool);
     fn operit_ui_set_paired(paired: bool);
     fn operit_ui_set_expression(expression: *const c_char);
@@ -45,26 +44,9 @@ unsafe extern "C" {
     fn operit_ui_set_chat_screen(text: *const c_char);
     fn operit_ui_set_chat_identity(id: *const c_char, character: *const c_char);
     fn operit_ui_set_message(index: u32, user: bool, text: *const c_char);
-    fn operit_ui_set_chat_history(older: bool, newer: bool);
     fn operit_ui_finish_messages(count: u32);
-    fn operit_ui_set_conversation(
-        index: u32,
-        id: *const c_char,
-        title: *const c_char,
-        character: *const c_char,
-        selected: bool,
-    );
-    fn operit_ui_finish_conversations(count: u32);
-    fn operit_ui_set_conversations_state(loading: bool, error: *const c_char);
     fn operit_ui_action_error(error: *const c_char);
     fn operit_ui_set_chat_task(text: *const c_char);
-    fn operit_ui_set_plugin(index: u32, id: *const c_char, name: *const c_char, status: u32, latency_ms: u32);
-    fn operit_ui_set_plugin_test(index: u32, status: u32, ms: u32, error: *const c_char);
-    fn operit_ui_set_plugin_testing(testing: bool);
-    fn operit_ui_set_plugin_category(exclusive: bool);
-    fn operit_ui_set_plugin_details(id: *const c_char, description: *const c_char, tools: *const c_char,
-        offset: u32, total: u32, loading: bool, error: *const c_char);
-    fn operit_ui_finish_plugins(count: u32, offset: u32, total: u32, loading: bool, error: *const c_char);
     fn operit_ui_chat_send_result(ok: bool, error: *const c_char);
     fn operit_ui_set_chat_draft(value: *const c_char);
     fn operit_ui_set_speech_state(phase: u32);
@@ -120,7 +102,6 @@ impl Esp32Ui {
             log::info!("operit-esp32 UI renderer=mini static_bytes={} draw_bytes={} ui_heap=0",
                 operit_mini_static_bytes(), operit_mini_draw_bytes());
         }
-        unsafe { operit_ui_set_remote_display(!cfg!(feature = "standalone-apps")); }
         Ok(runtime)
     }
 
@@ -202,55 +183,15 @@ impl Esp32Ui {
         setText(error, operit_ui_action_error);
     }
 
-    /// Transfers only the six visible plugin summaries to the fixed renderer.
-    pub fn setPlugins(&mut self, state: &serde_json::Value) {
-        let string = |value: &str| CString::new(value.replace('\0', "")).unwrap();
-        unsafe { operit_ui_set_plugin_category(state["category"] == "exclusive"); }
-        let items = state["items"].as_array().into_iter().flatten().take(6).collect::<Vec<_>>();
-        for (index, item) in items.iter().enumerate() {
-            let status = match item["status"].as_str() {
-                Some("probing") => 1, Some("success") => 2, Some("failure") => 3, _ => 0,
-            };
-            let toolStatus = match item["toolStatus"].as_str() {
-                Some("probing") => 1, Some("success") => 2, Some("failure") => 3, _ => 0,
-            };
-            unsafe { operit_ui_set_plugin(index as u32, string(item["id"].as_str().unwrap_or("")).as_ptr(),
-                string(item["name"].as_str().unwrap_or("")).as_ptr(), status,
-                item["latencyMs"].as_u64().unwrap_or(0).min(99999) as u32); }
-            unsafe { operit_ui_set_plugin_test(index as u32, toolStatus,
-                item["toolLatencyMs"].as_u64().unwrap_or(0).min(99999) as u32,
-                string(item["testError"].as_str().unwrap_or("")).as_ptr()); }
-        }
-        let details = &state["details"];
-        let tools = details["tools"].as_array().into_iter().flatten().take(3).filter_map(|v| v.as_str()).collect::<Vec<_>>().join("\n");
-        unsafe { operit_ui_set_plugin_details(string(details["id"].as_str().unwrap_or("")).as_ptr(),
-            string(details["description"].as_str().unwrap_or("")).as_ptr(), string(&tools).as_ptr(),
-            details["toolOffset"].as_u64().unwrap_or(0) as u32, details["toolTotal"].as_u64().unwrap_or(0) as u32,
-            details["loading"] == true, string(details["error"].as_str().unwrap_or("")).as_ptr()); }
-        unsafe { operit_ui_set_plugin_testing(state["testing"] == true); }
-        unsafe { operit_ui_finish_plugins(items.len() as u32, state["offset"].as_u64().unwrap_or(0) as u32,
-            state["total"].as_u64().unwrap_or(0) as u32, state["loading"] == true,
-            string(state["error"].as_str().unwrap_or("")).as_ptr()); }
-    }
-
     pub fn setSpeechState(&mut self, phase: u32) { unsafe { operit_ui_set_speech_state(phase); } }
 
     pub fn setChatDraft(&mut self, text: &str) { setText(text, operit_ui_set_chat_draft); }
 
     pub fn setChatState(&mut self, state: &serde_json::Value) {
-        unsafe { operit_ui_set_chat_history(state["hasOlder"].as_bool().unwrap_or(false), state["hasNewer"].as_bool().unwrap_or(false)); }
         let string = |value: &str| CString::new(value.replace('\0', "")).unwrap();
         let id = state["chatId"].as_str().unwrap_or("");
-        let name = state["conversations"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|chat| chat["id"].as_str() == Some(id))
-            .and_then(|chat| chat["characterCardName"].as_str())
-            .filter(|name| !name.is_empty())
-            .unwrap_or("Operit");
         unsafe {
-            operit_ui_set_chat_identity(string(id).as_ptr(), string(&name).as_ptr());
+            operit_ui_set_chat_identity(string(id).as_ptr(), string("Operit").as_ptr());
         }
         let rows = state["messages"]
             .as_array()
@@ -274,27 +215,6 @@ impl Esp32Ui {
         }
         unsafe {
             operit_ui_finish_messages(rows.len() as u32);
-        }
-        let rows = state["conversations"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .take(24)
-            .collect::<Vec<_>>();
-        for (index, row) in rows.iter().enumerate() {
-            unsafe {
-                operit_ui_set_conversation(
-                    index as u32,
-                    string(row["id"].as_str().unwrap_or("")).as_ptr(),
-                    string(row["title"].as_str().unwrap_or("")).as_ptr(),
-                    string(row["characterCardName"].as_str().unwrap_or("")).as_ptr(),
-                    row["id"] == id,
-                );
-            }
-        }
-        unsafe {
-            operit_ui_finish_conversations(rows.len() as u32);
-            operit_ui_set_conversations_state(state["conversationsLoading"].as_bool().unwrap_or(false), string(state["conversationsError"].as_str().unwrap_or("")).as_ptr());
         }
     }
 
@@ -362,8 +282,7 @@ impl Esp32Ui {
                 let snapshot = crate::runtimeHealthSnapshot().to_string();
                 io.respond(request.id(), snapshot.as_bytes());
             }
-            #[cfg(feature = "standalone-apps")]
-            7 => {
+                        7 => {
                 let result=std::str::from_utf8(request.argument()).map_err(|e|e.to_string()).and_then(crate::audio::debug);
                 let value=result.unwrap_or_else(|error|serde_json::json!({"error":error})).to_string();
                 io.respond(request.id(),value.as_bytes());

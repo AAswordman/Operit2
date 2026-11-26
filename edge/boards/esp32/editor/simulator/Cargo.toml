@@ -22,7 +22,7 @@ operit-edge-sdk = { path = "../../../../sdk", features = ["space", "scene"] }
 operit-host-native-storage = { path = "../../../../../hosts/common/operit-host-native-storage" }
 linked_list_allocator = "0.10.6"
 uuid = { version = "1", features = ["v4"] }
-operit-host-native-common = { path = "../../../../../hosts/common/operit-host-native-common", features = ["tcp", "storage", "http"] }
+operit-host-native-common = { path = "../../../../../hosts/common/operit-host-native-common", features = ["tcp", "storage"] }
 operit-host-native-scheduler = { path = "../../../../../hosts/common/operit-host-native-scheduler", default-features = false, features = ["esp32-compat"] }
 operit-peer-link = { path = "../../../../../core/crates/node/peer-link" }
 async-trait = "0.1"

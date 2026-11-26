@@ -25,8 +25,6 @@ mod runtime_storage_pack;
 mod send_receipt;
 #[path = "../../../src/space_work.rs"]
 mod space_work;
-#[path = "../../../src/standalone_chat.rs"]
-mod standalone_chat;
 mod storage;
 mod storage_pressure;
 use operit_link::protocol::LinkDeviceInfo;
@@ -162,7 +160,6 @@ fn initialize(
         .map_or(true, |value| value != "false" && value != "0");
     let mut hostManager = operit_host_api::HostManager::HostManager::default()
         .withTcpHost(Arc::new(operit_host_native_common::NativeTcpHost))
-        .withHttpHost(Arc::new(operit_host_native_common::NativeHttpHost::default()))
         .withRuntimeStorageHost(storage.clone())
         .withHostRuntimeTaskSchedulerHost(scheduler.clone());
     if discoveryEnabled {
@@ -390,7 +387,6 @@ struct SimulatorState<'a> {
     spaceJoinAssignmentVersion: u64,
     error: String,
     lastAction: String,
-    plugins: serde_json::Value,
     chat: serde_json::Value,
     chatPreview: String,
     chatScreen: String,
@@ -414,21 +410,6 @@ impl Simulator {
 
     /// Applies the same periodic route and device-configuration updates as the firmware.
     fn poll(&mut self) -> Result<(), String> {
-        let scope = operit_edge_sdk::runtime::NodeSpaceService::NodeSpaceContext::spaceStore(
-            self.spaceService.as_ref(),
-        )
-        .space()?;
-        let preferences =
-            operit_edge_sdk::storage::DevicePreferencesStore::DevicePreferencesStore::new(self.storage.clone())
-                .read(&scope.spaceId, &self.nodeId)?
-                .values();
-        if let Err(message) = standalone_chat::configure(
-            self.hostManager.httpHost.clone(),
-            &scope.spaceId,
-            preferences.get("chat"),
-        ) {
-            *self.error.lock().unwrap() = message;
-        }
         self.chatRoute.poll(self.services.clone());
         self.deviceSpaceUi.poll();
         self.pollReview()?;
@@ -525,7 +506,7 @@ impl Simulator {
         }
         let chat_state = edge_chat::snapshot();
         let chat_screen = edge_chat::screenTextFromSnapshot(&chat_state);
-        let chat_preview = edge_chat::previewFromSnapshot(&chat_state);
+        let chat_preview = "Operit".to_string();
         sendReceipt.capture(edge_chat::takeSendResult());
         let pairing_code = services
             .peers()
@@ -575,7 +556,6 @@ impl Simulator {
                 .unwrap_or(0),
             error: error.lock().unwrap().clone(),
             lastAction: lastAction.lock().unwrap().clone(),
-            plugins: edge_chat::pluginsSnapshot(),
             chat: chat_state,
             chatPreview: chat_preview,
             chatScreen: chat_screen,
@@ -780,10 +760,6 @@ impl Simulator {
                 }) {
                     review.pending = None;
                 }
-            } else if action.starts_with("edge_plugins_")
-                || action.starts_with("edge_plugin_")
-            {
-                edge_chat::pluginsAction(action)?;
             } else if action == "edge_pair" || action == "edge_unpair" {
                 if action == "edge_unpair" {
                     *coreAccess.lock().await = core_access::CoreAccess::default();
@@ -829,14 +805,8 @@ impl Simulator {
                 deviceSpaceUi.reset();
                 *coreAccess.lock().await = core_access::CoreAccess::default();
                 chatRoute.reset();
-            } else if action == "edge_history_older" || action == "edge_history_newer" {
-                edge_chat::moveHistory(action == "edge_history_older")?;
-            } else if action == "edge_conversations_refresh" {
-                edge_chat::conversationsAction()?;
             } else if action == "edge_new" {
                 edge_chat::newChat()?;
-            } else if let Some(chatId) = action.strip_prefix("edge_select:") {
-                edge_chat::selectChat(chatId)?;
             } else {
                 return Err("Unknown simulator action".to_string());
             }

@@ -28,15 +28,10 @@ const firmwareTarget = 'xtensa-esp32-espidf';
 const firmwareRoot = path.join(root, 'edge/boards/esp32');
 const shortTargetDir = path.join(path.parse(root).root, 'esp32');
 const firmwareTargetDir = path.resolve(shortTargetDir);
-const remoteDisplay = process.argv.includes('--remote-display');
-if (remoteDisplay && !process.argv.includes('--firmware-check') && !process.argv.includes('--firmware')) {
-  throw new Error('--remote-display 需要 --firmware-check 或 --firmware');
-}
-// The remote display package does not replace the full application's UI preview.
-const firmwareOnly = process.argv.includes('--firmware-check') || remoteDisplay;
+const firmwareOnly = process.argv.includes('--firmware-check');
 const firmware = firmwareOnly || process.argv.includes('--firmware');
 const firmwareCheck: FirmwareCheck = {status: 'checking', stage: 'compile',
-  profile: remoteDisplay ? 'remote-display' : 'standalone-apps'};
+  profile: 'edge-relay'};
 if (process.argv.includes('--lvgl') || process.argv.includes('--minimal-ui')) {
   throw new Error('UI 后端切换参数已移除；默认使用唯一的自绘 UI');
 }
@@ -63,7 +58,6 @@ const exports = [
   '_operit_ui_pump',
   '_operit_ui_navigate_home',
   '_operit_ui_navigate_apps',
-  '_operit_ui_set_remote_display',
   '_operit_ui_set_connection',
   '_operit_ui_set_paired',
   '_operit_ui_set_expression',
@@ -75,18 +69,8 @@ const exports = [
   '_operit_ui_set_chat_identity',
   '_operit_ui_set_message',
   '_operit_emoji_color_available',
-  '_operit_ui_set_chat_history',
   '_operit_ui_finish_messages',
-  '_operit_ui_set_conversation',
-  '_operit_ui_finish_conversations',
-  '_operit_ui_set_conversations_state',
   '_operit_ui_set_device_space_state',
-  '_operit_ui_set_plugin',
-  '_operit_ui_set_plugin_test',
-  '_operit_ui_set_plugin_testing',
-  '_operit_ui_set_plugin_category',
-  '_operit_ui_set_plugin_details',
-  '_operit_ui_finish_plugins',
   '_operit_ui_action_error',
 
   '_operit_ui_set_chat_task',
@@ -247,7 +231,7 @@ async function buildFirmware(): Promise<string> {
   }
   const logPath = path.join(out, 'firmware-build.log');
   const compilerEnv = await xtensaCompilerEnvironment(firmwareRoot);
-  const cargo = await run(['cargo', 'build', '--locked', '--release', ...(remoteDisplay ? ['--no-default-features'] : [])], {
+  const cargo = await run(['cargo', 'build', '--locked', '--release'], {
     cwd: firmwareRoot,
     env: {...process.env, ...compilerEnv, ...(idfSetting ? {IDF_PATH: path.resolve(idfSetting)} : {}),
       CARGO_TARGET_DIR: firmwareTargetDir, CARGO_WORKSPACE_DIR: firmwareRoot},
@@ -320,7 +304,7 @@ async function checkedFirmware(): Promise<string> {
   }
 }
 
-/** Package one checked profile without replacing the other profile's images. */
+/** Package the checked firmware and its fixed flash layout. */
 async function packageFirmware(elf: string, dist: string): Promise<void> {
   await mkdir(dist, {recursive: true});
   const image = await saveFirmwareImage(elf, path.join(dist, 'operit-esp32.bin'));
@@ -335,11 +319,6 @@ async function packageFirmware(elf: string, dist: string): Promise<void> {
 
 const builtFirmwareElf = firmware ? await checkedFirmware() : undefined;
 if (firmwareOnly) {
-  if (remoteDisplay && process.argv.includes('--firmware')) {
-    if (!builtFirmwareElf) throw new Error('Firmware was not built');
-    await packageFirmware(builtFirmwareElf, path.join(firmwareRoot, 'dist/remote-display'));
-    console.log('Remote display firmware packaged in dist/remote-display');
-  }
   process.exit(0);
 }
 const emcc = emccCommand(emsdk);

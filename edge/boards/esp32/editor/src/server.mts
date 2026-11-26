@@ -39,19 +39,14 @@ const files = new Map<string, string>([
   ['/src/layout/layout-model.mjs', 'src/layout/layout-model.mts'],
   ['/src/layout/package-layout.mjs', 'src/layout/package-layout.mts'],
   ['/src/source/component-context.mjs', 'src/source/component-context.mts'],
-  ['/pages.js', 'web/pages.ts'],
-  ['/ai.js', 'web/ai.ts'],
   ['/shell.js', 'web/shell.ts'],
   ['/transport.js', 'web/transport.ts'],
   ['/types.js', 'web/types.ts'],
-  ['/interactions.js', 'web/interactions.ts'],
   ['/model.js', 'web/model.ts'],
   ['/style.css', 'web/style.css'],
-  ['/editor.js', 'web/editor.ts'],
   ['/generated/ui.mjs', 'generated/ui.mjs'],
   ['/generated/ui.wasm', 'generated/ui.wasm'],
   ['/generated/manifest.json', 'generated/manifest.json'],
-  ['/deploy.js', 'web/deploy.ts'],
 ]);
 
 const mime: Record<string, string> = {

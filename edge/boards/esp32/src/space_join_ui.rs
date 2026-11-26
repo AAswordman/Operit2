@@ -151,8 +151,7 @@ impl SpaceJoinUi {
                     self.pending = None;
                     ui.setSpaceJoinPrompt("", false);
                     ui.actionError("");
-                    #[cfg(feature = "standalone-apps")]
-                    crate::edge_chat::clear();
+                                        crate::edge_chat::clear();
                     log::info!("Space left; direct pairing retained");
                 }
                 Event::Left(Err(error)) => {

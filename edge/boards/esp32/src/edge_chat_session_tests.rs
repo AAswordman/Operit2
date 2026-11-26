@@ -17,7 +17,6 @@ struct Client {
         )>,
     >,
     ack: Mutex<Option<Ack>>,
-    pluginPages: Mutex<BTreeMap<u32, CoreValue>>,
 }
 impl Client {
     fn gated() -> (
@@ -38,25 +37,13 @@ impl Client {
 impl CoreLinkSharedClient for Client {
     async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
         let id = request.requestId.clone();
-        let method = request.methodName.clone();
-        let offset = match &request.args {
-            CoreValue::Map(args) => args.get("offset").and_then(|v| serde_json::to_value(v).ok()).and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-            _ => 0,
-        };
         self.calls.lock().unwrap().push(request);
         let ack = self.ack.lock().unwrap().take();
         CoreCallResponse {
             requestId: id,
             result: match ack {
                 Some(ack) => ack.await.unwrap(),
-                None => Ok(if method == "chatAvailablePlugins" {
-                    self.pluginPages.lock().unwrap().get(&offset).cloned().unwrap_or(CoreValue::Null)
-                } else if method == "chatPluginDetails" {
-                    operit_link::toCoreValue(serde_json::json!({"id":"com.test","description":"Test package",
-                        "tools":["test:read"],"toolOffset":0,"toolTotal":1,"error":""})).unwrap()
-                } else if method == "chatPluginStatus" {
-                    operit_link::toCoreValue(serde_json::json!({"success":true,"message":""})).unwrap()
-                } else { CoreValue::Null }),
+                None => Ok(CoreValue::Null),
             },
         }
     }
@@ -75,8 +62,7 @@ impl CoreLinkSharedClient for Client {
             }], "older":null, "error":null})).unwrap()
         } else if request.target == CORE_STREAM_TARGET {
             operit_link::toCoreValue(ChatDisplayEvent::Chunk { value: String::new() }).unwrap()
-        } else if request.propertyName == "routedChatListFlow" {
-            CoreValue::List(Vec::new())
+
         } else {
             CoreValue::emptyMap()
         };
@@ -281,7 +267,6 @@ async fn provision_reconnect_and_restore_without_local_business_state_or_mutatio
         "no watches before object creation is acknowledged"
     );
     assert!(send("before ack".into()).is_err());
-    assert!(conversationsAction().is_err(), "initialization cannot open metadata early");
     // Replace the entry without observing None. The old acknowledgement cannot
     // revive obsolete subscriptions, and retries retain the same creation key.
     let (second, ack) = Client::gated();
@@ -371,110 +356,7 @@ async fn provision_reconnect_and_restore_without_local_business_state_or_mutatio
     route.poll(services);
     until(|| fourth.watches.lock().unwrap().len() == 3).await;
     assert_eq!(session().chatId, nextId);
-    let primaryTasks=session().tasks.lock().unwrap().len();
-    conversationsAction().unwrap();conversationsAction().unwrap();
-    until(|| !session().conversationsLoading.load(Ordering::Acquire)).await;
-    assert_eq!(fourth.watches.lock().unwrap().iter().filter(|(r,_)|r.propertyName=="routedChatListFlow").count(),1,"duplicate browse actions share one metadata watch");
-    assert!(selectChat("missing-chat").is_err());
-    let (listRequest,listSender)=fourth.watches.lock().unwrap().iter().find(|(r,_)|r.propertyName=="routedChatListFlow").unwrap().clone();
-    listSender.send(CoreEvent {requestId:None,target:listRequest.target,propertyName:listRequest.propertyName,kind:CoreEventKind::Completed,value:CoreValue::Null}).unwrap();
-    until(|| session().conversationsError.lock().unwrap().is_some()).await;
-    assert!(!session().needsReconnect.load(Ordering::Acquire),"optional list failure must not restart the active chat");
-    conversationsAction().unwrap();
-    until(|| fourth.watches.lock().unwrap().iter().filter(|(r,_)|r.propertyName=="routedChatListFlow").count()==2).await;
-    until(|| !session().conversationsLoading.load(Ordering::Acquire)).await;
-    assert!(session().conversationsError.lock().unwrap().is_none());
-    assert_eq!(session().tasks.lock().unwrap().len(),primaryTasks,"list retries may not accumulate lifetime task handles");
-    assert_eq!(fourth.calls.lock().unwrap().len(), 2);
-    assertWatches(&fourth, &nextId);
-    // Plugin RTT acknowledgements belong to one attempt, page and session.
-    let current = session();
-    current.plugins.lock().unwrap().items = vec![serde_json::json!({
-        "id":"com.test", "name":"Test", "status":"untested"
-    })];
-    let (late, reply) = tokio::sync::oneshot::channel();
-    *fourth.ack.lock().unwrap() = Some(reply);
-    pluginsAction("edge_plugin_probe:com.test").unwrap();
-    until(|| fourth.calls.lock().unwrap().len() == 3).await;
-    pluginsAction("edge_plugin_probe:com.test").unwrap();
-    assert_eq!(fourth.calls.lock().unwrap().len(), 3, "duplicate taps must not send another probe");
-    let firstProbe = current.plugins.lock().unwrap().items[0]["probeId"].as_str().unwrap().to_owned();
-    finishPluginProbe(&current, 0, "com.test", &firstProbe, false, 8000, "timeout");
-    assert_eq!(pluginsSnapshot()["items"][0]["status"], "failure");
-    let (second, reply) = tokio::sync::oneshot::channel();
-    *fourth.ack.lock().unwrap() = Some(reply);
-    pluginsAction("edge_plugin_probe:com.test").unwrap();
-    until(|| fourth.calls.lock().unwrap().len() == 4).await;
-    late.send(Ok(CoreValue::Null)).unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    assert_eq!(pluginsSnapshot()["items"][0]["status"], "probing", "old success cannot overwrite a newer attempt");
-    second.send(Ok(operit_link::toCoreValue(serde_json::json!({"success":true,"message":""})).unwrap())).unwrap();
-    until(|| pluginsSnapshot()["items"][0]["status"] == "success").await;
-    assert!(pluginsSnapshot()["items"][0]["latencyMs"].is_u64());
-    // Opening reads metadata, never runs a diagnostic export.
-    let callsBefore = fourth.calls.lock().unwrap().len();
-    pluginsAction("edge_plugin_open:com.test").unwrap();
-    until(|| pluginsSnapshot()["details"]["loading"] == false).await;
-    assert_eq!(fourth.calls.lock().unwrap().len(), callsBefore + 1);
-    assert_eq!(fourth.calls.lock().unwrap().last().unwrap().methodName,"chatPluginDetails");
-    assert_eq!(pluginsSnapshot()["details"]["tools"][0],"test:read");
-    pluginsAction("edge_plugin_tool_test:com.test").unwrap();
-    until(|| pluginsSnapshot()["items"][0]["toolStatus"] == "success").await;
-    assert_eq!(fourth.calls.lock().unwrap().last().unwrap().args,
-        operit_link::toCoreValue(serde_json::json!({"chatId":nextId,"packageName":"com.test","testKind":"tool"})).unwrap());
-    let page = |start: usize, end: usize| operit_link::toCoreValue(serde_json::json!({
-        "total":8,"items":(start..end).map(|n|serde_json::json!({"id":if n==0 {"com.test".into()} else {format!("com.test.{n}")},"name":"Test"})).collect::<Vec<_>>()
-    })).unwrap();
-    fourth.pluginPages.lock().unwrap().insert(0, page(0,6));
-    fourth.pluginPages.lock().unwrap().insert(6, page(6,8));
-    let beforeBatch = fourth.calls.lock().unwrap().len();
-    pluginsAction("edge_plugins_test_all").unwrap();
-    pluginsAction("edge_plugins_test_all").unwrap();
-    pluginsAction("edge_plugins_refresh").unwrap();
-    until(|| pluginsSnapshot()["tested"] == 8 && pluginsSnapshot()["testing"] == false).await;
-    assert_eq!(pluginsSnapshot()["failed"],0);
-    assert_eq!(pluginsSnapshot()["items"].as_array().unwrap().len(),1,"batch never caches off-page catalog rows");
-    let calls = fourth.calls.lock().unwrap();
-    assert_eq!(calls.len()-beforeBatch,10,"two bounded pages and eight connection exports, no duplicate batch");
-    for call in &calls[beforeBatch..] {
-        if call.methodName == "chatPluginStatus" {
-            let CoreValue::Map(args) = &call.args else {panic!()};
-            assert_eq!(args["testKind"],CoreValue::String("connection".into()));
-        }
-    }
-    drop(calls);
-    let (lateDetail, reply) = tokio::sync::oneshot::channel();
-    *fourth.ack.lock().unwrap() = Some(reply);
-    let beforeDetail = fourth.calls.lock().unwrap().len();
-    pluginsAction("edge_plugin_open:com.test").unwrap();
-    until(|| fourth.calls.lock().unwrap().len() > beforeDetail).await;
-    pluginsAction("edge_plugin_close").unwrap();
-    lateDetail.send(Ok(operit_link::toCoreValue(serde_json::json!({"tools":["stale"]})).unwrap())).unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    assert!(pluginsSnapshot()["details"].is_null(),"closed details discard late responses");
-    pluginsAction("edge_plugins_exclusive").unwrap();
-    until(|| pluginsSnapshot()["loading"] == false).await;
-    assert_eq!(pluginsSnapshot()["category"],"exclusive");
-    let last = fourth.calls.lock().unwrap().last().unwrap().clone();
-    let CoreValue::Map(args) = last.args else { panic!() };
-    assert_eq!(args["category"],CoreValue::String("exclusive".into()));
-    assert_eq!(args["offset"],operit_link::toCoreValue(serde_json::json!(0)).unwrap());
-    assert!(pluginsSnapshot()["details"].is_null());
-    pluginsAction("edge_plugins_general").unwrap();
-    until(|| pluginsSnapshot()["loading"] == false).await;
-    let (lateDeadlineAck, reply) = tokio::sync::oneshot::channel();
-    *fourth.ack.lock().unwrap() = Some(reply);
-    let deadline = pluginCallDeadlineWithLimit(&current,
-        CoreCallRequest::new("deadline", CORE_INTERNAL_TARGET, "chatPluginStatus", CoreValue::emptyMap()),
-        std::time::Duration::from_millis(10)).await;
-    assert!(deadline.unwrap_err().contains("超时"));
-    assert!(!lateDeadlineAck.is_closed(),"a UI timeout must drain rather than cancel the Link transaction");
-    lateDeadlineAck.send(Ok(CoreValue::Null)).unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    assert!(current.ready.load(Ordering::Acquire));
     route.reset();
-    finishPluginProbe(&current, 0, "com.test", &firstProbe, true, 1, "");
-    assert!(pluginsSnapshot()["items"].as_array().unwrap().is_empty(), "retired sessions cannot revive plugin rows");
     until(|| {
         fourth
             .watches

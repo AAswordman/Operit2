@@ -17,26 +17,12 @@ async function fixture() {
   return {ui, view, inspect, actions, receipts};
 }
 
-test('browser adapter forwards history cursors to shared C UI lazy paging', async () => {
-  const {ui, view, actions, inspect} = await fixture();
-  view.update(simulatorViewState({ready: true, device: {sessionId: 'one', paired: true,
-    chat: {connected: true, hasOlder: true, hasNewer: false,
-      messages: Array.from({length: 12}, (_, i) => ({sender: 'user', text: '消息 ' + i}))}}}));
-  assert(inspect().chatScrollLine > 0);
-  for (let i = 0; i < 8; i++) ui.ccall('operit_ui_debug_swipe', 'number', ['string'], ['down']);
-  assert(actions.includes('edge_history_older'), 'history flag must reach C, not stop at browser state');
-  actions.length = 0;
-  view.update(simulatorViewState({ready: true, device: {sessionId: 'one', paired: true,
-    chat: {connected: true, hasOlder: false, hasNewer: false}}}));
-  for (let i = 0; i < 8; i++) ui.ccall('operit_ui_debug_swipe', 'number', ['string'], ['down']);
-  assert.deepEqual(actions, []);
-});
 
-test('stopped device clears C pairing, approval, chat and plugin state without old data', async () => {
+
+test('stopped device clears C pairing, approval, chat state without old data', async () => {
   const {ui, view, inspect} = await fixture();
   view.update(simulatorViewState({ready: true, device: {sessionId: 'one', paired: true,
     pairingCode: '123456', spaceJoinPrompt: '申请加入空间',
-    plugins: {items: [{id: 'old', name: '旧插件'}]},
     chat: {connected: true, messages: [{sender: 'user', text: 'OLD_MESSAGE'}]}}}));
   ui.ccall('operit_ui_set_chat_draft', null, ['string'], ['保留草稿']);
   assert.equal(inspect().page, 'Chat');
@@ -46,7 +32,6 @@ test('stopped device clears C pairing, approval, chat and plugin state without o
   assert(!['Pairing', 'Space', 'edge_scene'].includes(stopped.page));
   assert(!stopped.nodes.some(node => ['edge_space_approve', 'edge_space_reject'].includes(node.id)));
   assert(!JSON.stringify(stopped).includes('OLD_MESSAGE'));
-  assert(!JSON.stringify(stopped).includes('旧插件'));
   assert.equal(ui.ccall('operit_ui_debug_tap', 'number', ['string'], ['sidebar_toggle']), 1);
   assert.equal(ui.ccall('operit_ui_debug_tap', 'number', ['string'], ['sidebar_settings']), 1);
   assert.equal(inspect().nodes.find(node => node.id === 'link_status').text, '未配对');
@@ -105,22 +90,6 @@ test('scene preview retries a transient null snapshot at the same revision', asy
   view.update(state);
   assert.equal(calls, 2);
 });
-
-test('browser adapter forwards real conversation metadata, loading, error and selected identity',async()=>{
-  const {ui,view,inspect,actions}=await fixture();ui._operit_ui_set_connection(1,1);
-  const tap=id=>ui.ccall('operit_ui_debug_tap','number',['string'],[id]);
-  const state={sessionId:'one',paired:true,chat:{connected:true,chatId:'a',conversationsLoading:true,conversations:[]}};
-  view.update(state);tap('sidebar_toggle');tap('sidebar_chat');view.update(state);
-  assert.equal(inspect().nodes.find(n=>n.id==='conversations_empty').text,'读取对话列表…');
-  state.chat.conversationsLoading=false;state.chat.conversations=[{id:'a',title:'当前对话'},{id:'b',title:'其他对话'}];view.update(state);
-  assert.equal(inspect().nodes.find(n=>n.id==='conversation_0').selected,true);
-  tap('conversation_1');assert.equal(actions.at(-1),'edge_select:b');
-  state.chat.conversationsError='对话已被删除';view.update(state);assert.equal(inspect().nodes.find(n=>n.id==='error').text,'对话已被删除');
-  tap('dismiss_error');view.update(state);assert(!inspect().nodes.some(n=>n.id==='error'),'polling the same error must leave refresh reachable');
-  tap('conversations_refresh');assert.equal(actions.at(-1),'edge_conversations_refresh');
-  state.chat.conversationsError=null;state.chat.chatId='b';view.update(state);assert.equal(inspect().page,'Chat');
-});
-
 
 test('browser projects the device-space controller and clears stale candidates on stop', async () => {
   const {ui,view,inspect,actions}=await fixture();

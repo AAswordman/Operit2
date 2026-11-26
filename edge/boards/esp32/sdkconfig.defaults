@@ -20,13 +20,14 @@ CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=8
 CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=8
 # Browser setup requests include User-Agent, client hints and other headers.
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=4096
+
 CONFIG_SPIFFS=y
 
-# Native device requests verify HTTPS using the ESP-IDF certificate bundle.
-CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
-# Native HTTP serves plain local setup; only outbound requests need TLS.
-# Keep HTTPS client verification/ciphers and omit the unused TLS server role.
-CONFIG_MBEDTLS_TLS_CLIENT_ONLY=y
+# Model and speech processing run on Core. Link uses its own authenticated
+# encryption; this device serves only the local plain HTTP setup page.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=n
+CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=n
+CONFIG_MBEDTLS_TLS_DISABLED=y
 
 # Keep microphone DMA interrupts running during Flash/NVS cache stalls.
 CONFIG_I2S_ISR_IRAM_SAFE=y
