@@ -2030,10 +2030,17 @@ impl CoreNodeStateStore {
             if bytes.is_empty() { return Ok(Vec::new()); }
             return deserializeTypedNodeEntries(&bytes, only).map_err(Into::into);
         }
-        self.data()?.iterEntries()
-            .filter(|(key, _)| *key != PREFERENCES_SCHEMA_VERSION_KEY_NAME && only.is_none_or(|selected| *key == selected))
-            .map(|(key, value)| T::deserialize(value).map(|value| (key.to_owned(), value)).map_err(Into::into))
-            .collect()
+        // Reuse the slice decoder for cached and migrated records, retaining
+        // only one encoded record at a time and skipping unrelated payloads.
+        let preferences = self.data()?;
+        let mut bytes = Vec::new();
+        preferences.iterEntries()
+            .filter(|(key, _)| *key != PREFERENCES_SCHEMA_VERSION_KEY_NAME && only.is_none_or(|only| *key == only))
+            .map(|(key, value)| {
+                bytes.clear();
+                serde_json::to_writer(&mut bytes, value)?;
+                Ok((key.to_string(), serde_json::from_slice(&bytes)?))
+            }).collect()
     }
 
     /// Share snapshot acquisition and schema checks across typed record scans.

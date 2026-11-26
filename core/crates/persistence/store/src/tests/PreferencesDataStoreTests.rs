@@ -3606,3 +3606,41 @@ fn node_local_schema_codec_keeps_state_atomic_without_a_transaction_view() {
     assert!(values.view.is_none());
     assert!(values.commit.is_none());
 }
+
+#[test]
+fn typed_node_records_keep_cached_edits_migrations_and_numeric_map_keys() {
+    #[derive(Debug, serde::Deserialize, serde::Serialize, PartialEq)]
+    enum Status { Running { task: String }, Completed }
+    #[derive(Debug, serde::Deserialize, serde::Serialize, PartialEq)]
+    struct Record { states: BTreeMap<u64, Status>, revision: u64 }
+    for releasePreferencesCache in [false, true] {
+        let host = Arc::new(MemoryStorageHost { releasePreferencesCache, ..Default::default() });
+        let path = "runtime/typed-cached-migration.preferences.json";
+        host.writeBytes(path, b"{}").unwrap();
+        let record = Record {
+            states: BTreeMap::from([
+                (u64::MAX, Status::Running { task: "任务猫\n\"".into() }),
+                (0, Status::Completed),
+            ]),
+            revision: u64::MAX,
+        };
+        let value = serde_json::to_value(&record).unwrap();
+        let store = super::CoreNodeStateStore::newWithStorage(host.clone(), path)
+            .withSchema(1, move |_, p| {
+                p.set(&stringPreferencesKey("cat"), value.clone());
+                Ok(())
+            });
+        assert_eq!(store.typedEntry::<Record>("cat").unwrap(), Some(record));
+        let changed = Record { states: BTreeMap::from([(42, Status::Completed)]), revision: 7 };
+        store.edit(|p| p.set(&stringPreferencesKey("cat"), serde_json::to_value(&changed).unwrap())).unwrap();
+        let writes = host.writeCount();
+        assert_eq!(store.typedEntries::<Record>().unwrap(), vec![("cat".into(), changed)]);
+        store.edit(|p| p.set(&stringPreferencesKey("unrelated"), json!(["not", "a", "record"]))).unwrap();
+        let afterEdit = host.writeCount();
+        assert!(afterEdit >= writes);
+        assert_eq!(store.typedEntry::<Record>("cat").unwrap().unwrap().revision, 7);
+        assert!(store.typedEntry::<Record>("absent").unwrap().is_none());
+        assert!(store.typedEntries::<Record>().is_err());
+        assert_eq!(host.writeCount(), afterEdit, "typed reads must not republish a current snapshot");
+    }
+}

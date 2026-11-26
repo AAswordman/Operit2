@@ -392,11 +392,12 @@ an independent model request. The connection indicator reads the shared Space
 connection directly. Local settings, pairing and Space consent remain available;
 chat browsing, plugin browsing, new-conversation and audio controls are hidden.
 
-The checked remote display image is **3,496,112 bytes**, **87.46%** of the original
-3,997,552-byte task-cat image. It leaves **501,584 bytes** in the unchanged
-application partition and saves **501,440 bytes (12.54%)** against that original.
-The preceding remote build was 3,602,160 bytes; carrier selection saves another
-**106,048 bytes**. It has **not** reached the accepted approximate 30% target
+The checked remote display image is **3,453,072 bytes**, **86.38%** of the original
+3,997,552-byte task-cat image. It leaves **544,624 bytes** in the unchanged
+application partition and saves **544,480 bytes (13.62%)** against that original.
+Carrier selection reduced the preceding 3,602,160-byte build by 106,048 bytes;
+sharing typed node-record decoders saves another **43,040 bytes**. It has **not**
+reached the accepted approximate 30% target
 (about 1,199,266 bytes). Shared node/Space persistence, protocol processing and
 native networking still contribute substantial code. These measurements do not
 establish a minimum size.
@@ -411,21 +412,32 @@ mixed Core advertisement can select TCP. The local Wi-Fi setup HTTP server is
 retained. Pairing, session encryption, Space authority and stored formats are
 unchanged; board frame limits still belong to the board configuration.
 
+Typed node-state reads reuse the JSON slice decoder for constrained storage and
+cached/migrated records. The cache path encodes only selected records, reusing a
+scratch buffer sized to the largest selected record rather than encoding the
+whole collection. This trades record serialization work on cached reads for fewer
+decoder instantiations; constrained current-schema reads retain their direct byte
+path. Schema migration, transaction boundaries and durable formats are unchanged.
+
 Both compositions passed actual Xtensa release compilation, ABI inspection and
-image capacity checks. The current default complete build is **3,814,160 bytes**,
-compared with 3,919,136 bytes before carrier selection. COM5 is running the new
-remote package, with Wi-Fi connected and saved pairing present. NVS usage remained
-335 entries. Twenty consecutive health requests reported no session/allocation
-diagnostic; the last sample had 74,144 free heap bytes, a 69,632-byte largest block
-and a 6,636-byte main-task stack high-water mark. The screen remains on Connection.
+image capacity checks. The current default complete build is **3,771,184 bytes**,
+compared with 3,814,160 bytes before decoder sharing. COM5 is running the new
+remote package, with Wi-Fi connected and saved pairing present. NVS usage was
+stable at 336 entries across twenty health requests (335 before this update).
+Those requests reported no session/allocation diagnostic; the last sample had
+74,088 free heap bytes, a 65,536-byte largest block and a 6,348-byte main-task
+stack high-water mark. The screen remains on Connection.
 No live Core was connected, so physical Core reconnection, new pairing/admission
 and end-to-end task-cat rendering remain unverified.
 
 Validation: all 73 transport tests, 164 shared runtime tests (serial execution),
 122 editor tests, the TypeScript check, and three real-TCP pairing/admission
 regressions passed, as did all three production parser tests for 59 plugin
-artifacts. The TCP fixtures exercise the same carrier composition against the
-full Core, including two saved Core pairings across restart and one admitted
+artifacts. The store suite passed 373 tests with its three existing stress cases
+ignored, including a new cache/constrained regression for migration, cached edits,
+numeric map keys, large integers, Unicode and selective reads. All 46 tests in
+the TCP/Space fixture now pass. They exercise the same carrier composition against
+the full Core, including two saved Core pairings across restart and one admitted
 Space. Four runtime tests failed under parallel execution while firmware
 compilation was active, with operation timeouts and directory/discovery assertions;
 the complete suite passed with `--test-threads=1`.
