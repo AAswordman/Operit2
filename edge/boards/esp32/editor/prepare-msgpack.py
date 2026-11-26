@@ -2,6 +2,7 @@
 
 Array and binary sequence decoding share one SeqAccess type and visitor call.
 This prevents two recursive decoder instantiations per value type under LTO.
+The common marker dispatcher stays out of line across typed entrypoints.
 Wire markers, depth limits, u8 visitor semantics and consumption checks remain
 identical to rmp-serde 1.3.1. Cargo's global cache is never modified.
 """
@@ -17,7 +18,7 @@ VERSION = "1.3.1"
 SHA256 = "72f81bee8c8ef9b577d1681a70ebbc962c232461e397b22c208c43c04b67a155"
 CRATE = f"rmp-serde-{VERSION}"
 DEST = ROOT / "edge/boards/esp32/.embuild"
-MARKER = "operit-shared-sequence-v1"
+MARKER = "operit-shared-sequence-v2"
 SOURCE = "src/decode.rs"
 
 
@@ -73,6 +74,8 @@ fn visit_sequence<'de, 'a, R: ReadSlice<'de> + 'a, C: SerializerConfig, V: Visit
                     seed.deserialize(serde::de::value::U8Deserializer::<Error>::new(self.bytes[index])).map(Some)
                 }
             }""")
+    # Keep the marker dispatcher shared across seq/tuple/struct entrypoints.
+    text = replace_once(text, "    fn any_inner<V: Visitor<'de>>", "    #[inline(never)]\n    fn any_inner<V: Visitor<'de>>")
     # Each field type shares its recursive decoder across message visitors.
     # The upstream inline hints otherwise duplicate those bodies under Fat LTO.
     head, tail = text.split("struct SeqAccess<'a, R, C>", 1)

@@ -322,9 +322,60 @@ The hardware smoke tool requires an already paired/admitted device and does not
 complete first-pairing or full-chat acceptance. See the editor's verification
 commands and distinguish simulator, build and physical-device results.
 
+### Firmware size reduction (2026-11-26)
+
+The complete release application image is **3,916,736 / 3,997,696 bytes**, leaving
+**80,960 bytes (79.06 KiB)** in the existing application partition. This saves
+**80,816 bytes (2.02%)** against the earlier task-cat image. The partition table,
+board budgets, pairing/Space protocol, stored records, fonts and device services
+retain their existing formats and behavior.
+
+| Measured build | Application image bytes |
+| --- | ---: |
+| Earlier task-cat build | 3,997,552 |
+| Native silent assertions and client-only TLS | 3,939,744 |
+| Shared node-local record writer | 3,925,920 |
+| Shared MessagePack marker dispatcher | 3,922,176 |
+| Shared node-local snapshot acquisition | 3,916,736 |
+
+Node-local storage now shares snapshot acquisition, schema checks, the transaction
+and raw JSON map writer across record types. A stack-borrowed callback serializes
+only the replacement value into the same two-pass, exactly reserved destination.
+It adds no intermediate payload buffer or JSON tree. The raw-record order,
+escaping, optional whitespace compaction and atomic publication remain covered by
+100 preference-store tests, including failures during either encoding pass.
+
+ESP-IDF retains native assertion checks and abort backtraces, but omits their
+condition/file strings. Resolve abort addresses using the matching ELF. Native
+setup serves HTTP; HTTPS uses only the TLS client role, with the existing full
+certificate bundle and client cipher configuration. The ESP32-only MessagePack
+overlay keeps its common marker dispatcher out of line; wire parsing and depth
+checks are unchanged. Its library plus four decoder/encoder test targets pass
+121 tests with one upstream ignored case.
+
+The final image passed the actual Xtensa, ABI and partition checks, and the
+C/Wasm preview build. Three real-TCP pairing/admission tests passed, including
+two Core pairings with one Space and preservation across restart. After a
+data-preserving update on the physical COM5 board, Wi-Fi was connected and saved
+pairing was still present. NVS usage stayed at 335 entries. Twenty UART health
+requests completed with increasing uptime, no session error and no allocation
+failure. The final sample reported 71,184 free heap bytes, a 65,536-byte largest
+block and 6,180 bytes of task-stack high-water headroom. This hardware run does
+not establish live Core reconnection, a real HTTPS request, multi-Core admission
+or task-cat display acceptance.
+
+Other compiler experiments were rejected: `opt-level="s"` exceeded the executable
+mapping by 377,082 bytes; lowering LLVM inline thresholds to zero produced a
+4,024,416-byte image; forced function merging and machine outlining produced no
+size improvement. These options are not part of the release configuration.
+Compressing the earlier image as an ordinary XZ file produced 2,008,824 bytes;
+that archive is not a bootable firmware image and does not count as partition
+headroom. This work does not establish a theoretical minimum or achieve a 10%
+reduction. Further changes must still run the real firmware capacity check.
+
 ### Task cat firmware update (2026-11-26)
 
-The current task cat build passes Xtensa compilation, ABI inspection and actual
+The earlier task cat build passed Xtensa compilation, ABI inspection and actual
 image generation: **3,997,552 / 3,997,696 bytes**, with **144 bytes free** in the
 unchanged application partition. Sharing one packed-storage encoder between its
 counting and writing passes saves 656 image bytes without changing the stored
@@ -525,7 +576,7 @@ must be reviewed when updating the pinned versions or compiler. Desktop
 builds do not use them.
 
 The MessagePack overlay shares the sequence visitor between arrays and binary
-byte sequences. This avoids duplicate recursive decoder instantiations per
+byte sequences and keeps the common marker dispatcher out of line. This avoids duplicate recursive decoder instantiations per
 message type under LTO. It retains the upstream markers, depth limits, exact u8
 visitor behavior and array consumption checks. Its pinned decoder/encoder tests
 and the shared Link integration tests must pass when updating the overlay.
