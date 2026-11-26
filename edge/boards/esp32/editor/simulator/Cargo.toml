@@ -29,7 +29,7 @@ async-trait = "0.1"
 log = "0.4"
 base64 = "0.22"
 operit-host-api = { path = "../../../../../core/crates/foundation/host-api" }
-operit-util = { path = "../../../../../core/crates/foundation/util", default-features = false }
+operit-util = { path = "../../../../../core/crates/foundation/util", default-features = false, features = ["compact-json"] }
 operit-link = { path = "../../../../../core/crates/foundation/link" }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }

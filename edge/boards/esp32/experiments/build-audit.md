@@ -88,7 +88,7 @@ pub struct Rect {
 }
 ```
 
-这段短声明会展开为 Serialize/Deserialize 实现、字段识别器、map/seq visitor、错误路径等。不同的具体类型和反序列化器还可能生成不同的机器码实例。板级 [prepare-serde.py](<../editor/prepare-serde.py>) 在电脑上修改 derive 生成器，使字段名识别使用共享表查找并限制部分内联；生成器本身作为电脑 proc-macro 编译，其生成的实现才进入 ESP32 编译。`.embuild/serde_derive-tables-1.0.229` 是当前选中的 overlay，`serde_derive-maps-1.0.229` 是撤回实验留下的缓存。
+这段短声明会展开为 Serialize/Deserialize 实现、字段识别器、map/seq visitor、错误路径等。不同的具体类型和反序列化器还可能生成不同的机器码实例。derive 生成器作为电脑上的 proc-macro 编译，其生成的实现才进入 ESP32 固件。后续整理已删除 Serde 和 MessagePack 的板级体积补丁，当前使用原版库；下方编译清单是整理前的历史快照。
 
 ESP-IDF 的 Rust FFI 绑定也由构建时的 bindgen 生成，使 Rust 能调用 IDF C API；这是另一类生成源码。
 

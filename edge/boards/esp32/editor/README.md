@@ -28,7 +28,8 @@ npm start --prefix edge/boards/esp32/editor
 | Rust 模拟器 / 共享固件模块 | 停止、启动模拟设备，Cargo 重新检查并编译 |
 | 设备配置和场景素材 | 使用设备原生接口保存，无需修改固件 |
 
-刷新网页不等于重启 Rust 进程。系统页面直接修改 `edge/boards/esp32/ui_port/operit_mini_ui.c`，
+刷新网页不等于重启 Rust 进程。`ui_port/mini_pages.c` 定义页面和触摸目标，
+`mini_render.c` 负责绘图与文字，`operit_mini_ui.c` 管理状态、交互和检查接口。
 状态与动作使用固件 Rust 模块；不要另写一套 Web 页面来模拟设备控件。
 
 ## Rust 模拟器
@@ -295,8 +296,9 @@ npm run flash -- --remote-display --port COM5
 模拟重启后配对和 Space 归属保留，过期画面不自动恢复。此测试不运行插件的
 任务状态订阅，也不能替代真机连接 Core 后的完整验收。
 
-在仓库根目录运行（使用本机已安装的桌面 Rust 工具链）：
+在仓库根目录运行。启用完整 Core 的依赖要求 Rust 1.95.0 或更新版本；
+以下命令使用已安装的 1.95.0 桌面工具链：
 
 ```sh
-cargo test --locked --manifest-path edge/boards/esp32/editor/simulator/Cargo.toml --features core-integration-tests --test space_admission -- --test-threads=1
+cargo +1.95.0 test --locked --release --manifest-path edge/boards/esp32/editor/simulator/Cargo.toml --features core-integration-tests --test space_admission -- --test-threads=1
 ```

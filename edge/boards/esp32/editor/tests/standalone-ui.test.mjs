@@ -72,15 +72,16 @@ test('bundled glyphs fit their compact records without truncation', async () => 
     let previous = -1;
     for (const match of glyphs[1].matchAll(/\{([\d,\-]+)\}/g)) {
       const values = match[1].split(',').map(Number);
-      assert.equal(values.length, 10);
-      const [cp, offset, advance, w, h, bpp, line, baseline, x, y] = values;
+      assert.equal(values.length, 7);
+      const [cp, offset, advance, w, h, x, top] = values;
       assert(cp > previous && cp <= 0xffff, `${table}: ordered BMP codepoint ${cp}`);
       previous = cp;
       assert(offset >= 0 && offset < (1 << 17));
-      assert([advance, w, h, bpp, line, baseline].every((v, i) =>
-        v >= 0 && v < (1 << [5, 4, 5, 2, 5, 3][i])));
-      assert([x, y].every(v => v >= -16 && v <= 15));
-      assert(offset + Math.ceil(w * h * bpp / 8) <= bytes.length, `${table}: bitmap bounds for ${cp}`);
+      assert([advance, w, h, top].every((v, i) =>
+        v >= 0 && v < (1 << [4, 4, 5, 5][i])));
+      assert(x >= -16 && x <= 15);
+      if (table === 'digits') assert.equal(advance, 0);
+      assert(offset + Math.ceil(w * h / 8) <= bytes.length, `${table}: bitmap bounds for ${cp}`);
       count++;
     }
   }

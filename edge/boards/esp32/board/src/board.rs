@@ -86,26 +86,6 @@ impl Esp32Board {
         self.robotFaceHost.clone()
     }
 
-    /// Paints the empty plugin shelf on the board display.
-    pub fn paintPluginShelf(&self) -> HostResult<()> {
-        self.robotFaceHost.paintPluginShelf()
-    }
-
-    /// Paints the launcher home on the board display.
-    pub fn paintHome(&self) -> HostResult<()> {
-        self.robotFaceHost.paintHome()
-    }
-
-    /// Paints the settings app on the board display.
-    pub fn paintSettings(&self) -> HostResult<()> {
-        self.robotFaceHost.paintSettings()
-    }
-
-    /// Paints the terminal app on the board display.
-    pub fn paintTerminal(&self) -> HostResult<()> {
-        self.robotFaceHost.paintTerminal()
-    }
-
     /// Flushes a self-drawn UI RGB565 region to the physical display.
     pub fn flushUi(&self, rect: FaceRect, pixels: &[u8]) -> HostResult<()> {
         self.robotFaceHost.flushRgb565(rect, pixels)

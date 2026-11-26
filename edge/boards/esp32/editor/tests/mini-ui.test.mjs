@@ -138,7 +138,8 @@ test('frequent changing chat updates cannot starve lower screen strips',options,
 });
 
 test('mini native UI source cannot reference malloc, LVGL, or an entire-frame buffer',options,async()=>{
-  const source=await readFile(new URL('../../ui_port/operit_mini_ui.c',import.meta.url),'utf8');
+  const source=(await Promise.all(['operit_mini_ui.c','mini_pages.c','mini_render.c','mini_internal.h']
+    .map(name=>readFile(new URL('../../ui_port/'+name,import.meta.url),'utf8')))).join('\n');
   assert(!/\b(?:malloc|calloc|realloc|lv_init|lv_obj_create)\s*\(/.test(source));
   assert(!source.includes('#include "lvgl.h"'));
   assert(source.includes('_Static_assert'));

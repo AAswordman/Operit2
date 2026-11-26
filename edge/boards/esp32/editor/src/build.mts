@@ -225,7 +225,7 @@ function builtAt(): string {
 /** Bootstrap IDF/self-drawn UI on a clean machine before compiling the shared preview. */
 async function buildFirmware(): Promise<string> {
   await mkdir(out, {recursive: true});
-  for (const library of ['tokio', 'ring', 'msgpack', 'serde']) {
+  for (const library of ['tokio', 'ring']) {
     const prepare = await run(['python', path.join(here, `prepare-${library}.py`)]);
     if (prepare.code !== 0) throw new Error(`ESP32 ${library} preparation failed: ${prepare.stdout}${prepare.stderr}`);
   }
@@ -363,7 +363,7 @@ const env = {
 const flags = ['-O2', '-I' + path.join(here, 'wasm'), '-I' + ui];
 const configHash = sha256(flags.join(' '));
 const sources = [
-  path.join(ui, 'operit_mini_ui.c'), path.join(here, 'wasm/bridge.c'),
+  ...await filesWithSuffix(ui, '.c'), path.join(here, 'wasm/bridge.c'),
 ];
 const objdir = path.join(out, 'objects');
 await mkdir(objdir, {recursive: true});

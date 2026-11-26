@@ -322,358 +322,70 @@ The hardware smoke tool requires an already paired/admitted device and does not
 complete first-pairing or full-chat acceptance. See the editor's verification
 commands and distinguish simulator, build and physical-device results.
 
-### Firmware size reduction (2026-11-26)
+### Firmware compositions
 
-The complete release application image is **3,916,736 / 3,997,696 bytes**, leaving
-**80,960 bytes (79.06 KiB)** in the existing application partition. This saves
-**80,816 bytes (2.02%)** against the earlier task-cat image. The partition table,
-board budgets, pairing/Space protocol, stored records, fonts and device services
-retain their existing formats and behavior.
+The default `standalone-apps` feature retains the chat client, independent
+HTTP/HTTPS model requests, STT/TTS streams and native audio. Building without
+default features selects the remote display composition: local chat, plugin
+browsing, model requests and audio controls are omitted. Both use the existing
+identity, saved pairings, encrypted Link sessions, Space admission, NVS,
+Wi-Fi setup, discovery and `edge.scene` renderer. A remote-only image is not a
+size measurement of the complete application.
 
-| Measured build | Application image bytes |
-| --- | ---: |
-| Earlier task-cat build | 3,997,552 |
-| Native silent assertions and client-only TLS | 3,939,744 |
-| Shared node-local record writer | 3,925,920 |
-| Shared MessagePack marker dispatcher | 3,922,176 |
-| Shared node-local snapshot acquisition | 3,916,736 |
+The firmware and simulator compose `StreamHostPeerLink` through
+`runtime_profile.rs`. It retains TCP and UART framing and the authenticated
+runtime, allowing unused HTTP, WebSocket and Bluetooth Link implementations to
+be discarded. The Wi-Fi setup HTTP server remains. Discovery filters advertised
+carriers before ranking them. Other products retain their default `HostPeerLink`.
 
-Node-local storage now shares snapshot acquisition, schema checks, the transaction
-and raw JSON map writer across record types. A stack-borrowed callback serializes
-only the replacement value into the same two-pass, exactly reserved destination.
-It adds no intermediate payload buffer or JSON tree. The raw-record order,
-escaping, optional whitespace compaction and atomic publication remain covered by
-100 preference-store tests, including failures during either encoding pass.
+Constrained node-state reads reuse the typed JSON slice decoder. Cached reads
+serialize only selected records into scratch sized for the largest record.
+The shared raw-record writer retains its two-pass exact reservation, atomic
+publication and durable schema. This reduces decoder duplication without
+changing stored records or pairing and authorization behavior.
 
-ESP-IDF retains native assertion checks and abort backtraces, but omits their
-condition/file strings. Resolve abort addresses using the matching ELF. Native
-setup serves HTTP; HTTPS uses only the TLS client role, with the existing full
-certificate bundle and client cipher configuration. The ESP32-only MessagePack
-overlay keeps its common marker dispatcher out of line; wire parsing and depth
-checks are unchanged. Its library plus four decoder/encoder test targets pass
-121 tests with one upstream ignored case.
+### Lightweight UI verification (2026-11-27)
 
-The final image passed the actual Xtensa, ABI and partition checks, and the
-C/Wasm preview build. Three real-TCP pairing/admission tests passed, including
-two Core pairings with one Space and preservation across restart. After a
-data-preserving update on the physical COM5 board, Wi-Fi was connected and saved
-pairing was still present. NVS usage stayed at 335 entries. Twenty UART health
-requests completed with increasing uptime, no session error and no allocation
-failure. The final sample reported 71,184 free heap bytes, a 65,536-byte largest
-block and 6,180 bytes of task-stack high-water headroom. This hardware run does
-not establish live Core reconnection, a real HTTPS request, multi-Core admission
-or task-cat display acceptance.
+The UI is split by responsibility and retains its public C ABI. All 4,168
+glyphs now use seven-byte metric records and one-bit masks, saving 8,947 bytes
+of font data. The old renderer already treated every nonzero coverage value as
+opaque. Twelve captured scenes and their inspection JSON match the original
+byte for byte; a separate comparison checks every glyph's pixels and metrics.
 
-Other compiler experiments were rejected: `opt-level="s"` exceeded the executable
-mapping by 377,082 bytes; lowering LLVM inline thresholds to zero produced a
-4,024,416-byte image; forced function merging and machine outlining produced no
-size improvement. These options are not part of the release configuration.
-Compressing the earlier image as an ordinary XZ file produced 2,008,824 bytes;
-that archive is not a bootable firmware image and does not count as partition
-headroom. The initial target was **10% of the original image**, about
-**399,755 bytes** (a 90% reduction). That intermediate image retained **97.98%** of
-the original. The target was subsequently relaxed: about 30% is also acceptable;
-there is no mandatory 10% limit. These compiler optimizations do not establish
-a theoretical minimum or meet either size target. Further changes must still run the real firmware capacity check.
+The additional library trials called the library drawing routines and linked
+the resulting Xtensa code. Compared with the original complete application,
+Adafruit GFX 1.12.4 added 3,568 bytes, Ucglib added 976 bytes and LVGL 9.3's
+RGB565 fill kernel added 1,072 bytes. These primitive adapters retained the
+page, text and interaction implementation, so they offered little source
+simplification. Their temporary adapters are not production dependencies.
 
-### Remote display composition (2026-11-26)
+The separate LVGL widget prototype used about 10.7 KiB of live widget heap and
+ran slower in the native harness. It was compiled for Xtensa as an archive,
+not checked as a complete firmware image. U8g2's font-format trial likewise
+was not a complete firmware integration; its data alone grew by 11,432 bytes
+before decoder code. Neither establishes a lower-load replacement.
 
-The board now has two application compositions. The default `standalone-apps`
-feature retains the existing chat client, independent HTTP/HTTPS model requests,
-STT/TTS stream handlers and native audio. Building without default features omits
-those modules and their Host installation. Both compositions reuse the same node
-identity, saved pairings, encrypted Link sessions, Space admission/authorization,
-preferences, NVS carrier, Wi-Fi setup, discovery and `edge.scene` renderer.
+On the Windows native simulator, seven alternating runs of 100 frames had
+median CPU times of 89 ms before and 53 ms after strip culling and rectangle
+span filling. These are host measurements, not ESP32 cycle or power results.
+The two-row RGB565 buffer remains 1,280 bytes and the target UI static-storage
+limit remains 10 KiB.
 
-In remote display mode the Core ToolPkg still selects task-cat moods and sends
-assets and scene configuration. The device decodes the bounded packs and paints
-its screen. It does not subscribe to Core chat, provision a conversation or run
-an independent model request. The connection indicator reads the shared Space
-connection directly. Local settings, pairing and Space consent remain available;
-chat browsing, plugin browsing, new-conversation and audio controls are hidden.
+The complete application originally measured 3,273,632 bytes. The UI cleanup
+alone measured 3,265,200 bytes, saving 8,432 bytes. Using upstream Serde derive
+and MessagePack instead of maintaining two private size overlays produces the
+retained 3,423,712-byte image: 150,080 bytes above the original, within the
+accepted 500 KB maintenance allowance. It leaves 573,984 bytes in the unchanged
+3,997,696-byte application partition. The 2 MiB target remains unmet by
+1,326,560 bytes; passing the physical partition check does not meet that target.
 
-The initial checked remote display image was **3,349,184 bytes**, **83.78%** of the original
-3,997,552-byte task-cat image. It leaves **648,512 bytes** in the unchanged
-application partition and saves **648,368 bytes (16.22%)** against that original.
-Carrier selection saved 106,048 bytes, typed node-record decoder sharing saved
-43,040 bytes, and shared MessagePack token/text reads save another **103,888 bytes**
-against the preceding 3,453,072-byte build. It has **not** reached the accepted
-approximate 30% target
-(about 1,199,266 bytes). Shared node/Space persistence, protocol processing and
-native networking still contribute substantial code. These measurements do not
-establish a minimum size. The later measurements and 60% target are recorded
-in [Further remote display reduction](#further-remote-display-reduction-2026-11-26).
-
-The board composes `StreamHostPeerLink` through `runtime_profile.rs`, shared with
-the simulator. It reuses the existing TCP and UART framing and supplies the
-existing authenticated runtime through `newEndpointWithLink`. TCP binds a
-dedicated socket; unused HTTP, WebSocket and Bluetooth Link implementations can
-be discarded. The full `HostPeerLink` remains the default for other products.
-Discovery filters candidates by the selected carrier before ranking them, so a
-mixed Core advertisement can select TCP. The local Wi-Fi setup HTTP server is
-retained. Pairing, session encryption, Space authority and stored formats are
-unchanged; board frame limits still belong to the board configuration.
-
-Typed node-state reads reuse the JSON slice decoder for constrained storage and
-cached/migrated records. The cache path encodes only selected records, reusing a
-scratch buffer sized to the largest selected record rather than encoding the
-whole collection. This trades record serialization work on cached reads for fewer
-decoder instantiations; constrained current-schema reads retain their direct byte
-path. Schema migration, transaction boundaries and durable formats are unchanged.
-
-Both compositions passed actual Xtensa release compilation, ABI inspection and
-image capacity checks. At this stage the default complete build was **3,666,816 bytes**,
-compared with 3,771,184 bytes before token/text read sharing. COM5 was updated to that
-remote package, with Wi-Fi connected and saved pairing present. NVS usage was
-stable at 335 entries across twenty health requests (336 before this update).
-Those requests reported no session/allocation diagnostic; the last sample had
-74,152 free heap bytes, a 65,536-byte largest block and a 6,636-byte main-task
-stack high-water mark. The screen remains on Connection.
-No live Core was connected, so physical Core reconnection, new pairing/admission
-and end-to-end task-cat rendering remain unverified.
-
-Validation: all 73 transport tests, 164 shared runtime tests (serial execution),
-122 editor tests, the TypeScript check, and three real-TCP pairing/admission
-regressions passed, as did all three production parser tests for 59 plugin
-artifacts. The store suite passed 373 tests with its three existing stress cases
-ignored, including a new cache/constrained regression for migration, cached edits,
-numeric map keys, large integers, Unicode and selective reads. All 46 tests in
-the TCP/Space fixture pass with the ESP32 MessagePack overlay explicitly selected
-for both Core and Edge; the temporary Cargo lockfile change was restored afterward.
-They exercise the same carrier composition against the full Core, including two
-saved Core pairings across restart and one admitted Space. The pinned MessagePack
-library/four decoder/encoder targets pass 121 tests with one existing ignored
-case. Five additional comparison tests pass against the unmodified registry
-version; 59 plugin artifacts and all three production parser tests were rechecked. Four runtime tests failed under parallel execution while firmware
-compilation was active, with operation timeouts and directory/discovery assertions;
-the complete suite passed with `--test-threads=1`.
-
-Check or package this composition without Emscripten:
-
-```sh
-npm run check:firmware --prefix edge/boards/esp32/editor -- --remote-display
-npm run build:firmware --prefix edge/boards/esp32/editor -- --remote-display
-```
-
-The remote package is written to `dist/remote-display`; the default full package
-is retained separately in `dist`. The report records `profile: "remote-display"`.
-The editor preview and desktop runtime retain the complete application composition;
-the remote build packages native firmware only and does not replace their UI assets.
-
-Select the same profile when updating hardware, supplying the actual port:
-
-```sh
-npm run flash --prefix edge/boards/esp32/editor -- --remote-display --port COM5
-```
-
-`npm run dev --prefix edge/boards/esp32/editor -- --remote-display --port COM5`
-builds and updates this profile in one operation. Normal updates preserve Wi-Fi,
-pairing, Space and layout data. A missing remote package fails without falling back
-to the default package. Switching to the complete composition uses the existing
-build/update commands without `--remote-display`.
-
-### Further remote display reduction (2026-11-26)
-
-The reproducible remote display build is **2,889,056 bytes**, **72.27%** of the
-original 3,997,552-byte image. It saves **1,108,496 bytes (27.73%)** and leaves
-**1,108,640 bytes** in the unchanged 3,997,696-byte application partition.
-The current requested target is **60% of the original**, at most **2,398,531
-bytes**. This build is still **490,525 bytes above that target**; the result is
-not a minimum-size claim.
-
-| Additional measurement | Application image bytes |
-| --- | ---: |
-| Previous hardware-tested remote display | 3,349,184 |
-| Standard library size optimization | 3,057,216 |
-| Immediate panic abort | 2,977,456 |
-| Native call-handler composition | 2,945,760 |
-| Visitor inlining hints and native ROM formatting | 2,903,520 |
-| Xtensa linker size relaxation | 2,895,568 |
-| Shared generated field-name lookup, initial dependency probe | 2,888,784 |
-| Rebuild with the branch dependency versions restored | 2,889,056 |
-| Default complete application with the same final dependencies | 3,273,760 |
-
-The first reduction also includes opt-in removal of application log formatting
-and reuse of the typed JSON slice decoder for selected materialized records.
-Other products keep their normal logging and JSON conversion unless they enable
-these features. The remote display composition installs `NativeClient` with the
-same native handlers; the shared router still enforces pairing, origin, Space
-membership and authorization. The default standalone composition retains
-`EdgeNode`, built-in device services and speech streams.
-
-The standard library uses its `optimize_for_size` feature. Its stable sort may
-use a 4 KiB scratch buffer, so firmware worker stacks must be checked with real
-admission work. Rust panics abort immediately and omit the Rust panic hook and
-panic text; `Result` errors, USB health and native crash backtraces remain.
-Native backtraces require the matching ELF for symbol resolution.
-
-The board disables Wi-Fi enterprise authentication, WPA3 SAE and OWE; its station
-configuration exposes open or WPA/WPA2 Personal credentials. ROM nano C formatting
-does not support 64-bit integer format specifiers or C99 positional arguments.
-Board UI formatting uses supported bounded fields. Standalone HTTP requests
-provide authorization headers and do not configure IDF Digest authentication,
-which would require full C formatting for its 64-bit nonce. Rust formatting,
-JSON numbers and Link integer widths are unchanged.
-
-`editor/prepare-serde.py` prepares a board-local overlay from a checksummed
-Serde derive archive. Generated text/binary field identifiers share a table
-lookup; ordinary and borrowed identifiers retain their original fallback paths.
-Aliases, duplicate and missing fields, unknown fields, flattened content, enum
-representations and RawValue are compared against upstream derive in
-`editor/tests/serde-compat`. The preparation verifies both source and manifest
-on repeated builds; other products and the Cargo registry are untouched.
-
-COM5 was updated to the final **2,889,056-byte** image without erasing NVS.
-It boots and shows the saved pairing as offline. Twenty consecutive UART health
-requests completed with increasing uptime and no session or allocation failure.
-The final sample had 82,728 free heap bytes, a 73,728-byte largest block, 72,520
-minimum free heap bytes and 2,700 bytes of main-task stack high-water headroom.
-NVS stayed at 336 entries before and after this final update and throughout the
-samples. The earlier 2,888,784-byte candidate also ran for 3,875,733 ms without a
-reported session/allocation failure. No live user Core was connected; these runs
-do not establish physical pairing/admission or end-to-end task-cat rendering
-after this optimization. The default complete application passed compilation,
-ABI and partition checks but was not flashed.
-
-Additional experiments were withdrawn: more aggressive MIR optimization grew
-the image to 2,903,824 bytes, shared map-visitor state saved only 3,424 bytes,
-specializing journal-free store branches saved only 3,968 bytes, concrete Space
-contexts saved 2,272 bytes, and restricting MIR/cross-crate inlining saved only
-2,384 bytes. These compiler experiments were not retained. A root-only
-virtual function elimination experiment incorrectly removed required runtime
-and cryptographic functions; its tiny image was rejected and never flashed.
-Whole-build virtual function elimination also encountered invalid LLVM bitcode.
-Native LTO across all C libraries hit ESP-IDF section conflicts; limiting it to
-networking, HTTP, mDNS and NVS produced a 2,886,544-byte image, saving just 2,512
-bytes. That additional toolchain complexity was withdrawn as well.
-
-The prepared derive overlay passed 46 production Core/Edge TCP regression tests,
-including multi-Core pairing with one admitted Space, restart and departure
-recovery, authorization rejection and the original task-cat scene assets.
-The default store suite passed 373 tests with three existing ignored tests.
-Nine preparation/ABI tests, four upstream-versus-prepared derive compatibility
-tests, two native-client tests and the selected compact JSON/logging integration
-tests passed. The production plugin parse gate passed for 59 packaged artifacts.
-
-### Startup and Wi-Fi size probes (2026-11-26)
-
-Two build-only examples isolate the startup and networking costs from the Edge
-application. They use the same release profile, ESP-IDF 5.3.2, SDK configuration
-and 4 MB partition table as the production firmware. Fat LTO and linker section
-collection discard unused application dependencies. The Wi-Fi probe initializes
-NVS, the event loop, STA/AP network-interface wrappers, and a WPA2 station client.
-It does not load or implement Edge identity, pairing, Space, discovery, HTTP,
-display, fonts, audio or task-cat services.
-
-| Build | Application image bytes | Percentage of original task-cat image |
-| --- | ---: | ---: |
-| Rust/ESP-IDF startup and idle loop | 169,888 | 4.25% |
-| WPA2 Wi-Fi probe | 681,968 | 17.06% |
-| Complete Edge application at probe time | 3,916,736 | 97.98% |
-| Initial 10% target | about 399,755 | 10% |
-| Subsequently accepted 30% target | about 1,199,266 | 30% |
-
-The networking probe alone exceeds the initial 10% target by about 282 KB.
-It fits below the subsequently accepted 30% target, leaving about 517 KB for
-the rest of a hypothetical implementation. It does not include pairing or rendering.
-Removing application features while retaining this networking build cannot meet
-the initial 10% target.
-This measurement is specific to the current SDK configuration and wrappers; it
-is not a lower bound for every possible ESP32 networking stack or a measurement
-of a complete paired/display Edge. A different SDK configuration or network stack
-would need a separate measurement before claiming a smaller minimum. Changing
-node composition must preserve shared pairing, authentication and Space approval.
-
-After setting up the normal firmware toolchain and build environment, build the
-examples from `edge/boards/esp32`:
-
-```sh
-cargo build --locked --release --example footprint_idle --example footprint_wifi
-```
-
-The ELFs are in `<target-dir>/xtensa-esp32-espidf/release/examples/`. Measure each
-with the same image generator used by the firmware capacity check:
-
-```sh
-espflash save-image --chip esp32 --flash-mode dio --flash-size 4mb --skip-update-check --partition-table partitions.csv <example-elf> <application.bin>
-```
-
-Read the generated application file length, not the ELF file length or a
-compressed download archive. These measurements exclude the separately stored
-bootloader and partition table, matching the production application measurement.
-Both examples passed release compilation and image generation. Neither was
-flashed or tested for actual Wi-Fi connectivity; the Wi-Fi probe uses dummy
-credentials. They are measurement fixtures, not usable Edge firmware. Keep the
-working application and saved pairing data on the device.
-
-### Task cat firmware update (2026-11-26)
-
-The earlier task cat build passed Xtensa compilation, ABI inspection and actual
-image generation: **3,997,552 / 3,997,696 bytes**, with **144 bytes free** in the
-unchanged application partition. Sharing one packed-storage encoder between its
-counting and writing passes saves 656 image bytes without changing the stored
-format, dictionary, allocation budget or enabled device services. Further firmware
-changes must rerun `npm run check:firmware --prefix edge/boards/esp32/editor`;
-that build had only 144 bytes of Flash margin. Later remote-display reductions
-are recorded above.
-
-The image was installed on the physical ESP32 with the data-preserving update
-path. After reboot, the device still reported saved pairing credentials and connected
-Wi-Fi; NVS used 335 entries before and after the update. Twenty consecutive UART health requests
-completed with increasing uptime, no reported session error and no allocation
-failure. The 65 simulator regression tests also passed. This run does not establish
-live Core reconnection, multi-Core hardware admission or task-cat display acceptance.
-
-A real-TCP integration test with two independent Core fixtures and the board's
-Peer limits verifies two device-initiated pairings, explicit admission to one
-Core's Space, rejection of the other Core's Space scope, and preservation across
-Edge restart. Full Core fixtures use the native SQL transaction journal; endpoint
-fixtures continue to reject SQL access. Ten related storage, board-budget and
-pairing/admission regressions passed as well. This is protocol acceptance on the
-desktop, separate from multi-Core hardware acceptance.
-
-### Build and simulator verification (2026-10-28)
-
-The Edge changes target upstream `review/pr356-edge-space-sync-memory` at
-`269d910d`. After rebasing the remaining device changes onto that dedicated
-branch and consolidating repeated node-local schema checks, the complete
-`npm run test:device-budget --prefix edge/boards/esp32/editor -- --firmware` gate passed:
-firmware and Xtensa ABI checks, shared C/Wasm UI, TypeScript, fixed heap/stack
-probes, and three authenticated TCP scenarios covering pairing/admission/restart,
-standalone chat across restart, and remote chat with storage recovery and speech.
-The standalone scenario peaked at 208,224 / 262,144 Rust heap bytes; remote chat,
-storage recovery and speech peaked at 212,840 / 262,144 bytes. Every sampled state
-reported zero allocation failures. Desktop regression passed 61 simulator tests,
-29 board tests, 116 editor tests and eight serial debug tests.
-
-The built image uses **3,945,104 / 3,997,696 bytes** (**52,592 free**).
-Its `.flash.text` uses **3,324,810 / 3,342,304 bytes** (**17,494 free**): code mapping
-and image partition capacity are separate limits. This image has not yet been
-flashed for another hardware acceptance run.
-
-Speech integration verified 65 seconds of PCM/WAV byte volume, recognition text
-over 8 KiB and ordered multi-segment TTS with deterministic providers. These
-checks cover transport behavior; physical long recording and actual recognition
-quality require hardware validation. Simulator heap/stack measurements exclude
-ESP-IDF, Wi-Fi, TLS and native driver overhead.
-
-### Hardware verification (2026-10-28)
-
-The earlier hardware-tested image preserved identity, pairing, Wi-Fi and the
-existing Space. With the [audio wiring below](#native-inmp441-and-onboard-speaker),
-the user confirmed an audible test tone. Duplicate-start rejection, intentional
-stop/restart and 20 consecutive short self-tests passed, with 44,544–46,080
-captured left-channel samples per test and no RX/queue overflow, observed reset
-or recorded allocation failure. Lowest free heap was 16,684 bytes; free heap
-after tests was 70,456–75,768 bytes. Capture resources were released on close.
-
-Those timed self-tests precede the WAV/PCM layering cleanup and upstream rebase.
-They establish short acquisition and restart behavior, without verifying queued
-recording tails, microphone acoustic quality, physical long recording or a Core
-STT/TTS round trip. The board and Windows Core had different Spaces; the existing
-Windows Space was preserved. A successful DMA write alone does not establish
-audible playback, and nonzero microphone samples do not establish recognition
-quality. See the [current chain and acceptance scope](../../docs/core-entry-protocol.md).
+Validation passed the C/Wasm preview, 122 editor tests, the TypeScript check,
+27 native board tests, 6 ABI-tool tests, 65 simulator tests and 46 Core/Edge
+TCP integration tests. The complete Xtensa image passed final ELF ABI and
+application-partition checks. Core integration uses desktop Rust 1.95.0.
+This cleanup has not been flashed or tested on hardware. The generated
+`editor/generated/firmware-check.json` records the most recent build's exact
+size and profile.
 
 ## Recovering from an unavailable Space administrator
 
@@ -745,7 +457,9 @@ name, status and the plugin icon for verification.
 
 ## UI backend
 
-The only renderer is `ui_port/operit_mini_ui.c`. Rust uses `src/ui.rs` and the
+The renderer uses `ui_port/mini_pages.c` for layouts, `mini_render.c` for strip
+drawing and text, and `operit_mini_ui.c` for state, actions and inspection.
+`mini_internal.h` holds their private fixed-size state. Rust uses `src/ui.rs` and the
 `operit_ui_*` C ABI; board display ownership and RGB565 flushing use
 `activateUi` / `flushUi`. There is no third-party widget runtime, allocator
 pool, backend marker or fallback build. Native firmware and Wasm compile the
@@ -793,12 +507,15 @@ with `npm run flash` preserves NVS and the reserved layout partition.
 
 ## Xtensa build overlays
 
-The firmware build prepares checksum-pinned Tokio 1.53.1, ring 0.17.14 and
-rmp-serde 1.3.1 sources under the ignored `.embuild/` directory. The scripts are
-`edge/boards/esp32/editor/prepare-tokio.py`, `prepare-ring.py` and
-`prepare-msgpack.py`; they never modify
-Cargo's shared registry cache. The original dependency licenses and copyright
-notices stay in the extracted sources.
+The firmware build prepares checksum-pinned Tokio 1.53.1 and ring 0.17.14
+sources under the ignored `.embuild/` directory. The scripts are
+`edge/boards/esp32/editor/prepare-tokio.py` and `prepare-ring.py`; they never
+modify Cargo's shared registry cache. Original dependency licenses and
+copyright notices stay in the extracted sources.
+
+Serde derive and rmp-serde use their unmodified registry releases. Their former
+size overlays, preparation scripts and overlay-only comparison fixtures have
+been removed. Shared Link and simulator protocol tests remain.
 
 The ESP LLVM 21 windowed backend can address incoming stack arguments
 incorrectly after realigning the stack beyond the Xtensa 16-byte ABI. The
@@ -809,24 +526,6 @@ These are dependency-source overlays, not an unmodified upstream build, and
 must be reviewed when updating the pinned versions or compiler. Desktop
 builds do not use them.
 
-The MessagePack overlay shares the sequence visitor between arrays and binary
-byte sequences, and keeps the common dispatcher out of line. Marker, length,
-number and UTF-8 reads are shared independently of each message's Serde visitor.
-The numeric token retains each upstream integer width and float precision; text
-retains borrowed/copied buffers and invalid UTF-8 byte fallback. This avoids
-repeating wire parsing for each message type under LTO. It retains the upstream
-markers, depth limits and array consumption checks.
-
-The comparison fixture loads the prepared decoder and the unmodified 1.3.1
-registry decoder in the same process. Five tests compare all 256 markers with
-truncated payloads, deterministic malformed inputs, depth limits, numeric visitor
-methods, extension data, structured values and borrowed buffers. Stream results
-include error variants and consumed byte positions. Run `npm run test:msgpack`
-in the editor directory after selecting an installed desktop Rust toolchain.
-The pinned library/four decoder/encoder targets and shared Link integration tests
-must also pass when updating the overlay. The upstream `round` target references
-an undeclared `rmpv` dependency in the published archive and is excluded.
-
 The firmware release uses Fat LTO and size optimization across its Rust packages
 to fit the existing 4 MB board and application partition. ESP32 console timestamps use direct UTC clock fields;
 desktop logs retain their local-time formatter. A single codegen unit keeps the
@@ -834,8 +533,9 @@ Windows linker command within its length limit. UUID retains `opt-level = 1`
 for the Xtensa hex-parser workaround. Tokio now uses `opt-level = "z"`, with
 its pinned alignment overlay and final ELF ABI checks still required.
 The Xtensa build omits embedded Rust caller-location file/line tables with
-`-Z location-detail=none`. Panic messages and raw backtrace addresses remain;
-resolve available function symbols on the host with the matching ELF. Embedded
+`-Z location-detail=none`. Rust panics abort immediately without a Rust panic
+hook or panic text. ESP-IDF native abort backtraces remain; resolve available
+function symbols on the host with the matching ELF. Embedded
 caller locations are unavailable, and source file/line lookup requires separately
 retained debug information (the default release build strips it). This
 requires the pinned ESP nightly toolchain, as do the existing build-std settings.
@@ -846,13 +546,13 @@ frames retain binary fields as shared ranges. Compatibility tests compare every
 request lifecycle and success/error response against the original Serde codec,
 including rejected positional struct variants. Serializer/decoder entrypoints
 remain out of line so Fat LTO can share each instantiation across callers.
-The built-in font retains all 4,168 glyphs and bitmap bytes in packed nine-byte
-records; table tests check each field width and bitmap boundary.
+The built-in font retains all 4,168 glyphs and their displayed pixels in
+seven-byte records and one-bit masks; table tests check field widths and bitmap
+boundaries. Digit advance is fixed at 16 pixels.
 
-The ESP32 standard library uses `backtrace-trace-only`: panic diagnostics and
-raw backtrace addresses remain available, while symbol lookup runs on the host
-with the matching ELF. This avoids linking the device-side DWARF symbol reader;
-it does not disable panic reporting or the ESP-IDF abort backtrace. Keep the ELF
+The ESP32 standard library uses `backtrace-trace-only` to omit the device-side
+DWARF symbol reader. Native abort backtrace addresses can be resolved on the
+host using the matching ELF. Keep the ELF
 from each flashed build for `xtensa-esp32-elf-addr2line -f -C -e <elf> <addresses>`.
 
 The ESP32 Host scheduler enables Tokio's `rt` executor support without

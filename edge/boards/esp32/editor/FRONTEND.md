@@ -1,6 +1,6 @@
 # ESP32 调试台前端与软件内嵌约定
 
-设备系统 UI 和浏览器预览共同编译 `edge/boards/esp32/ui_port/operit_mini_ui.c`，
+设备系统 UI 和浏览器预览共同编译 `edge/boards/esp32/ui_port/` 中的 C 文件，
 通过 `operit_ui_*` C ABI 更新状态、接收触摸并输出 RGB565 像素。
 逻辑屏幕为 320×240；页面、控件位置、文字和动作由 C 实现，状态与设备命令由 Rust 适配。
 修改系统页面后需要重新构建预览和固件。
@@ -22,7 +22,9 @@
 | 插件场景预览 | `web/scene-renderer.ts` |
 | 本地 HTTP 服务与静态路由 | `src/server.mts`、`src/api/` |
 | Wasm 像素缓冲与 C 回调 | `wasm/bridge.c` |
-| 设备控件绘制、文字、页面与触摸动作 | `../../edge/boards/esp32/ui_port/operit_mini_ui.c` |
+| 设备页面与触摸目标 | `../ui_port/mini_pages.c` |
+| 条带绘图、文字与表情 | `../ui_port/mini_render.c` |
+| UI 状态、触摸动作与检查接口 | `../ui_port/operit_mini_ui.c` |
 | 状态更新与设备动作处理 | `../../edge/boards/esp32/src/ui.rs`、`../../edge/boards/esp32/src/main.rs` |
 | 表情图形 | `../../edge/boards/esp32/ui_port/face.svg` |
 

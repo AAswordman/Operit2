@@ -14,7 +14,7 @@ function hash(text: string): string {
 const anchors: Array<[string, string, string]> = [
   ['edge/boards/esp32/ui_port/operit_mini_ui.c', 'activate', 'static void activate('],
   ['edge/boards/esp32/ui_port/operit_mini_ui.c', 'operit_ui_layout_bind', 'void operit_ui_layout_bind('],
-  ['edge/boards/esp32/ui_port/operit_mini_ui.c', 'scene', 'static void scene(void) {'],
+  ['edge/boards/esp32/ui_port/mini_pages.c', 'mini_scene', 'void mini_scene(void) {'],
   ['edge/boards/esp32/src/main.rs', 'device action dispatch', '"run_node" | "edge_search" | "edge_pair" =>'],
   ['edge/boards/esp32/editor/src/layout/routes.mts', 'routes', 'export const routes'],
 ];

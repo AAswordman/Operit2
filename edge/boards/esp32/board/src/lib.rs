@@ -20,7 +20,6 @@ pub mod face;
 pub mod mirror_color;
 pub mod pins;
 pub mod robot_face;
-pub mod shell;
 pub mod touch;
 
 #[cfg(target_os = "espidf")]
@@ -53,11 +52,7 @@ pub use pins::{
     TOUCH_MISO_PIN, TOUCH_MOSI_PIN, TOUCH_SCLK_PIN,
 };
 pub use robot_face::{Esp32RobotFaceHost, FaceCanvas, MemoryFaceCanvas};
-pub use shell::{
-    launcherTile, paintHome, paintPluginShelf, paintSettings, paintTerminal, HOME_BAR_Y_PX,
-    LAUNCHER_GAP_PX, LAUNCHER_MARGIN_PX, LAUNCHER_ORIGIN_Y_PX, LAUNCHER_TILE_HEIGHT_PX,
-    LAUNCHER_TILE_WIDTH_PX, PLUGIN_SLOT_COUNT,
-};
+
 pub use touch::{mapRawToLogical, TouchPoint};
 
 /// Creates the HostManager used by an ESP32 Edge Core app.

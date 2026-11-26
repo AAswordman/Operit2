@@ -19,7 +19,6 @@ def load(name, filename):
 ring = load('prepare_ring', 'prepare-ring.py')
 tokio = load('prepare_tokio', 'prepare-tokio.py')
 abi = load('check_xtensa', 'check-xtensa-tokio.py')
-serde = load('prepare_serde', 'prepare-serde.py')
 
 def archive(crate, files):
     output = io.BytesIO()
@@ -71,50 +70,6 @@ class XtensaOverlayTests(unittest.TestCase):
                 boundary.write_text(boundary.read_text().replace('inline(never)', 'inline(always)'))
                 with self.assertRaisesRegex(RuntimeError, 'differs from the pinned'):
                     ring.prepare()
-
-    def test_serde_prepares_atomically_and_verifies_manifest_and_sources(self):
-        data = archive(serde.CRATE, {
-            'Cargo.toml': '[package]\nname="serde_derive"\n',
-            'src/lib.rs': '#[inline]\nfn helper() {}\n',
-            'src/ser.rs': 'fn serialize<__S>() {}\n',
-        })
-        with tempfile.TemporaryDirectory(prefix='operit-serde-overlay-test-') as directory:
-            destination = Path(directory).resolve() / 'prepared'
-            with patch.object(serde, 'DEST', destination), patch.object(serde, 'pinned_archive', return_value=data):
-                serde.prepare()
-                serde.prepare()
-                crate = destination / serde.OVERLAY
-                self.assertEqual((crate / serde.MARKER).read_text().strip(), serde.SHA256)
-                self.assertEqual(list(destination.iterdir()), [crate])
-                for relative in ['Cargo.toml', 'src/lib.rs']:
-                    target = crate / relative
-                    original = target.read_bytes()
-                    target.write_bytes(original + b'// modified\n')
-                    with self.assertRaisesRegex(RuntimeError, 'differs from pinned patch'):
-                        serde.prepare()
-                    target.write_bytes(original)
-
-    def test_serde_rejects_unsafe_archives_and_foreign_markers(self):
-        with self.assertRaisesRegex(RuntimeError, 'Unsafe archive'):
-            serde.expected_files(archive(serde.CRATE, {'../outside.rs': 'bad'}))
-        data = archive(serde.CRATE, {'Cargo.toml': 'manifest', 'src/lib.rs': 'source'})
-        with tempfile.TemporaryDirectory(prefix='operit-serde-marker-test-') as directory:
-            destination = Path(directory).resolve()
-            with patch.object(serde, 'DEST', destination), patch.object(serde, 'pinned_archive', return_value=data):
-                serde.prepare()
-                (destination / serde.OVERLAY / serde.MARKER).write_text('wrong\n')
-                with self.assertRaisesRegex(RuntimeError, 'marker mismatch'):
-                    serde.prepare()
-
-    def test_serde_rejects_a_corrupt_cached_archive_before_extraction(self):
-        with tempfile.TemporaryDirectory(prefix='operit-serde-cache-test-') as directory:
-            cargo = Path(directory).resolve()
-            cached = cargo / 'registry/cache/fixture' / f'{serde.CRATE}.crate'
-            cached.parent.mkdir(parents=True)
-            cached.write_bytes(b'not the pinned crate')
-            with patch.dict(os.environ, {'CARGO_HOME': str(cargo)}):
-                with self.assertRaisesRegex(RuntimeError, 'archive checksum mismatch'):
-                    serde.pinned_archive()
 
     def test_patch_keeps_c_and_rust_layouts_and_assertions_consistent(self):
         rust = '#[repr(C, align(64))]\nstruct poly1305_state_st { r0: u32 }\n'
