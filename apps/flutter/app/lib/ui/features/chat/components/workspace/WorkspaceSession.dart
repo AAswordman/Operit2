@@ -21,6 +21,9 @@ class WorkspaceSession extends ChangeNotifier {
   /// Remembers visibility for this workspace without writing preferences.
   bool isOpen = false;
 
+  /// Requests opening a new terminal session once the workspace panel is active.
+  bool pendingTerminalOpen = false;
+
   final List<WorkspaceTab> tabs = <WorkspaceTab>[
     const WorkspaceTab(
       kind: WorkspaceTabKind.home,
@@ -137,6 +140,14 @@ class WorkspaceSession extends ChangeNotifier {
         selectedIndex = tabs.length - 1;
       }
     }
+    isOpen = true;
+    notifyListeners();
+    onOpenRequested?.call();
+  }
+
+  /// Opens the workspace panel and starts a terminal session tab.
+  void requestOpenTerminal() {
+    pendingTerminalOpen = true;
     isOpen = true;
     notifyListeners();
     onOpenRequested?.call();

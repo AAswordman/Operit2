@@ -36,7 +36,7 @@ class _ScoredMentionPackageOption {
   final int score;
 }
 
-/// Loads package mention choices from package, skill, and MCP sources.
+/// Loads enabled package mention choices from package, skill, and MCP sources.
 Future<List<MentionPackageOption>> loadMentionPackageOptions(
   ChatViewModel viewModel,
 ) async {
@@ -46,8 +46,22 @@ Future<List<MentionPackageOption>> loadMentionPackageOptions(
       viewModel.clients.permissionsMcpRuntimeMcpLocalServer;
   final options = <String, MentionPackageOption>{};
 
-  final availablePackages = await packageManager.getAvailablePackages();
-  final packageEntries = availablePackages.entries.toList()
+  final results = await Future.wait<Object>(<Future<Object>>[
+    packageManager.getAvailablePackages(),
+    packageManager.getEnabledPackageNames(),
+    skillRepository.getAiVisibleSkillPackages(),
+    permissionsMcpRuntimeMcpLocalServer.getAllMcpServers(),
+    permissionsMcpRuntimeMcpLocalServer.getAllPluginMetadata(),
+  ]);
+  final availablePackages = results[0] as Map<String, core_proxy.ToolPackage>;
+  final enabledPackageNames = (results[1] as List<String>).toSet();
+  final skillPackages = results[2] as Map<String, core_proxy.SkillPackage>;
+  final mcpServers = results[3] as Map<String, core_proxy.ServerConfig>;
+  final mcpMetadata = results[4] as Map<String, core_proxy.PluginMetadata>;
+
+  final packageEntries = availablePackages.entries
+      .where((entry) => enabledPackageNames.contains(entry.key))
+      .toList()
     ..sort((left, right) => left.key.compareTo(right.key));
   for (final entry in packageEntries) {
     final packageName = entry.key;
@@ -68,7 +82,6 @@ Future<List<MentionPackageOption>> loadMentionPackageOptions(
     );
   }
 
-  final skillPackages = await skillRepository.getAiVisibleSkillPackages();
   final skillEntries = skillPackages.entries.toList()
     ..sort((left, right) => left.key.compareTo(right.key));
   for (final entry in skillEntries) {
@@ -83,11 +96,9 @@ Future<List<MentionPackageOption>> loadMentionPackageOptions(
     );
   }
 
-  final mcpServers = await permissionsMcpRuntimeMcpLocalServer
-      .getAllMcpServers();
-  final mcpMetadata = await permissionsMcpRuntimeMcpLocalServer
-      .getAllPluginMetadata();
-  final mcpEntries = mcpServers.entries.toList()
+  final mcpEntries = mcpServers.entries
+      .where((entry) => !entry.value.disabled)
+      .toList()
     ..sort((left, right) => left.key.compareTo(right.key));
   for (final entry in mcpEntries) {
     final metadata = mcpMetadata[entry.key];
