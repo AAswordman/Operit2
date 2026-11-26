@@ -140,6 +140,9 @@ jobs:
             ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN_VERSION }}-cargo-ios-
             ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN_VERSION }}-cargo-
 
+      - name: Bundle models.dev catalog
+        run: python3 tools/build_scripts/models_dev_bundle.py
+
       - name: Generate Dart proxy artifacts
         run: |
           cargo clean --manifest-path core/crates/proxy/local/Cargo.toml -p operit-proxy-local
