@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/ui/common/markdown/MarkdownImageRenderer.dart';
 import 'package:operit2/ui/common/markdown/MarkdownRemoteImage.dart';
@@ -20,6 +21,31 @@ final png = base64Decode(
 
 /// Verifies shared VFS image resolution and the production Markdown rendering path.
 void main() {
+  testWidgets('corrupt VFS images log their source and byte metadata', (
+    tester,
+  ) async {
+    await ClientLogger.initialize();
+    await ClientLogger.clear();
+    const path = '/operitapp/config/avatars/corrupt.image';
+    final provider = ComposeDslVfsImage(
+      path: path,
+      owner: Object(),
+      readBytes: (_) async => Uint8List.fromList([1, 2, 3, 4]),
+    );
+    final failure = Completer<Object>();
+    final listener = ImageStreamListener(
+      (_, _) => fail('Corrupt bytes decoded'),
+      onError: (Object error, StackTrace? stack) => failure.complete(error),
+    );
+    final stream = provider.resolve(ImageConfiguration.empty)
+      ..addListener(listener);
+    await tester.runAsync(() => failure.future);
+    stream.removeListener(listener);
+    final log = await ClientLogger.readText();
+    expect(log, contains('path=$path'));
+    expect(log, contains('bytes=4'));
+    expect(log, contains('mime='));
+  });
   test('both VFS image roots pass through without native fallback', () {
     expect(
       composeDslVfsImagePath('/app/data/image.png'),

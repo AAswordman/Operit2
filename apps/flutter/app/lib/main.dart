@@ -269,7 +269,7 @@ void _installClientLogHooks() {
 
   FlutterError.onError = (FlutterErrorDetails details) {
     ClientLogger.e(
-      details.exceptionAsString(),
+      details.toString(),
       tag: 'FlutterFramework',
       error: details.exception,
       stackTrace: details.stack,

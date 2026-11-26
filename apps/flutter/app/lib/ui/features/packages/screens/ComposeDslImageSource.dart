@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -10,6 +9,7 @@ import 'package:mime/mime.dart';
 
 import '../../../../core/bridge/PlatformCoreProxy.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/runtime/RuntimeFileBytes.dart';
 
@@ -80,16 +80,28 @@ class ComposeDslVfsImage extends ImageProvider<ComposeDslVfsImage> {
     codec: _load(decode),
     scale: 1,
     debugLabel: path,
+    informationCollector: () => <DiagnosticsNode>[
+      StringProperty('VFS image path', path),
+    ],
   );
 
   Future<ui.Codec> _load(ImageDecoderCallback decode) async {
+    Uint8List? bytes;
     try {
-      final bytes = await readBytes(path);
+      bytes = await readBytes(path);
       if (bytes.isEmpty) throw StateError('DSL VFS image is empty: $path');
       final displayBytes = await readImageDisplayBytes(bytes, clients: clients);
       return await decode(await ui.ImmutableBuffer.fromUint8List(displayBytes));
-    } catch (_) {
+    } catch (error, stackTrace) {
       PaintingBinding.instance.imageCache.evict(this);
+      ClientLogger.e(
+        'VFS image load/decode failed path=$path '
+        'bytes=${bytes?.length} '
+        'mime=${bytes == null ? null : lookupMimeType(path, headerBytes: bytes)}',
+        tag: 'ImageDecode',
+        error: error,
+        stackTrace: stackTrace,
+      );
       rethrow;
     }
   }
