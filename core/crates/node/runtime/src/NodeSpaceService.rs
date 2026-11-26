@@ -135,7 +135,7 @@ fn operationPayloads(value: Option<&mut serde_json::Value>) -> Result<Vec<serde_
 #[cfg(test)]
 fn operationsFromJson(mut value: serde_json::Value) -> Result<Vec<SyncOperation>, String> {
     let payloads = operationPayloads(Some(&mut value))?;
-    let mut operations: Vec<SyncOperation> = serde_json::from_value(value).map_err(|error| error.to_string())?;
+    let mut operations: Vec<SyncOperation> = operit_util::SerializationSetup::fromJsonValue(value).map_err(|error| error.to_string())?;
     for (operation, payload) in operations.iter_mut().zip(payloads) { operation.payload = payload; }
     Ok(operations)
 }
@@ -275,7 +275,7 @@ fn encodeTypedReply<T: Serialize>(id: &operit_link::CoreRequestId, result: Resul
 fn snapshotFromJson(mut value: serde_json::Value) -> Result<PeerSpaceSnapshot, String> {
     let control = operationPayloads(jsonField(&mut value, "controlOperations", 2))?;
     let departures = operationPayloads(jsonField(&mut value, "departures", 4))?;
-    let mut snapshot: PeerSpaceSnapshot = serde_json::from_value(value).map_err(|error| error.to_string())?;
+    let mut snapshot: PeerSpaceSnapshot = operit_util::SerializationSetup::fromJsonValue(value).map_err(|error| error.to_string())?;
     for (operation, payload) in snapshot.controlOperations.iter_mut().zip(control) { operation.payload = payload; }
     for (operation, payload) in snapshot.departures.iter_mut().zip(departures) { operation.payload = payload; }
     Ok(snapshot)
@@ -431,7 +431,7 @@ pub(crate) fn observePeerSpaceSnapshot(service: &dyn NodeSpaceContext, peerNodeI
         if crossing {
             let localOperations = service.networkControlStore().currentSpaceOperations()?;
             let localAdmittedSource = localOperations.iter().map(|operation| {
-                operit_store::NetworkControlStore::NetworkControlCommandRecord::deserialize(&operation.payload)
+                operit_util::SerializationSetup::fromJsonValueRef::<operit_store::NetworkControlStore::NetworkControlCommandRecord>(&operation.payload)
                     .map_err(|error| error.to_string())
             }).collect::<Result<Vec<_>, _>>()?.iter().any(|record| {
                 record.spaceId == local.spaceId && matches!(&record.command,

@@ -91,7 +91,7 @@ impl DevicePreferencesStore {
     pub fn read(&self, space: &str, node: &str) -> Result<DevicePreferences, String> {
         let data = self.file(space, node).data().map_err(|e| e.to_string())?;
         let state = match data.get(&stringPreferencesKey("state")) {
-            Some(value) => serde_json::from_value::<DevicePreferences>(value.clone())
+            Some(value) => operit_util::SerializationSetup::fromJsonValue::<DevicePreferences>(value.clone())
                 .map_err(|e| e.to_string())?,
             None => DevicePreferences {
                 spaceId: space.into(),

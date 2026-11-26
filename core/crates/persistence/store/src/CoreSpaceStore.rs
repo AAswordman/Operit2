@@ -1446,7 +1446,7 @@ impl CoreSpaceStore {
         if let Some(value) = values.get(&key) {
             let record: serde_json::Map<String, serde_json::Value> = match value {
                 serde_json::Value::String(encoded) => serde_json::from_slice((encoded).as_bytes())?,
-                value => serde_json::from_value(value.clone())?,
+                value => operit_util::SerializationSetup::fromJsonValue(value.clone())?,
             };
             values.set(&key, serde_json::Value::Object(record));
         }
@@ -2048,7 +2048,7 @@ mod tests {
         assert_eq!(profile.coreVersion.as_deref(), Some("99.0.0"));
         let mut legacy = serde_json::to_value(profile).unwrap();
         legacy.as_object_mut().unwrap().remove("protocolVersion");
-        assert_eq!(serde_json::from_value::<CoreSpaceDeviceProfile>(legacy).unwrap().protocolVersion, None);
+        assert_eq!(operit_util::SerializationSetup::fromJsonValue::<CoreSpaceDeviceProfile>(legacy).unwrap().protocolVersion, None);
         store.writeLocalProtocol(4).unwrap();
         let identity = CoreNodeIdentityStore::new(store.storage.clone()).initialize().unwrap();
         assert_eq!(store.deviceProfiles().unwrap()[&identity.nodeId].protocolVersion, Some(4));
@@ -2787,9 +2787,9 @@ mod tests {
         assert!(receiverPolicy.projectControlOperations(&commands).is_err());
         assert_eq!(receiver.readBytes("runtime/link_access/space_policy.preferences.json").unwrap(), before);
         let mut forgedRoot = sourcePolicy.currentSpaceOperations().unwrap().into_iter()
-            .find(|operation| matches!(serde_json::from_value::<NetworkControlCommandRecord>(operation.payload.clone()).unwrap().command,
+            .find(|operation| matches!(operit_util::SerializationSetup::fromJsonValue::<NetworkControlCommandRecord>(operation.payload.clone()).unwrap().command,
                 NetworkControlCommand::Bootstrap { .. })).unwrap();
-        let mut forged: NetworkControlCommandRecord = serde_json::from_value(forgedRoot.payload.clone()).unwrap();
+        let mut forged: NetworkControlCommandRecord = operit_util::SerializationSetup::fromJsonValue(forgedRoot.payload.clone()).unwrap();
         forged.commandId = "forged-root".into(); forged.issuerNodeId = "projection-member".into();
         forged.command = NetworkControlCommand::Bootstrap { initialAdminNodeId: "projection-member".into() };
         forgedRoot.opId = "forged-root".into(); forgedRoot.entityId = "forged-root".into();

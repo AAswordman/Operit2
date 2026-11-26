@@ -215,7 +215,7 @@ fn committedAdmission(service: &dyn NodeSpaceContext, request: &SpaceJoinRequest
     let currentSpaceId = service.spaceStore().initialize()?.spaceId;
     Ok(service.networkControlStore().spaceControlOperation(&currentSpaceId, &id, reviewer)?
         .is_some_and(|operation| {
-            NetworkControlCommandRecord::deserialize(&operation.payload).is_ok_and(|command| {
+            operit_util::SerializationSetup::fromJsonValueRef::<NetworkControlCommandRecord>(&operation.payload).is_ok_and(|command| {
                 command.spaceId == targetSpaceId && command.issuerNodeId == operation.originDeviceId
                     && matches!(command.command, NetworkControlCommand::AdmitSpace { sourceSpaceId: admittedSource, identities }
                         if admittedSource == sourceSpaceId && identities.keys().cloned().collect::<BTreeSet<_>>() == members)
@@ -326,7 +326,7 @@ pub(crate) fn reconcile(service: &dyn NodeSpaceContext, record: &mut Record) -> 
 pub(crate) fn memberRemovalCommitted(service: &dyn NodeSpaceContext, nodeId: &str) -> Result<bool, String> {
     let spaceId = service.spaceStore().space()?.spaceId;
     Ok(service.networkControlStore().currentSpaceOperations()?.into_iter().any(|operation| {
-        NetworkControlCommandRecord::deserialize(&operation.payload).is_ok_and(|command| {
+        operit_util::SerializationSetup::fromJsonValueRef::<NetworkControlCommandRecord>(&operation.payload).is_ok_and(|command| {
             command.spaceId == spaceId
                 && matches!(&command.command, NetworkControlCommand::RemoveMember { nodeId: removed, .. } if removed == nodeId)
         })
@@ -361,7 +361,7 @@ pub(crate) fn applyRemovedMemberLocalEffects(service: &dyn NodeSpaceContext, ope
     // local projection or credential, so avoid a second authority replay while
     // their decoded log is still held by the caller.
     if !operations.iter().any(|operation| {
-        NetworkControlCommandRecord::deserialize(&operation.payload).is_ok_and(|record| {
+        operit_util::SerializationSetup::fromJsonValueRef::<NetworkControlCommandRecord>(&operation.payload).is_ok_and(|record| {
             record.spaceId == spaceId && match record.command {
                 NetworkControlCommand::LeaveSpace => record.issuerNodeId != local,
                 NetworkControlCommand::RemoveMember { nodeId, .. } => nodeId != local,
@@ -379,7 +379,7 @@ pub(crate) fn applyRemovedMemberLocalEffects(service: &dyn NodeSpaceContext, ope
     let mut revocations: BTreeMap<String, Vec<Option<String>>> = BTreeMap::new();
     let mut completed = Vec::new();
     for operation in operations {
-        let Ok(record) = NetworkControlCommandRecord::deserialize(&operation.payload) else { continue };
+        let Ok(record) = operit_util::SerializationSetup::fromJsonValueRef::<NetworkControlCommandRecord>(&operation.payload) else { continue };
         if record.spaceId != spaceId { continue; }
         if matches!(record.command, NetworkControlCommand::LeaveSpace)
             && record.issuerNodeId != local && !state.memberNodeIds.contains(&record.issuerNodeId) {
@@ -461,7 +461,7 @@ pub(crate) fn forgetPairingRecords(service: &dyn NodeSpaceContext, nodeIds: &[St
         .map_err(|error| error.to_string())
         .and_then(|peers| peers.forgetPairingRecords(nodeIds).map_err(|error| error.to_string()));
     if let Err(error) = result {
-        operit_util::AppLogger::AppLogger::w(
+        operit_util::app_log!(w,
             "SpaceJoin",
             &format!("Pairing credential forget failed devices={nodeIds:?} error={error}"),
         );
@@ -520,11 +520,11 @@ fn leaveLocked(service: &dyn NodeSpaceContext) -> Result<CoreSpace, String> {
     // Notification is best effort. A device owns its local exit even when the
     // old Space, its approval receipts or its peers cannot be read.
     if let Err(error) = super::super::fault_isolation::run("prepare Space departure", || space_departure::prepare(service)) {
-        operit_util::AppLogger::AppLogger::w("SpaceJoin", &error);
+        operit_util::app_log!(w, "SpaceJoin", &error);
         let _ = CoreNodeStateStore::newWithStorage(service.storage(), RUNTIME_SPACE_DEPARTURES_PATH).delete();
     }
     if let Err(error) = store(service).clearSpaceApprovals() {
-        operit_util::AppLogger::AppLogger::w("SpaceJoin", &format!("Exit Space: clear approvals: {error}"));
+        operit_util::app_log!(w, "SpaceJoin", &format!("Exit Space: clear approvals: {error}"));
     }
     let space = service.spaceStore().leave()?;
     for (operation, result) in [
@@ -532,7 +532,7 @@ fn leaveLocked(service: &dyn NodeSpaceContext) -> Result<CoreSpace, String> {
         ("initialize new local policy", super::super::fault_isolation::run("initialize local policy", || service.networkControlStore().initializeCurrentSpace().map(|_| ()))) ,
     ] {
         if let Err(error) = result {
-            operit_util::AppLogger::AppLogger::w("SpaceJoin", &format!("Space {}: {operation}: {error}", space.spaceId));
+            operit_util::app_log!(w, "SpaceJoin", &format!("Space {}: {operation}: {error}", space.spaceId));
         }
     }
     // Once local membership has switched, ancillary failures cannot turn a
@@ -547,7 +547,7 @@ fn leaveLocked(service: &dyn NodeSpaceContext) -> Result<CoreSpace, String> {
         }
         Ok(())
     }) {
-        operit_util::AppLogger::AppLogger::w("SpaceJoin", &error);
+        operit_util::app_log!(w, "SpaceJoin", &error);
     }
     Ok(space)
 }
@@ -1011,7 +1011,7 @@ pub(crate) async fn incoming(service: &dyn NodeSpaceContext) -> Result<Vec<Space
         let records = match fetched {
             Ok(records) => records,
             Err(error) => {
-                operit_util::AppLogger::AppLogger::v_with_level("SpaceJoin", &format!("Assignment source unavailable {node}: {error}"), operit_util::AppLogger::VERBOSE_LEVEL_3);
+                operit_util::app_log!(v_with_level, "SpaceJoin", &format!("Assignment source unavailable {node}: {error}"), operit_util::AppLogger::VERBOSE_LEVEL_3);
                 continue;
             }
         };
@@ -1062,7 +1062,7 @@ fn assignedRequests(service: &dyn NodeSpaceContext, origin: &str, current: &Core
     for mut summary in summaries {
         if !matches!(summary.request.status, SpaceJoinStatus::Pending | SpaceJoinStatus::Approving) { continue; }
         if let Err(error) = crate::fault_isolation::run("join assignment", || reconcileProjection(service, &mut summary, current)) {
-            operit_util::AppLogger::AppLogger::w("SpaceJoin", &format!("request={}: {error}", summary.request.requestId));
+            operit_util::app_log!(w, "SpaceJoin", &format!("request={}: {error}", summary.request.requestId));
             continue;
         }
         if summary.targetSpaceId == current.spaceId && summary.request.reviewerDeviceId.as_deref() == Some(origin)
@@ -1160,7 +1160,7 @@ fn completeDecision(service: &dyn NodeSpaceContext, origin: &str, outcome: Box<O
             if record.request.status != SpaceJoinStatus::Approving { return Err("Decision was not claimed".into()); }
             if outcome.decision.approve {
                 let operation = outcome.admission.as_ref().ok_or("Approval has no admission operation")?;
-                let command: NetworkControlCommandRecord = NetworkControlCommandRecord::deserialize(&operation.payload).map_err(|e| e.to_string())?;
+                let command: NetworkControlCommandRecord = operit_util::SerializationSetup::fromJsonValueRef::<NetworkControlCommandRecord>(&operation.payload).map_err(|e| e.to_string())?;
                 if command.spaceId != record.targetSpaceId || command.issuerNodeId != origin
                     || !matches!(command.command, NetworkControlCommand::AdmitSpace { ref sourceSpaceId, ref identities }
                         if sourceSpaceId == &record.sourceSpaceId && identities.keys().cloned().collect::<BTreeSet<_>>() == record.source.space.members.iter().cloned().collect()) {
@@ -1333,7 +1333,7 @@ pub(crate) async fn refresh(service: &dyn NodeSpaceContext, id: String) -> Resul
     let published = publishOutgoingResponse(service, &id, &remote, false)?;
     if published.status == SpaceJoinStatus::Joined {
         if let Err(e) = service.afterJoined(local.request.targetDeviceId).await {
-            operit_util::AppLogger::AppLogger::w("SpaceJoin", &format!("Join approved; post-join synchronization failed: {e}"));
+            operit_util::app_log!(w, "SpaceJoin", &format!("Join approved; post-join synchronization failed: {e}"));
         }
     }
     Ok(published)

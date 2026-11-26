@@ -10,6 +10,20 @@ use chrono::{DateTime, Local, Utc};
 use operit_host_api::{FileAppendHandle};
 use serde::{Deserialize, Serialize};
 
+/// Compile-time policy; selected only by the product, never by node role.
+pub const COMPILED: bool = !cfg!(feature = "no-app-logging");
+
+/// Avoid evaluating log arguments when the product omits application logging.
+/// With normal features this preserves the existing method and return value.
+#[macro_export]
+macro_rules! app_log {
+    ($method:ident, $($argument:expr),* $(,)?) => {{
+        if $crate::AppLogger::COMPILED {
+            $crate::AppLogger::AppLogger::$method($($argument),*)
+        } else { 0i32 }
+    }};
+}
+
 /// Android-compatible verbose log priority.
 pub const VERBOSE: i32 = 2;
 /// Android-compatible debug log priority.
@@ -492,6 +506,7 @@ fn write_entry(
     msg: &str,
     throwable: Option<String>,
 ) -> Result<(), ()> {
+    if !COMPILED { return Ok(()); }
     let timestamp_ms = operit_host_api::TimeUtils::currentTimeMillisU128();
     let entry = LogEntry {
         priority,

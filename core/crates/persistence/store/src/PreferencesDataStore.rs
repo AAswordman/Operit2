@@ -1687,7 +1687,7 @@ impl Preferences {
     ) -> Result<Option<T>, PreferencesDataStoreError> {
         self.get(key)
             .cloned()
-            .map(serde_json::from_value)
+            .map(operit_util::SerializationSetup::fromJsonValue)
             .transpose()
             .map_err(Into::into)
     }
@@ -1818,7 +1818,7 @@ impl Preferences {
                         delete: Vec::new(),
                     },
                     Some(mutation) => {
-                        serde_json::from_value::<PreferencesObjectPatch>(mutation.value.clone())?
+                        operit_util::SerializationSetup::fromJsonValue::<PreferencesObjectPatch>(mutation.value.clone())?
                     }
                 };
                 patch.delete.retain(|key| key != field);
@@ -1877,7 +1877,7 @@ impl<'de> Deserialize<'de> for Preferences {
     {
         let mut values = HashMap::<String, Value>::deserialize(deserializer)?;
         let legacy = values.remove(PREFERENCES_REPLICATION_KEY);
-        let commit = values.remove("__operit_transaction_commit").map(serde_json::from_value::<crate::Transaction::kernel::FileCommit>)
+        let commit = values.remove("__operit_transaction_commit").map(operit_util::SerializationSetup::fromJsonValue::<crate::Transaction::kernel::FileCommit>)
             .transpose().map_err(serde::de::Error::custom)?.map(Arc::new);
         Ok(Self {
             values: Arc::new(values),
@@ -2205,7 +2205,7 @@ impl CoreNodeStateStore {
             for &(key, value) in incoming {
                 let key = stringPreferencesKey(key);
                 if let Some(old) = preferences.get(&key) {
-                    if T::deserialize(old)? != *value { return Err(conflict()); }
+                    if operit_util::SerializationSetup::fromJsonValueRef::<T>(old)? != *value { return Err(conflict()); }
                 } else { preferences.set(&key, serde_json::to_value(value)?); }
             }
             Ok(())
@@ -2730,7 +2730,7 @@ impl PreferencesSyncedEntry {
                 ));
             }
             let payload: PreferencesSyncTransactionPayload =
-                serde_json::from_value(operation.payload.clone())?;
+                operit_util::SerializationSetup::fromJsonValue(operation.payload.clone())?;
             validatePluginPreferenceSyncPath(&payload.storagePath)?;
             if payload.formatVersion != 2 || payload.entries.len() < 2 {
                 return Err(PreferencesDataStoreError::Message(
@@ -2784,7 +2784,7 @@ impl PreferencesSyncedEntry {
             });
         }
         let payload: PreferencesSyncEntryPayload =
-            serde_json::from_value(operation.payload.clone())?;
+            operit_util::SerializationSetup::fromJsonValue(operation.payload.clone())?;
         validatePluginPreferenceSyncPath(&payload.storagePath)?;
         match payload.formatVersion {
             1 => {}
@@ -3818,7 +3818,7 @@ fn decodePreferencesSyncedMutation(
             })
         }
         "patch_object" if payload.formatVersion == 2 => {
-            let patch: PreferencesObjectPatch = serde_json::from_value(payload.value.clone())?;
+            let patch: PreferencesObjectPatch = operit_util::SerializationSetup::fromJsonValue(payload.value.clone())?;
             let mut keys = BTreeSet::new();
             if patch
                 .delete

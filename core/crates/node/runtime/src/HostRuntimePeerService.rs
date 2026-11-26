@@ -358,7 +358,7 @@ impl HostRuntimePeerService {
             }),
         });
         service.startAvailabilityWorker().map_err(|error| error.to_string())?;
-        operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
+        operit_util::app_log!(i, "RuntimePeerService", &format!(
             "Peer runtime initialized local={:?} platform={:?} protocol=v{}",
             service.state.nodeId, service.state.info.platform, crate::PeerProtocol::VERSION));
         Ok(service)
@@ -366,7 +366,7 @@ impl HostRuntimePeerService {
 
     /// Checks the known identity and the handshake result before creating a pairing transaction.
     async fn startPairingWithInvitation(&self, target: PeerEndpoint, transport: Option<PeerTransport>, invitationId: Option<&str>) -> Result<PendingPairing, CoreLinkError> {
-        operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
+        operit_util::app_log!(i, "RuntimePeerService", &format!(
             "pairing.start local={:?} target={:?} transport={transport:?} qr={} protocol=v{}",
             self.state.nodeId, target.nodeId, invitationId.is_some(), crate::PeerProtocol::VERSION));
         if !target.nodeId.is_empty() {
@@ -556,12 +556,12 @@ impl HostRuntimePeerService {
             pairingProtocol: Some(PAIRING_PROTOCOL_VERSION) };
         let reply: HelloReply = rawCall(&self.state.host, &raw, "hello", &hello).await
             .inspect_err(|failure| {
-                operit_util::AppLogger::AppLogger::w("RuntimePeerService", &format!(
+                operit_util::app_log!(w, "RuntimePeerService", &format!(
                     "handshake.hello.failed local={:?} target={:?} purpose={purpose:?} transport={:?} localProtocol=v{} error={:?}",
                     self.state.nodeId, raw.target().nodeId, raw.transport(), crate::PeerProtocol::VERSION, failure.to_string()));
             })?;
         if matches!(purpose, "start" | "finish") {
-            operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
+            operit_util::app_log!(i, "RuntimePeerService", &format!(
                 "pairing.hello_reply.received local={:?} peer={:?} platform={:?} purpose={purpose:?} localProtocol=v{} remoteProtocol={:?}",
                 self.state.nodeId, reply.transcript.serverNodeId, reply.info.platform,
                 crate::PeerProtocol::VERSION, reply.transcript.protocol.as_ref().map(|protocol| protocol.version)));
@@ -838,7 +838,7 @@ impl HostRuntimePeerService {
         let hello: Hello =
             fromCoreValue(helloRequest.args).map_err(|e| error(e.to_string()))?;
         if matches!(hello.purpose.as_str(), "start" | "finish") {
-            operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
+            operit_util::app_log!(i, "RuntimePeerService", &format!(
                 "pairing.hello.received local={:?} peer={:?} platform={:?} purpose={:?} localProtocol=v{} remoteProtocol={:?}",
                 self.state.nodeId, hello.nodeId, hello.info.platform, hello.purpose,
                 crate::PeerProtocol::VERSION, hello.protocol.as_ref().map(|protocol| protocol.version)));
@@ -1107,7 +1107,7 @@ impl RuntimePeerService for HostRuntimePeerService {
             .into_iter().map(|peer| peer.nodeId).collect::<BTreeSet<_>>();
         let recordCount = records.len();
         let peers = discoveredPeers(records, &self.state.nodeId, &pairedNodeIds);
-        operit_util::AppLogger::AppLogger::trace_detail("RuntimePeerService", &format!(
+        operit_util::app_log!(trace_detail, "RuntimePeerService", &format!(
             "Peer discovery completed records={recordCount} paired={} candidates={}", pairedNodeIds.len(), peers.len()));
         Ok(peers)
     }
@@ -1149,7 +1149,7 @@ impl RuntimePeerService for HostRuntimePeerService {
         scheduler.scheduleHostRuntimeAsyncTask("peer-confirm", Box::new(move || Box::pin(async move {
             let result = service.confirmOutboundPairing(&id, &code).await;
             if let Err(failure) = &result {
-                operit_util::AppLogger::AppLogger::w("RuntimePeerService", &format!(
+                operit_util::app_log!(w, "RuntimePeerService", &format!(
                     "pairing.confirm.failed local={:?} error={:?}", service.state.nodeId, failure.to_string()));
             }
             let _ = sender.send(result);
@@ -1232,7 +1232,7 @@ impl RuntimePeerService for HostRuntimePeerService {
                         hostname: format!("{}.local.", self.state.nodeId), port: socket.port(), properties,
                     }) {
                         Ok(advertisement) => advertisements.push(advertisement),
-                        Err(failure) => { operit_util::AppLogger::AppLogger::w("RuntimePeerService", &format!("LAN advertisement unavailable: {failure}")); },
+                        Err(failure) => { operit_util::app_log!(w, "RuntimePeerService", &format!("LAN advertisement unavailable: {failure}")); },
                     }
                 }
             }
@@ -1246,7 +1246,7 @@ impl RuntimePeerService for HostRuntimePeerService {
                         if tasks.scheduleHostRuntimeAsyncTask("peer-connection", Box::new(move || Box::pin(async move {
                             let _permit = permit;
                             let result = service.serve(connection.clone()).await;
-                            if let Err(e) = result { operit_util::AppLogger::AppLogger::w("RuntimePeerService", &e.to_string()); }
+                            if let Err(e) = result { operit_util::app_log!(w, "RuntimePeerService", &e.to_string()); }
                             connection.close().await;
                         }))).is_err() { raw.close().await; }
                     }
@@ -1255,7 +1255,7 @@ impl RuntimePeerService for HostRuntimePeerService {
             if config.bindAddress != previousAddress {
                 config.updatedAt = currentTimeMillis();
                 self.state.store.saveHostConfig(&config).map_err(error)?;
-                operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!("Listener bound to {}", config.bindAddress));
+                operit_util::app_log!(i, "RuntimePeerService", &format!("Listener bound to {}", config.bindAddress));
             }
             Ok::<_, CoreLinkError>(advertisements)
         }.await;
@@ -1344,7 +1344,7 @@ impl RuntimePeerService for HostRuntimePeerService {
             let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             self.updateOutboundEndpointLocked(node, &parsed, transport)?;
         }
-        operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
+        operit_util::app_log!(i, "RuntimePeerService", &format!(
             "Dial endpoint updated by operator peer={node} endpoint={}", parsed.rendered));
         self.clearPeerProtocolFailure(node);
         let _ = self.acquireChannel(node).await;
@@ -1406,7 +1406,7 @@ fn discoveredEndpoints(records: Vec<operit_host_api::ServiceDiscovery::Discovere
         let [Some(node), Some(displayName), Some(modes)] = ["nodeId", "displayName", "transports"]
             .map(|key| record.properties.get(key).filter(|value| !value.is_empty())) else {
                 invalid += 1;
-                operit_util::AppLogger::AppLogger::w("RuntimePeerService", &format!(
+                operit_util::app_log!(w, "RuntimePeerService", &format!(
                     "Ignoring incomplete discovery advertisement service={}", record.fullName));
                 continue;
             };
@@ -1430,7 +1430,7 @@ fn discoveredEndpoints(records: Vec<operit_host_api::ServiceDiscovery::Discovere
         }
         if !valid { invalid += 1; }
     }
-    operit_util::AppLogger::AppLogger::trace_detail("RuntimePeerService", &format!(
+    operit_util::app_log!(trace_detail, "RuntimePeerService", &format!(
         "Peer discovery filtering local={local} paired={paired} invalid={invalid} candidates={}", peers.len()));
     peers.into_values().collect()
 }

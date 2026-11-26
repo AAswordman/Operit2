@@ -402,7 +402,7 @@ fn snapshot_unlocked(store: &PreferencesDataStore) -> Result<Snapshot, Error> {
     let mut values = match store.readFromStorage() {
         Ok(values) => values,
         Err(error @ (Error::Json(_) | Error::Encryption(_) | Error::Message(_))) => {
-            operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_consistency.damaged owner={} error={error}", store.storagePath));
+            operit_util::app_log!(w, "TransactionSync", &format!("sync_consistency.damaged owner={} error={error}", store.storagePath));
             let mut capture = Snapshot { damage: None, node: journal(store)?.localDeviceId()?,
                 data: Data::empty(file::preferenceOwner(&store.storagePath, store.schema.as_ref().map_or(0, |schema|schema.currentVersion))),
                 covered: BTreeSet::new(), generation: 0 };

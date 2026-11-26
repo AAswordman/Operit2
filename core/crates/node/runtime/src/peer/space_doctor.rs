@@ -157,7 +157,7 @@ pub(crate) fn updateCounters(
 
 /// Decodes the command envelope of one control operation, if it still can be.
 fn commandSpaceId(operation: &SyncOperation) -> Result<String, String> {
-    NetworkControlCommandRecord::deserialize(&operation.payload)
+    operit_util::SerializationSetup::fromJsonValueRef::<NetworkControlCommandRecord>(&operation.payload)
         .map(|record| record.spaceId)
         .map_err(|error| error.to_string())
 }
@@ -384,7 +384,7 @@ pub fn diagnose(service: &dyn NodeSpaceContext, repair: bool) -> Result<SpaceHea
     let mut projectionOperations = Vec::new();
     for (key, encoded) in &projectionEntries {
         if key == operit_store::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
-        match serde_json::from_value::<SyncOperation>(encoded.clone()) {
+        match operit_util::SerializationSetup::fromJsonValue::<SyncOperation>(encoded.clone()) {
             Ok(operation) => projectionOperations.push(operation),
             Err(error) => findings.push(SpaceDoctorFinding {
                 severity: "error".into(),
@@ -501,7 +501,7 @@ fn runRepair(
     let projectionStore = operit_store::NetworkControlStore::NetworkControlStore::projectionStore(service.storage());
     for (key, encoded) in projectionStore.data().map_err(|error| error.to_string())?.entries() {
         if key == operit_store::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
-        if let Ok(operation) = serde_json::from_value::<SyncOperation>(encoded) {
+        if let Ok(operation) = operit_util::SerializationSetup::fromJsonValue::<SyncOperation>(encoded) {
             shadowOperations.push(operation);
         }
     }

@@ -287,7 +287,7 @@ impl NetworkControlStore {
                 1 => {
                     for (key, value) in preferences.entries() {
                         if key == crate::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
-                        let encoded = serde_json::from_value::<String>(value)?;
+                        let encoded = operit_util::SerializationSetup::fromJsonValue::<String>(value)?;
                         let operation: SyncOperation = serde_json::from_slice((&encoded).as_bytes())?;
                         preferences.set(&stringPreferencesKey(&key), serde_json::to_value(operation)?);
                     }
@@ -584,7 +584,7 @@ impl NetworkControlStore {
         drop(state);
         let commandId = format!("control-review-{reviewKey}");
         if let Some(operation) = self.spaceControlOperation(&space.spaceId, &commandId, &self.localNodeId)? {
-            let record = NetworkControlCommandRecord::deserialize(&operation.payload).map_err(|error| error.to_string())?;
+            let record = operit_util::SerializationSetup::fromJsonValueRef::<NetworkControlCommandRecord>(&operation.payload).map_err(|error| error.to_string())?;
             if record.spaceId != space.spaceId || record.issuerNodeId != self.localNodeId || record.command != command {
                 return Err("Stored admission differs from the claimed review".into());
             }
@@ -885,7 +885,7 @@ impl NetworkControlStore {
                         validateControlOperation(&operation)?;
                         let key = stringPreferencesKey(&operation.opId);
                         if let Some(old) = preferences.get(&key) {
-                            let old: SyncOperation = SyncOperation::deserialize(old).map_err(|error| error.to_string())?;
+                            let old: SyncOperation = operit_util::SerializationSetup::fromJsonValueRef::<SyncOperation>(old).map_err(|error| error.to_string())?;
                             if old != operation { return Err("Conflicting legacy authority command".into()); }
                         } else { preferences.set(&key, serde_json::to_value(&operation).map_err(|error| error.to_string())?); }
                     } else {
@@ -933,7 +933,7 @@ impl NetworkControlStore {
         let mut retired = Vec::new();
         for (id, encoded) in preferences.iterEntries() {
             if id == crate::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
-            let operation: SyncOperation = serde_json::from_value(encoded.clone()).map_err(|e| e.to_string())?;
+            let operation: SyncOperation = operit_util::SerializationSetup::fromJsonValue(encoded.clone()).map_err(|e| e.to_string())?;
             if decodeControlOperation(&operation)?.spaceId != spaceId { retired.push(id.to_owned()); }
         }
         if !retired.is_empty() {
@@ -974,7 +974,7 @@ impl NetworkControlStore {
             if record.spaceId != spaceId { return Err("Control projection belongs to another Space".into()); }
             let key = stringPreferencesKey(&operation.opId);
             if let Some(old) = preferences.get(&key) {
-                let old = SyncOperation::deserialize(old).map_err(|error| error.to_string())?;
+                let old = operit_util::SerializationSetup::fromJsonValueRef::<SyncOperation>(old).map_err(|error| error.to_string())?;
                 if old != *operation { return Err("Conflicting immutable Space control operation".into()); }
             } else {
                 let encoded = serde_json::to_value(operation).map_err(|error| error.to_string())?;
@@ -1345,7 +1345,7 @@ pub(crate) fn decodeControlOperation(
     operation: &SyncOperation,
 ) -> Result<NetworkControlCommandRecord, String> {
     validateControlEnvelope(operation)?;
-    let record = NetworkControlCommandRecord::deserialize(&operation.payload).map_err(|error| error.to_string())?;
+    let record = operit_util::SerializationSetup::fromJsonValueRef::<NetworkControlCommandRecord>(&operation.payload).map_err(|error| error.to_string())?;
     validateCommandRecord(&record)?;
     if record.commandId != operation.entityId {
         return Err("network control command id does not match its operation entity".to_string());

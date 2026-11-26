@@ -735,7 +735,7 @@ impl SyncOperationStore {
             };
             if let Err(error) = store.publishOutbox(self) {
                 let error = format!("preference outbox path={path}: {error}");
-                operit_util::AppLogger::AppLogger::w("CoreSyncTrace", &error);
+                operit_util::app_log!(w, "CoreSyncTrace", &error);
                 errors.push(error);
             }
         }
@@ -1284,7 +1284,7 @@ impl SyncOperationStore {
         let encryption = PreferencesEncryption::load_existing()
             .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?;
         let storedPayload: StoredEncryptedSyncPayload =
-            serde_json::from_value(operation.payload.clone())?;
+            operit_util::SerializationSetup::fromJsonValue(operation.payload.clone())?;
         let payloadBytes = serde_json::to_vec(&storedPayload.envelope)?;
         let decryptedPayload = encryption
             .decrypt(
@@ -1738,7 +1738,7 @@ impl SyncOperationStore {
                 // Opening owners against the empty journal rebuilds their normal replay baselines.
                 let clock = self.readJson(&self.clockPath()).unwrap_or_default();
                 journal.reset_failed_import(&clock)?;
-                operit_util::AppLogger::AppLogger::w("TransactionSync", &format!(
+                operit_util::app_log!(w, "TransactionSync", &format!(
                     "sync_legacy.reset root={} reason={error}; rebuilding baselines from business data",
                     self.rootPath,
                 ));
@@ -1746,13 +1746,13 @@ impl SyncOperationStore {
             journal.reclaim_sql_copies()?;
             // Also clean leftovers from earlier migrations, without importing them again.
             if let Err(error) = self.cleanLegacyJournal() {
-                operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_legacy.cleanup: {error}"));
+                operit_util::app_log!(w, "TransactionSync", &format!("sync_legacy.cleanup: {error}"));
             }
             #[cfg(feature = "full")]
             if let Err(error) = journal.migrate_file_index(self.storageHost.as_ref()).and_then(|_| {
                 journal.collect_blobs(self.storageHost.as_ref(), &self.rootPath, currentTimeMillis()?, None)
             }) {
-                operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_files.upgrade: {error}"));
+                operit_util::app_log!(w, "TransactionSync", &format!("sync_files.upgrade: {error}"));
             }
             *state = Some(journal);
         }
@@ -1789,7 +1789,7 @@ impl SyncOperationStore {
             journal.collect_blobs(self.storageHost.as_ref(), &self.rootPath, now, sql_paths)
         }) {
             *last = 0;
-            operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_files.cleanup: {error}"));
+            operit_util::app_log!(w, "TransactionSync", &format!("sync_files.cleanup: {error}"));
         }
     }
 
@@ -1860,12 +1860,12 @@ impl SyncOperationStore {
             for (id, raw) in &received.pending {
                 let pending: Value = serde_json::from_slice(raw.get().as_bytes())?;
                 let stored: SyncOperation = if pending.get("record").is_some() {
-                    let record: JournalRecord = serde_json::from_value(pending["record"].clone())?;
+                    let record: JournalRecord = operit_util::SerializationSetup::fromJsonValue(pending["record"].clone())?;
                     let key = pending.get("revision").and_then(Value::as_str)
                         .map(|revision| format!("{id}:{revision}")).unwrap_or_else(|| id.clone());
                     let path = format!("{}/pending/{:x}.json", self.rootPath, Sha256::digest(key.as_bytes()));
                     self.readRecordAt(&path, &record)?
-                } else { serde_json::from_value(pending.clone())? };
+                } else { operit_util::SerializationSetup::fromJsonValue(pending.clone())? };
                 let original = self.decodeOperationPayload(stored)?;
                 if original.opId != *id { return Err(SyncOperationStoreError::Message("Invalid legacy pending identity".into())); }
                 let stored = self.encodeOperationPayload(&original)?;
@@ -2046,7 +2046,7 @@ impl SyncOperationStore {
             }
             Ok(())
         }))?;
-        operit_util::AppLogger::AppLogger::i("TransactionSync", &format!("sync_file.ignored domain={domain} path={path} reason=excluded"));
+        operit_util::app_log!(i, "TransactionSync", &format!("sync_file.ignored domain={domain} path={path} reason=excluded"));
         Ok(())
     }
 

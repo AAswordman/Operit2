@@ -119,7 +119,7 @@ impl HostRuntimePeerService {
         })) {
             Ok(subscription) => Some(subscription),
             Err(error) => {
-                operit_util::AppLogger::AppLogger::w("RuntimePeerService", &format!("Automatic LAN discovery unavailable: {error}"));
+                operit_util::app_log!(w, "RuntimePeerService", &format!("Automatic LAN discovery unavailable: {error}"));
                 None
             }
         }
@@ -136,13 +136,13 @@ impl HostRuntimePeerService {
             scan: Err(failure),
         });
         if let Err(failure) = &refresh.scan {
-            operit_util::AppLogger::AppLogger::w("RuntimePeerService", &format!("LAN discovery unavailable: {failure}"));
+            operit_util::app_log!(w, "RuntimePeerService", &format!("LAN discovery unavailable: {failure}"));
         }
         match directory {
             Ok(true) => refresh.scan = Ok(()),
             Ok(false) => {}
             Err(failure) => {
-                operit_util::AppLogger::AppLogger::w(
+                operit_util::app_log!(w,
                     "RuntimePeerService",
                     &format!("Directory discovery failed: {failure}"),
                 );
@@ -189,7 +189,7 @@ impl HostRuntimePeerService {
         let records = receiver.await.map_err(|_| error("Background discovery cancelled"))?;
         let scan = records.map_err(|failure| error(failure.to_string())).map(|records| {
             self.rememberDiscoveryRecords(&records);
-            operit_util::AppLogger::AppLogger::trace_detail("RuntimePeerService", &format!(
+            operit_util::app_log!(trace_detail, "RuntimePeerService", &format!(
                 "Background LAN discovery refreshed records={}", records.len()));
         });
         Ok(DiscoveryRefresh { subscription, scan })
@@ -240,7 +240,7 @@ impl HostRuntimePeerService {
         let endpoint = OperatorEndpoint { rendered: address.into(), transport: Some(transport) };
         self.updateOutboundEndpointLocked(node, &endpoint, None)?;
         drop(_guard);
-        operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
+        operit_util::app_log!(i, "RuntimePeerService", &format!(
             "Authenticated pairing endpoint refreshed peer={node} endpoint={address}"));
         self.changed();
         Ok(())

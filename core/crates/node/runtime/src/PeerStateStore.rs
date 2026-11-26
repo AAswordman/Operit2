@@ -151,7 +151,7 @@ impl PeerStateStore {
                         if key == PREFERENCES_SCHEMA_VERSION_KEY_NAME {
                             continue;
                         }
-                        let encoded = serde_json::from_value::<String>(value)?;
+                        let encoded = operit_util::SerializationSetup::fromJsonValue::<String>(value)?;
                         let record: Value = serde_json::from_slice((&encoded).as_bytes())?;
                         preferences.set(&stringPreferencesKey(&key), record);
                     }
@@ -250,9 +250,9 @@ impl PeerStateStore {
                     if key == PREFERENCES_SCHEMA_VERSION_KEY_NAME {
                         continue;
                     }
-                    let encoded = serde_json::from_value::<String>(value)?;
+                    let encoded = operit_util::SerializationSetup::fromJsonValue::<String>(value)?;
                     let record: Value = serde_json::from_slice((&encoded).as_bytes())?;
-                    serde_json::from_value::<StoredOutbound>(record.clone())?;
+                    operit_util::SerializationSetup::fromJsonValue::<StoredOutbound>(record.clone())?;
                     preferences.set(&stringPreferencesKey(&key), record);
                 }
                 Ok(())
@@ -270,7 +270,7 @@ impl PeerStateStore {
                 continue;
             }
             let mut record: Value =
-                serde_json::from_slice((&serde_json::from_value::<String>(encoded)?).as_bytes())?;
+                serde_json::from_slice((&operit_util::SerializationSetup::fromJsonValue::<String>(encoded)?).as_bytes())?;
             let fields = record.as_object_mut().ok_or_else(|| {
                 PreferencesDataStoreError::Message(format!("Invalid outbound record: {name}"))
             })?;
@@ -291,7 +291,7 @@ impl PeerStateStore {
             fields
                 .entry("transport")
                 .or_insert_with(|| Value::String("http".into()));
-            serde_json::from_value::<StoredOutbound>(record.clone())?;
+            operit_util::SerializationSetup::fromJsonValue::<StoredOutbound>(record.clone())?;
             preferences.set(
                 &stringPreferencesKey(&name),
                 serde_json::to_string(&record)?,
@@ -321,7 +321,7 @@ impl PeerStateStore {
         self.store(path).visitEncodedEntries(|name, encoded| {
             match serde_json::from_slice((encoded.get()).as_bytes()) {
                 Ok(record) => { records.insert(name.to_owned(), record); },
-                Err(error) => { operit_util::AppLogger::AppLogger::w("PeerStateStore",
+                Err(error) => { operit_util::app_log!(w, "PeerStateStore",
                     &format!("Invalid peer state record at {path}, key {name}: {error}")); },
             }
             Ok(())
@@ -405,7 +405,7 @@ impl PeerStateStore {
                     if name == PREFERENCES_SCHEMA_VERSION_KEY_NAME {
                         continue;
                     }
-                    if let Ok(header) = Header::deserialize(record) {
+                    if let Ok(header) = operit_util::SerializationSetup::fromJsonValueRef::<Header>(record) {
                         if header.version == PAIRING_SERVICE_VERSION && header.expires <= now {
                             expired.push(name.to_owned());
                             continue;
@@ -453,7 +453,7 @@ impl PeerStateStore {
                             if name == PREFERENCES_SCHEMA_VERSION_KEY_NAME {
                                 return None;
                             }
-                            let header = Header::deserialize(record).ok()?;
+                            let header = operit_util::SerializationSetup::fromJsonValueRef::<Header>(record).ok()?;
                             (header.version == Some(PAIRING_SERVICE_VERSION))
                                 .then(|| name.to_owned())
                         })
@@ -506,7 +506,7 @@ impl PeerStateStore {
                 let encoded = preferences.get(&key).ok_or_else(|| {
                     PreferencesDataStoreError::Message("Node identity is missing".into())
                 })?;
-                let mut record: Value = serde_json::from_value(encoded.clone())?;
+                let mut record: Value = operit_util::SerializationSetup::fromJsonValue(encoded.clone())?;
                 if record.get("deviceId").and_then(Value::as_str) != Some(identity.nodeId.as_str())
                 {
                     return Err(PreferencesDataStoreError::Message(
@@ -516,7 +516,7 @@ impl PeerStateStore {
                 let persisted = record
                     .get("deviceInfo")
                     .cloned()
-                    .map(serde_json::from_value::<LinkDeviceInfo>)
+                    .map(operit_util::SerializationSetup::fromJsonValue::<LinkDeviceInfo>)
                     .transpose()?;
                 let mut current = supplied.clone();
                 if !replace {
@@ -569,7 +569,7 @@ impl PeerStateStore {
             Ok(Some(generation)) => info.pairingIncarnation = Some(generation),
             Ok(None) => {}
             Err(error) => {
-                operit_util::AppLogger::AppLogger::w(
+                operit_util::app_log!(w,
                     "PeerStateStore",
                     &format!("Pairing generation read failed error={error}"),
                 );
@@ -624,7 +624,7 @@ impl PeerStateStore {
                 let encoded = preferences.get(&key).ok_or_else(|| {
                     PreferencesDataStoreError::Message("Node identity is missing".into())
                 })?;
-                let mut record: Value = serde_json::from_value(encoded.clone())?;
+                let mut record: Value = operit_util::SerializationSetup::fromJsonValue(encoded.clone())?;
                 if record.get("deviceId").and_then(Value::as_str) != Some(identity.nodeId.as_str())
                 {
                     return Err(PreferencesDataStoreError::Message(
@@ -806,7 +806,7 @@ fn decodeHostConfig(preferences: &Preferences) -> Result<PeerHostConfig, String>
         fields.insert(key.to_owned(), value.clone());
     }
     fields.insert("discovery".into(), preferences.get(&stringPreferencesKey("networkDiscovery")).cloned().unwrap_or(Value::Null));
-    serde_json::from_value(Value::Object(fields)).map_err(|error| error.to_string())
+    operit_util::SerializationSetup::fromJsonValue(Value::Object(fields)).map_err(|error| error.to_string())
 }
 
 fn validateCredential(version: u32, secret: &str) -> Result<(), String> {

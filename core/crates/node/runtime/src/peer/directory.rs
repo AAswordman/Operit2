@@ -242,7 +242,7 @@ impl HostRuntimePeerService {
                 match (HostRuntimePeerService { state }).directoryRequest(request).await {
                     Ok(reply) => reply,
                     Err(failure) => {
-                        operit_util::AppLogger::AppLogger::w(
+                        operit_util::app_log!(w,
                             "RuntimePeerService",
                             &format!("Directory request failed: {failure}"),
                         );
@@ -267,7 +267,7 @@ impl HostRuntimePeerService {
                             )
                             .await
                         {
-                            operit_util::AppLogger::AppLogger::w(
+                            operit_util::app_log!(w,
                                 "RuntimePeerService",
                                 &format!("Directory listener stopped: {failure}"),
                             );

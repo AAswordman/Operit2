@@ -84,7 +84,7 @@ impl HostRuntimePeerService {
                             None => None,
                         };
                         if let Some(failure) = failure {
-                            operit_util::AppLogger::AppLogger::w("RuntimePeerService", &format!(
+                            operit_util::app_log!(w, "RuntimePeerService", &format!(
                                 "Background LAN discovery refresh failed: {failure}"));
                         }
                     }
@@ -98,7 +98,7 @@ impl HostRuntimePeerService {
                                 if let Some(state) = state.upgrade() {
                                     HostRuntimePeerService { state }.refreshPeerAvailability(&node);
                                 }
-                                operit_util::AppLogger::AppLogger::v_with_level("RuntimePeerService", &format!("Peer connection attempt failed peer={node} error={error}"), operit_util::AppLogger::VERBOSE_LEVEL_3);
+                                operit_util::app_log!(v_with_level, "RuntimePeerService", &format!("Peer connection attempt failed peer={node} error={error}"), operit_util::AppLogger::VERBOSE_LEVEL_3);
                             }
                         }
                     }
@@ -109,7 +109,7 @@ impl HostRuntimePeerService {
                         let peers = match service.pairedPeers() {
                             Ok(peers) => peers,
                             Err(error) => {
-                                operit_util::AppLogger::AppLogger::w("RuntimePeerService", &error.to_string());
+                                operit_util::app_log!(w, "RuntimePeerService", &error.to_string());
                                 continue;
                             }
                         };
