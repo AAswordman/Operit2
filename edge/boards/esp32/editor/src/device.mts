@@ -36,7 +36,7 @@ export async function deviceMain(args: string[]): Promise<void> {
     else throw new Error(`未知参数 ${flag}`);
   }
   if (action === 'help' || enabled.has('--help')) {
-    console.log('npm run dev        构建 → 更新固件 → 串口日志\nnpm run flash      更新已有固件，保留 Wi-Fi/配对/空间/布局\nnpm run flash:fresh 清空设备后安装（需确认，配对身份也会删除）\nnpm run dev:fresh   重新构建 → 清空安装 → 串口日志（需确认）\nnpm run monitor    串口日志（不主动重启）\nnpm run ports      查看串口\nnpm run device:setup -- --emsdk <路径> [--port COMxx]\n真机读屏：npm run device:screen -- --port COMxx\n真机对象树：npm run device:tree -- --port COMxx\n真机内存：npm run device:health -- --port COMxx\n真机点击：npm run device:tap -- --port COMxx --id <屏幕节点ID>\n自绘 UI：npm run dev（唯一渲染后端）\nSDK 配置：npm run device:setup -- --idf <ESP-IDF目录>\n追加参数：--port COMxx / --dry-run（仅 flash）/ --no-monitor（仅 dev）/ --remote-display（dev 或 flash）');
+    console.log('npm run dev        构建 → 更新固件 → 串口日志\nnpm run flash      更新已有固件，保留 Wi-Fi/配对/空间/布局\nnpm run flash:fresh 清空设备后安装（需确认，配对身份也会删除）\nnpm run dev:fresh   重新构建 → 清空安装 → 串口日志（需确认）\nnpm run monitor    串口日志（不主动重启）\nnpm run ports      查看串口\nnpm run device:setup -- --emsdk <路径> [--port COMxx]\n真机读屏：npm run device:screen -- --port COMxx\n真机对象树：npm run device:tree -- --port COMxx\n真机内存：npm run device:health -- --port COMxx\n真机点击：npm run device:tap -- --port COMxx --id <屏幕节点ID>\n自绘 UI：npm run dev（唯一渲染后端）\nSDK 配置：npm run device:setup -- --idf <ESP-IDF目录>\n追加参数：--port COMxx / --dry-run（仅 flash）/ --no-monitor（仅 dev）');
     return;
   }
   if (!['setup', 'ports', 'flash', 'monitor', 'dev', 'screen', 'tree', 'tap', 'swipe', 'health', 'draft'].includes(action)) throw new Error(`未知命令 ${action}`);
