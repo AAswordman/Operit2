@@ -134,6 +134,10 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
   int _inputMenuContextGeneration = 0;
   OverlayEntry? _attachmentPopupEntry;
   final GlobalKey _modelPopupWidgetKey = GlobalKey();
+  final GlobalKey<InputMenuPopupTransitionState> _inputMenuTransitionKey =
+      GlobalKey<InputMenuPopupTransitionState>();
+  int _inputMenuOverlayGeneration = 0;
+  bool _inputMenuClosing = false;
   StreamSubscription<
     Map<core_proxy.FunctionType, core_proxy.FunctionModelBinding>
   >?
@@ -232,8 +236,17 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
       _dismissModelSettingsPopup();
       _dismissAttachmentPopup();
       _showInputMenuPopup();
+      if (mounted) {
+        setState(() {});
+      }
+    } else if (_inputMenuClosing) {
+      _inputMenuClosing = false;
+      _inputMenuTransitionKey.currentState?.cancelDismiss();
+      if (mounted) {
+        setState(() {});
+      }
     } else {
-      _dismissInputMenuPopup();
+      _dismissInputMenuPopupAnimated();
     }
   }
 
@@ -299,6 +312,8 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     final viewModel = widget.viewModel;
     final chatId = widget.currentChatId;
     final generation = ++_inputMenuContextGeneration;
+    ++_inputMenuOverlayGeneration;
+    _inputMenuClosing = false;
 
     /// Keeps detached presentations owned by this exact live composer context.
     bool isChatContextCurrent() =>
@@ -312,14 +327,15 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
           context,
           targetKey: _inputMenuPopupTargetKey,
           alignEnd: true,
-          maxWidth: 300,
+          maxWidth: 280,
+          maxAllowedHeight: 380,
         );
         return Stack(
           children: <Widget>[
             Positioned.fill(
               child: Listener(
                 behavior: HitTestBehavior.opaque,
-                onPointerDown: (_) => _dismissInputMenuPopup(),
+                onPointerDown: (_) => _dismissInputMenuPopupAnimated(),
                 child: const SizedBox.expand(),
               ),
             ),
@@ -330,14 +346,18 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () {},
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(maxHeight: placement.maxHeight),
-                  child: AgentInputMenuPopup(
-                    viewModel: viewModel,
-                    currentChatId: chatId,
-                    onDismiss: _dismissInputMenuPopup,
-                    isChatContextCurrent: isChatContextCurrent,
-                    showNativeStatistics: false,
+                child: InputMenuPopupTransition(
+                  key: _inputMenuTransitionKey,
+                  alignment: Alignment.bottomRight,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: placement.maxHeight),
+                    child: AgentInputMenuPopup(
+                      viewModel: viewModel,
+                      currentChatId: chatId,
+                      onDismiss: _dismissInputMenuPopup,
+                      isChatContextCurrent: isChatContextCurrent,
+                      showNativeStatistics: false,
+                    ),
                   ),
                 ),
               ),
@@ -544,6 +564,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     required GlobalKey targetKey,
     required bool alignEnd,
     required double maxWidth,
+    double maxAllowedHeight = 420.0,
   }) {
     final mediaQuery = MediaQuery.of(context);
     final overlaySize = overlaySizeOf(context);
@@ -561,7 +582,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     final bottom = overlaySize.height - targetTop + 8;
     final maxHeight = (targetTop - mediaQuery.padding.top - 20).clamp(
       96.0,
-      420.0,
+      maxAllowedHeight,
     );
     return _PopupPlacement(
       left: left,
@@ -589,10 +610,47 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     }
   }
 
+  /// Plays the reverse exit transition before removing the input menu overlay.
+  void _dismissInputMenuPopupAnimated() {
+    if (_inputMenuPopupEntry == null || _inputMenuClosing) {
+      return;
+    }
+    final generation = _inputMenuOverlayGeneration;
+    _inputMenuClosing = true;
+    if (mounted) {
+      setState(() {});
+    }
+    final transition = _inputMenuTransitionKey.currentState;
+    if (transition == null) {
+      _removeInputMenuPopupImmediately();
+      return;
+    }
+    unawaited(
+      transition.dismiss().whenComplete(() {
+        if (!mounted ||
+            generation != _inputMenuOverlayGeneration ||
+            !_inputMenuClosing) {
+          return;
+        }
+        _removeInputMenuPopupImmediately();
+      }),
+    );
+  }
+
   /// Removes only the input menu overlay, preserving its pending result handler.
   void _dismissInputMenuPopup() {
+    _removeInputMenuPopupImmediately();
+  }
+
+  void _removeInputMenuPopupImmediately({bool notify = true}) {
+    final wasOpen = _inputMenuPopupEntry != null;
+    _inputMenuOverlayGeneration++;
+    _inputMenuClosing = false;
     _inputMenuPopupEntry?.remove();
     _inputMenuPopupEntry = null;
+    if (notify && wasOpen && mounted) {
+      setState(() {});
+    }
   }
 
   void _dismissAttachmentPopup() {
@@ -613,7 +671,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     PluginHotReload.revision.removeListener(_requestModelRefresh);
     _modelLabelGeneration++;
     _dismissModelSettingsPopup();
-    _dismissInputMenuPopup();
+    _removeInputMenuPopupImmediately(notify: false);
     _dismissAttachmentPopup();
     super.dispose();
   }
@@ -686,6 +744,8 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                     modelProviderTypeId: _modelProviderTypeId,
                     modelProviderName: _modelProviderName,
                     modelSelectorOpen: _modelPopupEntry != null,
+                    inputMenuOpen:
+                        _inputMenuPopupEntry != null && !_inputMenuClosing,
                     modelSelectorLink: _modelPopupLink,
                     modelSelectorKey: _modelPopupTargetKey,
                     settingsLink: _inputMenuPopupLink,
@@ -773,6 +833,7 @@ class _InputBody extends StatelessWidget {
     required this.modelProviderTypeId,
     required this.modelProviderName,
     required this.modelSelectorOpen,
+    required this.inputMenuOpen,
     required this.modelSelectorLink,
     required this.modelSelectorKey,
     required this.settingsLink,
@@ -815,6 +876,7 @@ class _InputBody extends StatelessWidget {
   final String modelProviderName;
 
   final bool modelSelectorOpen;
+  final bool inputMenuOpen;
   final LayerLink modelSelectorLink;
   final GlobalKey modelSelectorKey;
   final LayerLink settingsLink;
@@ -926,18 +988,36 @@ class _InputBody extends StatelessWidget {
       settings: CompositedTransformTarget(
         key: settingsKey,
         link: settingsLink,
-        child: _IconTapTarget(
-          icon: Icons.tune_outlined,
-          color: colorScheme.onSurfaceVariant,
-          onTap: onSettings,
-          imageAsset: OperitTheme.of(
-            context,
-          ).themePreferenceSnapshot.inputSettingsAsset,
-          imageSize: OperitTheme.of(
-            context,
-          ).themePreferenceSnapshot.inputSettingsAssetSize,
-          targetSize: 34,
-          tooltip: l10n.settings,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            color: inputMenuOpen
+                ? colorScheme.primary.withValues(alpha: 0.14)
+                : Colors.transparent,
+            shape: BoxShape.circle,
+          ),
+          child: _IconTapTarget(
+            icon: Icons.tune_outlined,
+            iconWidget: InputMenuTuneSvgIcon(
+              size: 18,
+              color: inputMenuOpen
+                  ? colorScheme.primary
+                  : colorScheme.onSurfaceVariant,
+            ),
+            color: inputMenuOpen
+                ? colorScheme.primary
+                : colorScheme.onSurfaceVariant,
+            onTap: onSettings,
+            imageAsset: OperitTheme.of(
+              context,
+            ).themePreferenceSnapshot.inputSettingsAsset,
+            imageSize: OperitTheme.of(
+              context,
+            ).themePreferenceSnapshot.inputSettingsAssetSize,
+            targetSize: 34,
+            tooltip: l10n.settings,
+          ),
         ),
       ),
       attachment: KeyedSubtree(
@@ -1653,6 +1733,7 @@ class _IconTapTarget extends StatelessWidget {
     required this.color,
     required this.onTap,
     required this.tooltip,
+    this.iconWidget,
     this.imageAsset,
     this.imageSize,
     this.size = 20,
@@ -1663,6 +1744,7 @@ class _IconTapTarget extends StatelessWidget {
   final Color color;
   final VoidCallback? onTap;
   final String tooltip;
+  final Widget? iconWidget;
   final String? imageAsset;
   final double? imageSize;
   final double size;
@@ -1675,6 +1757,7 @@ class _IconTapTarget extends StatelessWidget {
       color: color,
       onTap: onTap,
       tooltip: tooltip,
+      iconWidget: iconWidget,
       imageAsset: imageAsset,
       imageSize: imageSize,
       size: size,

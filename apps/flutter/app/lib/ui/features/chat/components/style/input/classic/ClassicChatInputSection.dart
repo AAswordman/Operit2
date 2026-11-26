@@ -118,7 +118,11 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
   final GlobalKey _inputMenuPopupTargetKey = GlobalKey();
   final GlobalKey _attachmentPopupTargetKey = GlobalKey();
   OverlayEntry? _inputMenuPopupEntry;
+  final GlobalKey<InputMenuPopupTransitionState> _inputMenuTransitionKey =
+      GlobalKey<InputMenuPopupTransitionState>();
   int _inputMenuContextGeneration = 0;
+  int _inputMenuOverlayGeneration = 0;
+  bool _inputMenuClosing = false;
   OverlayEntry? _attachmentPopupEntry;
   bool _draggingFiles = false;
   bool _inputExpanded = false;
@@ -185,8 +189,17 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     if (_inputMenuPopupEntry == null) {
       _dismissAttachmentPopup();
       _showInputMenuPopup();
+      if (mounted) {
+        setState(() {});
+      }
+    } else if (_inputMenuClosing) {
+      _inputMenuClosing = false;
+      _inputMenuTransitionKey.currentState?.cancelDismiss();
+      if (mounted) {
+        setState(() {});
+      }
     } else {
-      _dismissInputMenuPopup();
+      _dismissInputMenuPopupAnimated();
     }
   }
 
@@ -206,6 +219,8 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     final viewModel = widget.viewModel;
     final chatId = widget.currentChatId;
     final generation = ++_inputMenuContextGeneration;
+    ++_inputMenuOverlayGeneration;
+    _inputMenuClosing = false;
 
     /// Keeps detached presentations owned by this exact live composer context.
     bool isChatContextCurrent() =>
@@ -219,28 +234,33 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
           context,
           targetKey: _inputMenuPopupTargetKey,
           alignEnd: false,
-          maxWidth: 300,
+          maxWidth: 280,
+          maxAllowedHeight: 380,
         );
         return _ClassicPopupShell(
           left: placement.left,
           bottom: placement.bottom,
           width: placement.width,
           maxHeight: placement.maxHeight,
-          onDismiss: _dismissInputMenuPopup,
-          child: AgentInputMenuPopup(
-            viewModel: viewModel,
-            currentChatId: chatId,
-            onDismiss: _dismissInputMenuPopup,
-            isChatContextCurrent: isChatContextCurrent,
-            showNativeStatistics: false,
-            leadingChildren: <Widget>[
-              AgentModelMenuSection(
-                viewModel: viewModel,
-                currentChatId: chatId,
-                onDismiss: _dismissInputMenuPopup,
-              ),
-              const Divider(height: 1),
-            ],
+          onDismiss: _dismissInputMenuPopupAnimated,
+          child: InputMenuPopupTransition(
+            key: _inputMenuTransitionKey,
+            alignment: Alignment.bottomLeft,
+            child: AgentInputMenuPopup(
+              viewModel: viewModel,
+              currentChatId: chatId,
+              onDismiss: _dismissInputMenuPopup,
+              isChatContextCurrent: isChatContextCurrent,
+              showNativeStatistics: false,
+              leadingChildren: <Widget>[
+                AgentModelMenuSection(
+                  viewModel: viewModel,
+                  currentChatId: chatId,
+                  onDismiss: _dismissInputMenuPopup,
+                ),
+                const Divider(height: 1),
+              ],
+            ),
           ),
         );
       },
@@ -294,6 +314,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     required GlobalKey targetKey,
     required bool alignEnd,
     required double maxWidth,
+    double maxAllowedHeight = 420.0,
   }) {
     final mediaQuery = MediaQuery.of(context);
     final overlaySize = overlaySizeOf(context);
@@ -308,7 +329,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     final bottom = overlaySize.height - targetRect.top + 8;
     final maxHeight = (targetRect.top - mediaQuery.padding.top - 20).clamp(
       96.0,
-      420.0,
+      maxAllowedHeight,
     );
     return _ClassicPopupPlacement(
       left: left,
@@ -365,10 +386,47 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     widget.onAttachPackage?.call(packageName);
   }
 
+  /// Plays the reverse exit transition before removing the input settings popup.
+  void _dismissInputMenuPopupAnimated() {
+    if (_inputMenuPopupEntry == null || _inputMenuClosing) {
+      return;
+    }
+    final generation = _inputMenuOverlayGeneration;
+    _inputMenuClosing = true;
+    if (mounted) {
+      setState(() {});
+    }
+    final transition = _inputMenuTransitionKey.currentState;
+    if (transition == null) {
+      _removeInputMenuPopupImmediately();
+      return;
+    }
+    unawaited(
+      transition.dismiss().whenComplete(() {
+        if (!mounted ||
+            generation != _inputMenuOverlayGeneration ||
+            !_inputMenuClosing) {
+          return;
+        }
+        _removeInputMenuPopupImmediately();
+      }),
+    );
+  }
+
   /// Removes the input settings popup.
   void _dismissInputMenuPopup() {
+    _removeInputMenuPopupImmediately();
+  }
+
+  void _removeInputMenuPopupImmediately({bool notify = true}) {
+    final wasOpen = _inputMenuPopupEntry != null;
+    _inputMenuOverlayGeneration++;
+    _inputMenuClosing = false;
     _inputMenuPopupEntry?.remove();
     _inputMenuPopupEntry = null;
+    if (notify && wasOpen && mounted) {
+      setState(() {});
+    }
   }
 
   /// Removes the attachment popup.
@@ -383,7 +441,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     _inputMenuContextGeneration++;
     WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_handleInputChanged);
-    _dismissInputMenuPopup();
+    _removeInputMenuPopupImmediately(notify: false);
     _dismissAttachmentPopup();
     super.dispose();
   }
@@ -457,6 +515,8 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
                         focusNode: widget.focusNode,
                         inputState: widget.inputState,
                         settingsKey: _inputMenuPopupTargetKey,
+                        inputMenuOpen:
+                            _inputMenuPopupEntry != null && !_inputMenuClosing,
                         attachmentKey: _attachmentPopupTargetKey,
                         processing: processing,
                         hasDraftText: hasDraftText,
@@ -501,6 +561,7 @@ class _ClassicInputBody extends StatelessWidget {
     required this.focusNode,
     required this.inputState,
     required this.settingsKey,
+    required this.inputMenuOpen,
     required this.attachmentKey,
     required this.processing,
     required this.hasDraftText,
@@ -531,6 +592,7 @@ class _ClassicInputBody extends StatelessWidget {
   final FocusNode focusNode;
   final core_proxy.InputProcessingState inputState;
   final GlobalKey settingsKey;
+  final bool inputMenuOpen;
   final GlobalKey attachmentKey;
   final bool processing;
   final bool hasDraftText;
@@ -596,19 +658,37 @@ class _ClassicInputBody extends StatelessWidget {
             ).themePreferenceSnapshot.transparentSurfaceEnabled,
             settings: KeyedSubtree(
               key: settingsKey,
-              child: _ClassicIconTapTarget(
-                icon: Icons.tune_outlined,
-                color: colorScheme.onSurfaceVariant,
-                onTap: onSettings,
-                imageAsset: OperitTheme.of(
-                  context,
-                ).themePreferenceSnapshot.inputSettingsAsset,
-                imageSize: OperitTheme.of(
-                  context,
-                ).themePreferenceSnapshot.inputSettingsAssetSize,
-                size: 18,
-                targetSize: 34,
-                tooltip: l10n.settings,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                decoration: BoxDecoration(
+                  color: inputMenuOpen
+                      ? colorScheme.primary.withValues(alpha: 0.14)
+                      : Colors.transparent,
+                  shape: BoxShape.circle,
+                ),
+                child: _ClassicIconTapTarget(
+                  icon: Icons.tune_outlined,
+                  iconWidget: InputMenuTuneSvgIcon(
+                    size: 17,
+                    color: inputMenuOpen
+                        ? colorScheme.primary
+                        : colorScheme.onSurfaceVariant,
+                  ),
+                  color: inputMenuOpen
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                  onTap: onSettings,
+                  imageAsset: OperitTheme.of(
+                    context,
+                  ).themePreferenceSnapshot.inputSettingsAsset,
+                  imageSize: OperitTheme.of(
+                    context,
+                  ).themePreferenceSnapshot.inputSettingsAssetSize,
+                  size: 18,
+                  targetSize: 34,
+                  tooltip: l10n.settings,
+                ),
               ),
             ),
             contentInsertionConfiguration:
@@ -1223,6 +1303,7 @@ class _ClassicIconTapTarget extends StatelessWidget {
     required this.color,
     required this.onTap,
     required this.tooltip,
+    this.iconWidget,
     this.imageAsset,
     this.imageSize,
     this.size = 20,
@@ -1233,6 +1314,7 @@ class _ClassicIconTapTarget extends StatelessWidget {
   final Color color;
   final VoidCallback? onTap;
   final String tooltip;
+  final Widget? iconWidget;
   final String? imageAsset;
   final double? imageSize;
   final double size;
@@ -1246,6 +1328,7 @@ class _ClassicIconTapTarget extends StatelessWidget {
       color: color,
       onTap: onTap,
       tooltip: tooltip,
+      iconWidget: iconWidget,
       imageAsset: imageAsset,
       imageSize: imageSize,
       size: size,
