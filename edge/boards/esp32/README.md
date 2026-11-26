@@ -392,27 +392,43 @@ an independent model request. The connection indicator reads the shared Space
 connection directly. Local settings, pairing and Space consent remain available;
 chat browsing, plugin browsing, new-conversation and audio controls are hidden.
 
-The checked remote display image is **3,602,160 bytes**, **90.11%** of the original
-3,997,552-byte task-cat image. It leaves **395,536 bytes** in the unchanged
-application partition and saves **395,392 bytes (9.89%)** against that original.
-Compared with the previously optimized complete image, it saves **314,576 bytes**.
-It has **not** reached the accepted approximate 30% target (about 1,199,266 bytes).
-The result shows that removing device applications alone is insufficient; shared
-node/Space persistence, protocol processing and the native networking build still
-contribute substantial code. The protocol and stored formats are unchanged.
+The checked remote display image is **3,496,112 bytes**, **87.46%** of the original
+3,997,552-byte task-cat image. It leaves **501,584 bytes** in the unchanged
+application partition and saves **501,440 bytes (12.54%)** against that original.
+The preceding remote build was 3,602,160 bytes; carrier selection saves another
+**106,048 bytes**. It has **not** reached the accepted approximate 30% target
+(about 1,199,266 bytes). Shared node/Space persistence, protocol processing and
+native networking still contribute substantial code. These measurements do not
+establish a minimum size.
 
-Both application compositions passed actual Xtensa release compilation, ABI
-inspection and image capacity checks. The current default complete build is
-3,919,136 bytes; profile selection adds 2,400 bytes relative to the earlier
-3,916,736-byte build above. On COM5, the remote package booted with Wi-Fi connected
-and saved pairing present. NVS usage remained 335 entries. Twenty consecutive
-health requests showed increasing uptime with no session/allocation diagnostic;
-the last sample had 71,076 free heap bytes and a 65,536-byte largest block.
-The physical screen hid chat/plugin browsing and audio controls and retained
-connection/settings navigation. All 122 editor tests and the TypeScript check
-passed, along with three real-TCP pairing/admission regressions and the three
-production package parser tests. This run did not verify a live Core reconnection,
-new physical pairing/admission, or end-to-end task-cat rendering.
+The board composes `StreamHostPeerLink` through `runtime_profile.rs`, shared with
+the simulator. It reuses the existing TCP and UART framing and supplies the
+existing authenticated runtime through `newEndpointWithLink`. TCP binds a
+dedicated socket; unused HTTP, WebSocket and Bluetooth Link implementations can
+be discarded. The full `HostPeerLink` remains the default for other products.
+Discovery filters candidates by the selected carrier before ranking them, so a
+mixed Core advertisement can select TCP. The local Wi-Fi setup HTTP server is
+retained. Pairing, session encryption, Space authority and stored formats are
+unchanged; board frame limits still belong to the board configuration.
+
+Both compositions passed actual Xtensa release compilation, ABI inspection and
+image capacity checks. The current default complete build is **3,814,160 bytes**,
+compared with 3,919,136 bytes before carrier selection. COM5 is running the new
+remote package, with Wi-Fi connected and saved pairing present. NVS usage remained
+335 entries. Twenty consecutive health requests reported no session/allocation
+diagnostic; the last sample had 74,144 free heap bytes, a 69,632-byte largest block
+and a 6,636-byte main-task stack high-water mark. The screen remains on Connection.
+No live Core was connected, so physical Core reconnection, new pairing/admission
+and end-to-end task-cat rendering remain unverified.
+
+Validation: all 73 transport tests, 164 shared runtime tests (serial execution),
+122 editor tests, the TypeScript check, and three real-TCP pairing/admission
+regressions passed, as did all three production parser tests for 59 plugin
+artifacts. The TCP fixtures exercise the same carrier composition against the
+full Core, including two saved Core pairings across restart and one admitted
+Space. Four runtime tests failed under parallel execution while firmware
+compilation was active, with operation timeouts and directory/discovery assertions;
+the complete suite passed with `--test-threads=1`.
 
 Check or package this composition without Emscripten:
 

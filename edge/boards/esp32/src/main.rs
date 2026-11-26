@@ -280,11 +280,11 @@ fn runFirmware(
     let injectedServices = nodeServices;
     let peerService = match injectedServices.as_ref() {
         Some(services) => services.peers(),
-        None => operit_edge_sdk::device::peer::createEndpointPeerService(
+        None => runtime_profile::create_peer_service(
             Arc::new(hostManager.clone()),
             &edgeRouter,
             deviceInfo.clone(),
-                runtime_profile::peer_limits(),
+            runtime_profile::peer_limits(),
         )
         .map_err(HostError::new)?,
     };

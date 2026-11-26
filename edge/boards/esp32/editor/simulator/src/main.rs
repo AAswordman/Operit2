@@ -199,7 +199,7 @@ fn initialize(
         ))
         .withStreamHandlers(speechOutput, speechInput);
     let services = {
-        let peers = operit_edge_sdk::device::peer::createEndpointPeerService(
+        let peers = runtime_profile::create_peer_service(
             Arc::new(hostManager.clone()),
             &edgeRouter,
             deviceInfo.clone(),

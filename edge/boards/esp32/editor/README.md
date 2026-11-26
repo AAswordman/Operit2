@@ -267,6 +267,10 @@ GPIO26 DAC 喇叭适配，详见[原生音频接线与自检](../README.md#nativ
 
 ## Core 驱动的远程显示固件
 
+真机和模拟器通过板卡 `runtime_profile.rs` 装配 TCP／串口 Link，复用共享
+framing、配对与 Space 权限。TCP 使用独立监听端口；HTTP／WebSocket／蓝牙
+Link 承载不进入 ESP32 镜像，Wi-Fi 配网网页仍由板卡 Host 提供。
+
 `--remote-display` 组合省去设备侧聊天和音频应用，保留现有配对、Space 授权、
 Wi-Fi 配置、设备偏好和通用 `edge.scene` 渲染。任务猫 ToolPkg 在 Core 上运行。
 固件单独打包，编辑器的完整应用预览和桌面运行时继续使用默认组合。

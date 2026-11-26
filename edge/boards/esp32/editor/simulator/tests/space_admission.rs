@@ -229,7 +229,9 @@ fn node_from_storage(
         hostRuntimeTaskSchedulerHost: Some(Arc::new(NativeHostRuntimeTaskSchedulerHost)),
         ..HostManager::default()
     });
-    let peer = operit_edge_sdk::device::peer::createPeerService(
+    let create = if bounded { runtime_profile::create_peer_service }
+        else { operit_edge_sdk::device::peer::createPeerService };
+    let peer = create(
         host.clone(),
         &router,
         operit_link::protocol::LinkDeviceInfo {
@@ -1096,7 +1098,7 @@ mod core_edge {
             traffic: Mutex::default(),
         });
         let host = host(storage.clone());
-        let peers = operit_edge_sdk::device::peer::createPeerService(
+        let peers = runtime_profile::create_peer_service(
             host.clone(),
             &router,
             operit_link::protocol::LinkDeviceInfo {

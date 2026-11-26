@@ -96,6 +96,11 @@ Edge 可以保存身份、密钥、配对、必要的成员/权限/审批状态�
 时返回明确错误。拥有通用通道不表示设备支持任何 Core 工具或任意宿主函数。
 
 - Host 实现平台 I/O、存储、HTTP、显示和调度；共享 Peer runtime 管理认证与连接。
+- 产品装配可向共享 Peer runtime 注入 `PeerLink`，选择本机实际提供的承载。
+  默认 `HostPeerLink` 保留全部承载；`StreamHostPeerLink` 复用同一 TCP／串口
+  framing，TCP 使用独立监听端口。ESP32 与模拟器通过板卡 `runtime_profile.rs`
+  选择后者，从二进制中省去未安装的 HTTP／WebSocket／蓝牙 Link 实现。能力声明
+  使用所选 Link 和实际 Host 的交集，产品负责让物理帧上限与 runtime 配置一致。
 - Edge Services 和固件拥有设备行为；`EdgePeerRouter` 接入共享 runtime，处理本机
   Target 请求及规定的空间控制入口，不承担完整 Core 的 Binding 分派。
 - `operit-edge-contract` 只共享地址和 DTO；`operit-proxy-edge` 封装类型化调用。

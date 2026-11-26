@@ -17,6 +17,19 @@ pub fn peer_limits() -> PeerRuntimeLimits {
     }
 }
 
+/// Compose the board's existing authenticated runtime with its TCP/UART carriers.
+pub fn create_peer_service<R: operit_edge_sdk::runtime::PeerRouter::PeerRouter + 'static>(
+    host: std::sync::Arc<operit_host_api::HostManager::HostManager>,
+    router: &std::sync::Arc<R>,
+    info: operit_link::protocol::LinkDeviceInfo,
+    limits: PeerRuntimeLimits,
+) -> Result<std::sync::Arc<operit_edge_sdk::runtime::HostRuntimePeerService::HostRuntimePeerService>, String> {
+    let link = std::sync::Arc::new(operit_peer_link::StreamHostPeerLink::withMaxMessageBytes(limits.maxFrameBytes)?);
+    operit_edge_sdk::runtime::HostRuntimePeerService::HostRuntimePeerService::newEndpointWithLink(
+        host, router, info, limits, link,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
