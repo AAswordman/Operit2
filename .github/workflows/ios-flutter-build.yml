@@ -37,7 +37,7 @@ jobs:
   build-ios:
     needs: build-arm64-rootfs
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 300
     env:
       RUSTFLAGS: -Awarnings
       RUST_TOOLCHAIN_VERSION: 1.95.0
