@@ -392,12 +392,13 @@ an independent model request. The connection indicator reads the shared Space
 connection directly. Local settings, pairing and Space consent remain available;
 chat browsing, plugin browsing, new-conversation and audio controls are hidden.
 
-The checked remote display image is **3,453,072 bytes**, **86.38%** of the original
-3,997,552-byte task-cat image. It leaves **544,624 bytes** in the unchanged
-application partition and saves **544,480 bytes (13.62%)** against that original.
-Carrier selection reduced the preceding 3,602,160-byte build by 106,048 bytes;
-sharing typed node-record decoders saves another **43,040 bytes**. It has **not**
-reached the accepted approximate 30% target
+The checked remote display image is **3,349,184 bytes**, **83.78%** of the original
+3,997,552-byte task-cat image. It leaves **648,512 bytes** in the unchanged
+application partition and saves **648,368 bytes (16.22%)** against that original.
+Carrier selection saved 106,048 bytes, typed node-record decoder sharing saved
+43,040 bytes, and shared MessagePack token/text reads save another **103,888 bytes**
+against the preceding 3,453,072-byte build. It has **not** reached the accepted
+approximate 30% target
 (about 1,199,266 bytes). Shared node/Space persistence, protocol processing and
 native networking still contribute substantial code. These measurements do not
 establish a minimum size.
@@ -420,12 +421,12 @@ decoder instantiations; constrained current-schema reads retain their direct byt
 path. Schema migration, transaction boundaries and durable formats are unchanged.
 
 Both compositions passed actual Xtensa release compilation, ABI inspection and
-image capacity checks. The current default complete build is **3,771,184 bytes**,
-compared with 3,814,160 bytes before decoder sharing. COM5 is running the new
+image capacity checks. The current default complete build is **3,666,816 bytes**,
+compared with 3,771,184 bytes before token/text read sharing. COM5 is running the new
 remote package, with Wi-Fi connected and saved pairing present. NVS usage was
-stable at 336 entries across twenty health requests (335 before this update).
+stable at 335 entries across twenty health requests (336 before this update).
 Those requests reported no session/allocation diagnostic; the last sample had
-74,088 free heap bytes, a 65,536-byte largest block and a 6,348-byte main-task
+74,152 free heap bytes, a 65,536-byte largest block and a 6,636-byte main-task
 stack high-water mark. The screen remains on Connection.
 No live Core was connected, so physical Core reconnection, new pairing/admission
 and end-to-end task-cat rendering remain unverified.
@@ -436,9 +437,13 @@ regressions passed, as did all three production parser tests for 59 plugin
 artifacts. The store suite passed 373 tests with its three existing stress cases
 ignored, including a new cache/constrained regression for migration, cached edits,
 numeric map keys, large integers, Unicode and selective reads. All 46 tests in
-the TCP/Space fixture now pass. They exercise the same carrier composition against
-the full Core, including two saved Core pairings across restart and one admitted
-Space. Four runtime tests failed under parallel execution while firmware
+the TCP/Space fixture pass with the ESP32 MessagePack overlay explicitly selected
+for both Core and Edge; the temporary Cargo lockfile change was restored afterward.
+They exercise the same carrier composition against the full Core, including two
+saved Core pairings across restart and one admitted Space. The pinned MessagePack
+library/four decoder/encoder targets pass 121 tests with one existing ignored
+case. Five additional comparison tests pass against the unmodified registry
+version; 59 plugin artifacts and all three production parser tests were rechecked. Four runtime tests failed under parallel execution while firmware
 compilation was active, with operation timeouts and directory/discovery assertions;
 the complete suite passed with `--test-threads=1`.
 
@@ -720,10 +725,22 @@ must be reviewed when updating the pinned versions or compiler. Desktop
 builds do not use them.
 
 The MessagePack overlay shares the sequence visitor between arrays and binary
-byte sequences and keeps the common marker dispatcher out of line. This avoids duplicate recursive decoder instantiations per
-message type under LTO. It retains the upstream markers, depth limits, exact u8
-visitor behavior and array consumption checks. Its pinned decoder/encoder tests
-and the shared Link integration tests must pass when updating the overlay.
+byte sequences, and keeps the common dispatcher out of line. Marker, length,
+number and UTF-8 reads are shared independently of each message's Serde visitor.
+The numeric token retains each upstream integer width and float precision; text
+retains borrowed/copied buffers and invalid UTF-8 byte fallback. This avoids
+repeating wire parsing for each message type under LTO. It retains the upstream
+markers, depth limits and array consumption checks.
+
+The comparison fixture loads the prepared decoder and the unmodified 1.3.1
+registry decoder in the same process. Five tests compare all 256 markers with
+truncated payloads, deterministic malformed inputs, depth limits, numeric visitor
+methods, extension data, structured values and borrowed buffers. Stream results
+include error variants and consumed byte positions. Run `npm run test:msgpack`
+in the editor directory after selecting an installed desktop Rust toolchain.
+The pinned library/four decoder/encoder targets and shared Link integration tests
+must also pass when updating the overlay. The upstream `round` target references
+an undeclared `rmpv` dependency in the published archive and is excluded.
 
 The firmware release uses Fat LTO and size optimization across its Rust packages
 to fit the existing 4 MB board and application partition. ESP32 console timestamps use direct UTC clock fields;
