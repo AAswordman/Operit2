@@ -161,9 +161,9 @@ impl ModelSpecResolver {
     /// Sets addition-time defaults from the context window and known tool capabilities.
     pub(crate) fn initializeNewModel(&self, model: &mut ModelProfile) {
         let inherited = self.inherited(model);
-        let context = inherited.effectiveContext().maxContextLength;
-        model.summary.summaryTokenThreshold = if context > 300.0 {
-            (30_000.0 / context).floor() / 100.0
+        let contextKiloTokens = inherited.effectiveContext().kilo_tokens();
+        model.summary.summaryTokenThreshold = if contextKiloTokens > 300.0 {
+            ((30_000.0 / contextKiloTokens).floor() / 100.0) as f32
         } else {
             ModelConfigDefaults::DEFAULT_SUMMARY_TOKEN_THRESHOLD
         };
@@ -343,7 +343,7 @@ impl ModelSpecResolver {
         context: ModelContextSpec,
     ) -> Option<ModelContextSpec> {
         let inheritedContext = inherited.effectiveContext();
-        (context.maxContextLength.round() != inheritedContext.maxContextLength.round())
+        (context.kilo_tokens().round() != inheritedContext.kilo_tokens().round())
             .then_some(context)
     }
 

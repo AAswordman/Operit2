@@ -391,7 +391,7 @@ impl ConfigUi {
                     }
                     line1.push(Span::raw("  "));
                     line1.push(Span::styled(
-                        format!("{}k", summary.context.maxContextLength.round()),
+                        format!("{}k", summary.context.kilo_tokens().round()),
                         Style::default().fg(theme::TEXT_SUBTLE),
                     ));
                 }
