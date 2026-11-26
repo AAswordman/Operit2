@@ -19,7 +19,7 @@ use std::sync::{Arc, OnceLock};
 /// supplies local device-service execution. It has no second pairing protocol.
 pub struct EdgePeerRouter {
     nodeId: String,
-    node: OnceLock<Arc<EdgeNode>>,
+    node: OnceLock<Arc<dyn CoreLinkSharedClient + Send + Sync>>,
     space: OnceLock<Arc<NodeSpaceService>>,
 }
 impl EdgePeerRouter {
@@ -31,6 +31,11 @@ impl EdgePeerRouter {
         })
     }
     pub fn install(&self, node: Arc<EdgeNode>) -> Result<(), String> {
+        self.installClient(node)
+    }
+    /// Installs the product's local Link services behind the same authorization router.
+    /// A renderer can supply native services without constructing unused GPIO services.
+    pub fn installClient(&self, node: Arc<dyn CoreLinkSharedClient + Send + Sync>) -> Result<(), String> {
         self.node
             .set(node)
             .map_err(|_| "Edge node already installed".into())
@@ -40,7 +45,7 @@ impl EdgePeerRouter {
             .set(space)
             .map_err(|_| "Edge Space services already installed".into())
     }
-    fn node(&self) -> Result<Arc<EdgeNode>, CoreLinkError> {
+    fn node(&self) -> Result<Arc<dyn CoreLinkSharedClient + Send + Sync>, CoreLinkError> {
         self.node
             .get()
             .cloned()

@@ -1129,9 +1129,7 @@ mod core_edge {
             320, 240, 24, true, runtime_profile::SCENE_LIMITS,
         ).unwrap().with_storage(storage.clone()).unwrap());
         let handler_scene = scene.clone();
-        let edge = EdgeNode::fromHostManager((*host).clone())
-            .withNodeServices(NodeServices::new(peers.clone()))
-            .withCallHandler(Arc::new(move |request| {
+        let edge = operit_edge_sdk::device::NativeClient::NativeClient::new(Arc::new(move |request| {
                 let scene = handler_scene.clone();
                 Box::pin(async move {
                     if request.target != "edge.scene" { return None; }
@@ -1142,7 +1140,7 @@ mod core_edge {
                     })
                 })
             }));
-        inner.install(Arc::new(edge)).unwrap();
+        inner.installClient(Arc::new(edge)).unwrap();
         EdgeFixture {
             storage,
             router,

@@ -346,22 +346,23 @@ fn runFirmware(
             native(request).await
         })
     });
-    let mut edgeNode = operit_edge_sdk::device::EdgeNode::fromHostManager(hostManager.clone())
-        .withCallHandler(handler);
+    let nodeServices = NodeServices::new(peerService.clone());
     #[cfg(feature = "standalone-apps")]
     {
         let (speechOutput, speechInput) = speech.handlers();
-        edgeNode = edgeNode.withStreamHandlers(speechOutput, speechInput);
+        let edgeNode = operit_edge_sdk::device::EdgeNode::fromHostManager(hostManager.clone())
+            .withCallHandler(handler)
+            .withStreamHandlers(speechOutput, speechInput)
+            .withNodeServices(nodeServices.clone());
+        edgeRouter.install(Arc::new(edgeNode)).map_err(HostError::new)?;
     }
-    edgeNode = edgeNode.withNodeServices(NodeServices::new(peerService.clone()));
-    let edgeNode = Arc::new(edgeNode);
-    edgeRouter
-        .install(edgeNode.clone())
+    #[cfg(not(feature = "standalone-apps"))]
+    edgeRouter.installClient(Arc::new(operit_edge_sdk::device::NativeClient::NativeClient::new(handler)))
         .map_err(HostError::new)?;
     let mut peerChanges = peerService.subscribePeerChanges();
     let mut pairingCodeSelection = crate::status::PairingCodeSelection::default();
     let mut pairingState = || -> Result<(bool, String), String> {
-        let services = edgeNode.nodeServices().map_err(|error| error.message)?;
+        let services = nodeServices.clone();
         let paired = !services
             .peers()
             .pairedPeers()
@@ -485,7 +486,7 @@ fn runFirmware(
                 }
                 "run_node" | "edge_search" | "edge_pair" => {
                     let result = (|| -> Result<(), String> {
-                        let services = edgeNode.nodeServices().map_err(|error| error.message)?;
+                        let services = nodeServices.clone();
                         let (sender, receiver) = std::sync::mpsc::channel();
                         let transports = peerTransports.clone();
                         scheduler
@@ -516,7 +517,7 @@ fn runFirmware(
                 }
                 "edge_unpair" => {
                     let result = (|| -> Result<(), String> {
-                        let services = edgeNode.nodeServices().map_err(|error| error.message)?;
+                        let services = nodeServices.clone();
                         let (sender, receiver) = std::sync::mpsc::channel();
                         scheduler
                             .scheduleHostRuntimeAsyncTask(
