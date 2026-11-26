@@ -79,3 +79,46 @@ fn unchanged_sql_correction_updates_only_the_checkpoint_and_still_enforces_cas()
     }
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// Initializer installation, coverage and uncovered local replay commit or roll back together.
+#[test]
+fn initialization_replays_current_local_edits_atomically() {
+    use operit_store::{SqliteStore::SqliteStoreError, Transaction::compaction::Initialization};
+
+    let root = std::env::temp_dir().join(format!("operit-initialization-atomic-{}", uuid::Uuid::new_v4()));
+    {
+        let host = Arc::new(NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces")));
+        let store = SqliteStore::openWithHost(host, "runtime/atomic.sqlite").unwrap();
+        store.executeBatch("CREATE TABLE business(id INTEGER PRIMARY KEY,payload TEXT);
+            CREATE TABLE local_edits(id INTEGER PRIMARY KEY,payload TEXT);
+            INSERT INTO business VALUES(1,'baseline');").unwrap();
+        let dataset = SqlDataset { store: &store, owner: Owner { backend: Backend::Sql,
+            path: "runtime/atomic.sqlite".into(), format: 1, layout: 1 }, node: "receiver".into(),
+            tables: &["business"], revisions: "SELECT 'local:'||id,id,'local',id FROM local_edits",
+            cleanup: "", restore_schema: None };
+        let source = dataset.snapshot().unwrap();
+        let initializer = Initialization::from_snapshot(&source).operation("plugin_storage", false).unwrap();
+        // Local edits arrive after the baseline was exported, before it is received.
+        store.executeBatch("UPDATE business SET payload='local'; INSERT INTO local_edits VALUES(1,'local');").unwrap();
+        let before = dataset.snapshot().unwrap().token().unwrap();
+        let failure = dataset.receive_initialization(&initializer, |tx, snapshot| {
+            assert!(!snapshot.covered.contains("local:1"));
+            assert_eq!(tx.queryOne("SELECT payload FROM business", vec![])?.unwrap().get::<_, String>(0)?, "baseline");
+            tx.execute("INSERT OR REPLACE INTO business SELECT * FROM local_edits", vec![])?;
+            Err(SqliteStoreError::Message("injected replay failure".into()))
+        }).unwrap_err();
+        assert_eq!(failure, "injected replay failure");
+        assert_eq!(dataset.snapshot().unwrap().token().unwrap(), before);
+        assert!(dataset.initialization().unwrap().is_none());
+        assert!(dataset.receive_initialization(&initializer, |tx, snapshot| {
+            assert!(!snapshot.covered.contains("local:1"));
+            tx.execute("INSERT OR REPLACE INTO business SELECT * FROM local_edits", vec![])?;
+            Ok(())
+        }).unwrap());
+        assert_eq!(store.queryOne("SELECT payload FROM business", vec![]).unwrap().unwrap().get::<_, String>(0).unwrap(), "local");
+        assert!(dataset.coverage().unwrap().contains("local:1"));
+        assert_eq!(dataset.initialization().unwrap().unwrap().opId, initializer.opId);
+        assert!(!dataset.receive_initialization(&initializer, |_, _| panic!("covered initializer replayed")).unwrap());
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}

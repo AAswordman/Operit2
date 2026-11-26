@@ -1239,7 +1239,10 @@ impl SpacePersistenceSyncService {
                 "sync_blobs.stages references={} missing={missing} bytes={transferred_bytes} presenceMs={presence_ms} transferMs={} totalMs={}",
                 references.len(), timing.elapsed().as_millis()-presence_ms, timing.elapsed().as_millis()));
         }
-        if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
+        if errors.is_empty() {
+            self.state.progress.checking(targetNodeId);
+            Ok(())
+        } else { Err(errors.join("; ")) }
     }
 
     /// Checks one page in one dispatch per endpoint, retaining individual blob failures.

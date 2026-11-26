@@ -546,9 +546,9 @@ fn buildWorkspaceRuleFileSection(
 #[allow(non_snake_case)]
 fn getAttachmentGuidelines(use_english: bool) -> &'static str {
     if use_english {
-        "ATTACHMENTS:\n- Attachment `path` is relative to `.`. File tools and terminal sessions use this same base. Read supplied relative attachment paths directly, including `..`; use embedded content directly.\n- Small attachments contain the file; large attachments use `.operit-ref.json` with the source `node_id` and VFS path.\n- Check the current node first. For a missing file, use `list_core_nodes` and access its source with file tools. For terminal access, use `switch_core` and the source Host's resolved path.\n- If the path is missing, use embedded content or request re-upload. For terminal startup errors, report the error and use file tools."
+        "ATTACHMENTS:\n- Attachment `path` is relative to `.`. File tools and terminal sessions use this same base. Read supplied relative attachment paths directly, including `..`; use embedded content directly.\n- Small attachments contain the file; large attachments use `.operit-ref.json` with the source `node_id` and VFS path.\n- Check the current node first. `source_path` is the exact node-qualified VFS address: pass it unchanged to `read_file` to read the source device, including images. File tools route across devices without `switch_core`; a different `node_id` alone does not mean the attachment is inaccessible. Use `list_core_nodes` to inspect source reachability. For terminal execution on that device, use `switch_core` and the source Host's resolved path.\n- Request re-upload only after an actual read fails and the source is unavailable. For terminal startup errors, report the error and use file tools."
     } else {
-        "附件：\n- 附件 `path` 相对于 `.`，文件工具与终端使用同一个基准。直接读取附件提供的相对路径，支持 `..`；内嵌内容直接使用。\n- 小附件保存文件本体；大附件通过 `.operit-ref.json` 记录来源 `node_id` 和 VFS 路径。\n- 先读取当前节点；文件缺失时，通过 `list_core_nodes` 检查来源并用文件工具读取。终端访问来源文件时，使用 `switch_core` 和来源 Host 解析的路径。\n- 路径缺失时使用内嵌内容或请求重新上传；终端启动失败时报告错误并使用文件工具。"
+        "附件：\n- 附件 `path` 相对于 `.`，文件工具与终端使用同一个基准。直接读取附件提供的相对路径，支持 `..`；内嵌内容直接使用。\n- 小附件保存文件本体；大附件通过 `.operit-ref.json` 记录来源 `node_id` 和 VFS 路径。\n- 先读取当前节点；`source_path` 是准确的节点限定 VFS 地址，将它原样传给 `read_file` 即可读取来源设备，图片也适用。文件工具跨设备读取不需要 `switch_core`，不能仅凭 `node_id` 不同就判断附件不可读。通过 `list_core_nodes` 检查来源可达性。需要在来源设备执行终端时，再使用 `switch_core` 和来源 Host 解析的路径。\n- 实际读取失败且来源不可用后才请求重新上传；终端启动失败时报告错误并使用文件工具。"
     }
 }
 
@@ -764,6 +764,8 @@ mod tests {
             })
             .await.expect("Tool-prompt policies must succeed in this test");
             assert!(prompt.contains("node_id"));
+            assert!(prompt.contains("source_path"));
+            assert!(prompt.contains("read_file"));
             assert!(prompt.contains("switch_core"));
             assert!(prompt.contains(".operit/sync.json"));
             assert!(prompt.contains(".operit-ref.json"));
@@ -880,10 +882,10 @@ mod tests {
                     options.use_tool_call_api = use_tool_call_api;
                     let prompt = SystemPromptConfig::getSystemPrompt(options).await.expect("Tool-prompt policies must succeed in this test");
                     assert!(prompt.contains("`native/shell`: `.`"));
-                    assert!(prompt.contains("/Users/test/My Projects/library"));
-                    assert!(prompt.contains(if use_english {
                     assert_eq!(prompt.matches("`native/shell`: `.`").count(), 1);
                     assert!(!prompt.contains("WORKSPACE_GUIDELINES_SECTION"));
+                    assert!(prompt.contains("/Users/test/My Projects/library"));
+                    assert!(prompt.contains(if use_english {
                         "Each selected Host starts its sessions at `.`"
                     } else {
                         "所选 Host 从 `.` 启动终端"

@@ -5,6 +5,7 @@ pub mod FileSystemResource;
 pub mod HostFileSystemRoots;
 pub use FileSystemResource::{FileSource, FileTarget};
 pub mod RuntimeStorageLayout;
+pub mod PortableFilePath;
 pub mod PluginStorage;
 pub mod HttpServer;
 pub mod PluginSdkIpc;

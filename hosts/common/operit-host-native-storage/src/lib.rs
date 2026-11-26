@@ -797,9 +797,11 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
             if isPartialStagingFile(&name.to_string_lossy()) {
                 continue;
             }
-            // A POSIX backslash is a literal filename character. Shared paths reject
-            // it for Windows portability; never turn it into an invented directory.
-            if managedWorkspace && name.to_string_lossy().contains('\\') {
+            // Reserved names can fail metadata access on Windows before the scanner
+            // receives an entry. Apply the shared policy before touching that path.
+            if managedWorkspace
+                && !name.to_str().is_some_and(operit_host_contract::PortableFilePath::isPortableFileName)
+            {
                 continue;
             }
             let metadata = if managedWorkspace {
@@ -1241,6 +1243,34 @@ mod tests {
         assert_eq!(entries[0].path, path);
         assert_eq!(host.readBytes(&entries[0].path).unwrap(), b"original");
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Managed listings reject nonportable names before metadata and retain the physical files.
+    #[test]
+    fn managed_listings_filter_reserved_names_before_metadata() {
+        let root = std::env::temp_dir().join(format!("operit-reserved-entry-{}", uuid::Uuid::new_v4()));
+        let host = NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces"));
+        for (prefix, body) in [
+            ("workspaces/project", root.join("workspaces/project")),
+            ("runtime/data/chat_outputs/family", root.join("runtime/data/chat_outputs/family")),
+            ("runtime/data/chat_attachments/chat", root.join("runtime/data/chat_attachments/chat")),
+        ] {
+            fs::create_dir_all(&body).unwrap();
+            // Canonical Windows directories use the verbatim namespace, allowing a real
+            // file named nul to exist just as files created by external terminal tools do.
+            let physical = fs::canonicalize(&body).unwrap();
+            fs::write(physical.join("normal.txt"), b"portable").unwrap();
+            for name in ["nul", "NUL.txt", "AUX", "COM1.log", "trailing."] {
+                fs::write(physical.join(name), b"local only").unwrap();
+            }
+            let entries = host.list(prefix).unwrap();
+            assert_eq!(entries.len(), 1, "{prefix}");
+            assert_eq!(entries[0].path, format!("{prefix}/normal.txt"));
+            for name in ["nul", "NUL.txt", "AUX", "COM1.log", "trailing."] {
+                assert_eq!(fs::read(physical.join(name)).unwrap(), b"local only");
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// Transactions reserve their writer before reads so independent plugin

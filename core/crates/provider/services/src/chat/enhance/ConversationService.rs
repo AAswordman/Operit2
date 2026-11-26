@@ -219,7 +219,13 @@ impl ConversationService {
             for (start, end) in ChatMarkupRegex::attachment_ranges(&turn.content).into_iter().rev() {
                 let Some(openEnd) = content[start..end].find('>') else { continue; };
                 let end = start + openEnd;
-                let rewritten = attributes.replace_all(&content[start..end], |capture: &regex::Captures<'_>| {
+                let opening = &content[start..end];
+                let source = attr_value(opening, "node_id").zip(attr_value(opening, "path"))
+                    .map(|(node, path)| (unescape_xml_attribute(&node), unescape_xml_attribute(&path)))
+                    .filter(|(node, path)| !node.trim().is_empty()
+                        && ["/app/", "/operitapp/", "/mnt/", "/virtual/"].iter().any(|root| path.starts_with(root)))
+                    .map(|(node, path)| operit_util::FileUtils::FileUtils::qualifyVfsPath(&node, &path));
+                let mut rewritten = attributes.replace_all(opening, |capture: &regex::Captures<'_>| {
                     let path = unescape_xml_attribute(capture.get(2).or_else(|| capture.get(3)).unwrap().as_str());
                     if !["/app/", "/operitapp/", "/mnt/", "/virtual/"].iter().any(|root| path.starts_with(root)) {
                         return capture[0].to_string();
@@ -229,6 +235,11 @@ impl ConversationService {
                         Err(_) => capture[0].to_string(),
                     }
                 }).into_owned();
+                if let Some(source) = source {
+                    let source = source.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;").replace('\'', "&#39;");
+                    let at = rewritten.len() - usize::from(rewritten.ends_with('/'));
+                    rewritten.insert_str(at, &format!(" source_path=\"{source}\""));
+                }
                 content.replace_range(start..end, &rewritten);
             }
             for (start, end) in ChatMarkupRegex::workspace_attachment_ranges(&content).into_iter().rev() {
@@ -1239,8 +1250,8 @@ mod relative_attachment_tests {
             assert!(visible.contains(r#"id=".operit/attachments/id/report.pdf""#));
             assert!(visible.contains(r#"path=".operit/attachments/id/report.pdf""#));
             assert!(visible.contains(r#"node_id="source""#));
+            assert!(visible.contains(&format!(r#"source_path="source://{}/.operit/attachments/id/report.pdf""#, base.trim_start_matches('/'))));
             assert!(visible.ends_with(">body</attachment>"));
-            assert!(!visible.contains("/operitapp/"));
         }
     }
 
@@ -1252,6 +1263,22 @@ mod relative_attachment_tests {
         let path = unescape_xml_attribute(&attr_value(&visible, "path").unwrap());
         assert_eq!(VfsPath::resolveFileToolPath(Some("/operitapp/workspaces/project"), &path).unwrap(),
             "/operitapp/outputs/family/.operit/attachments/id/file.pdf");
+    }
+
+    /// A source address stays absolute when the execution directory belongs to another conversation.
+    #[test]
+    fn remote_attachment_source_survives_rebasing_and_xml_escaping() {
+        let path = "/operitapp/outputs/phone/.operit/attachments/id/图 & \"quote\".png";
+        let content = r#"<attachment path="/operitapp/outputs/phone/.operit/attachments/id/图 &amp; &quot;quote&quot;.png" node_id="android-source"/>"#;
+        let visible = prepared(content, "/operitapp/outputs/desktop");
+        assert!(visible.ends_with("/>"));
+        let source = unescape_xml_attribute(&attr_value(&visible, "source_path").unwrap());
+        assert_eq!(source, format!("android-source:/{path}"));
+        assert_eq!(prepared(&visible, "/operitapp/outputs/desktop"), visible);
+        let local = unescape_xml_attribute(&attr_value(&visible, "path").unwrap());
+        assert_eq!(VfsPath::resolveFileToolPath(Some("/operitapp/outputs/desktop"), &local).unwrap(), path);
+        let legacy = prepared(r#"<attachment path="/operitapp/outputs/phone/file.png"/>"#, "/operitapp/outputs/desktop");
+        assert!(!legacy.contains("source_path="));
     }
 
     #[test]

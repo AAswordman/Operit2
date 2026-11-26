@@ -1714,30 +1714,17 @@ impl SqlDataset<'_> {
         self.receive_validated_initialization(operation,initialization,replay)
     }
 
+    /// Selects and installs a decoded initializer against one transaction-local state.
     pub(crate) fn receive_validated_initialization(&self,operation:&crate::SyncOperationStore::SyncOperation,initialization:compaction::Initialization,
         replay:impl FnOnce(&mut crate::SqliteStore::SqliteTransaction<'_>,&Snapshot)->std::result::Result<(),crate::SqliteStore::SqliteStoreError>)->Result<bool> {
         if initialization.data.owner != self.owner || operation.domain != self.domain() { return Err("Initialization owner differs".into()); }
         if self.coverage()?.contains(&operation.opId) { return Ok(false); }
-        let current = self.snapshot()?;
-        if initialization.data.restoration < current.data.restoration { return Ok(false); }
-        if let Some(previous) = if current.damage.is_none() { self.initialization()? } else { None } {
-
-            if initialization.data.restoration == current.data.restoration
-                && !initialization.covered.contains(&previous.opId)
-                && (current.data.revision.as_ref(), &previous.opId) >= (initialization.data.revision.as_ref(), &operation.opId) {
-                return Ok(false);
-            }
-        }
-        let expected = current.token()?;
-        drop(current);
         let source = Snapshot { damage: None, node: self.node.clone(), generation: 0,
             data: initialization.data, covered: initialization.covered };
-        if !self.commit_snapshot(&expected, std::borrow::Cow::Owned(source), initialization.definition, Some(operation), replay)? {
-            return Err("SQL owner changed while receiving initialization; retry required".into());
-        }
-        Ok(true)
+        self.commit_snapshot("", std::borrow::Cow::Owned(source), initialization.definition, Some(operation), replay)
     }
 
+    /// Keeps initializer selection and replay atomic while corrections retain their exported CAS boundary.
     fn commit_snapshot(&self, expected: &str, mut source: std::borrow::Cow<'_ ,Snapshot>, definition: Option<Value>,
         original: Option<&crate::SyncOperationStore::SyncOperation>,
         retire: impl FnOnce(&mut crate::SqliteStore::SqliteTransaction<'_>, &Snapshot) -> std::result::Result<(),crate::SqliteStore::SqliteStoreError>) -> Result<bool> {
@@ -1750,15 +1737,25 @@ impl SqlDataset<'_> {
         let mut changed = false;
         let repaired = self.store.transaction(|tx| {
             let current = self.snapshot_in(tx)?;
-            let expected = if expected.is_empty() {
+            if let Some(operation) = original {
+                // The initializer is immutable, but local edits continue during download and decoding.
+                // Select it under the same lock used to install it and replay uncovered local originals.
+                if current.covered.contains(&operation.opId)
+                    || source.data.restoration < current.data.restoration { return Ok(false); }
+                if let Some(previous) = if current.damage.is_none() { compaction::initialization(tx)? } else { None } {
+                    if source.data.restoration == current.data.restoration
+                        && !source.covered.contains(&previous.opId)
+                        && (current.data.revision.as_ref(), &previous.opId) >= (source.data.revision.as_ref(), &operation.opId) {
+                        return Ok(false);
+                    }
+                }
+            } else if expected.is_empty() {
                 // Provisioning requires an empty database with no initialization or history.
                 let initialized = tx.queryOne("SELECT 1 FROM _operit_transaction_initialization WHERE id=1", vec![])?.is_some();
                 let occupied = current.data.sql.as_ref().ok_or_else(||sql_error("Missing SQL snapshot staging"))?.has_rows().map_err(sql_error)?;
                 if initialized || !current.covered.is_empty() || occupied { return Ok(false); }
-                current.token().map_err(sql_error)?
-            } else { expected.to_owned() };
+            } else if current.token().map_err(sql_error)? != expected { return Ok(false); }
             if source.damage.is_some() { return Err(sql_error("A damaged snapshot cannot be authoritative")); }
-            if current.token().map_err(sql_error)? != expected { return Ok(false); }
             if current.data.owner != source.data.owner { return Err(sql_error("Snapshot owners or migrations differ")); }
             changed = current.data != source.data;
             let source=source.to_mut();
