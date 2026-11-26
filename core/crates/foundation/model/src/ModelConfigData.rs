@@ -143,7 +143,10 @@ impl Default for ApiProviderType {
 pub struct ModelConfigDefaults;
 
 impl ModelConfigDefaults {
+    /// Default context for Operit1's persisted kilo-token field.
     pub const DEFAULT_MAX_CONTEXT_LENGTH: f32 = 200.0;
+    /// Default model context window, in tokens.
+    pub const DEFAULT_MAX_CONTEXT_TOKENS: i32 = 200_000;
     pub const DEFAULT_SUMMARY_TOKEN_THRESHOLD: f32 = 0.85;
     pub const DEFAULT_ENABLE_SUMMARY: bool = true;
     pub const DEFAULT_DEEPSEEK_ENDPOINT: &'static str =
@@ -294,44 +297,80 @@ impl ModelBuiltinTool {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(from = "ReadContextSpec", into = "WriteContextSpec")]
 #[allow(non_snake_case)]
 pub struct ModelContextSpec {
-    #[serde(deserialize_with = "ModelContextSpec::deserialize_length", serialize_with = "ModelContextSpec::serialize_length")]
-    pub maxContextLength: f32,
+    pub maxContextTokens: i32,
 }
 
 impl Default for ModelContextSpec {
     fn default() -> Self {
         Self {
-            maxContextLength: ModelConfigDefaults::DEFAULT_MAX_CONTEXT_LENGTH,
+            maxContextTokens: ModelConfigDefaults::DEFAULT_MAX_CONTEXT_TOKENS,
         }
     }
 }
 
 impl ModelContextSpec {
-    pub const MAX_CONTEXT_LENGTH: f32 = (i32::MAX / 1000) as f32;
-
-    /// Keeps input finite and within the runtime's signed token budget before narrowing.
-    pub fn normalize_length(value: f64) -> f32 {
-        let value = if value.is_nan() { f64::from(ModelConfigDefaults::DEFAULT_MAX_CONTEXT_LENGTH) } else { value };
-        value.clamp(1.0, f64::from(Self::MAX_CONTEXT_LENGTH)) as f32
+    /// Keeps a token budget finite and within the runtime's signed range.
+    pub fn normalize_tokens(value: f64) -> i32 {
+        let value = if value.is_nan() {
+            f64::from(ModelConfigDefaults::DEFAULT_MAX_CONTEXT_TOKENS)
+        } else {
+            value
+        };
+        value.round().clamp(1.0, f64::from(i32::MAX)) as i32
     }
 
-    /// Recovers old null values and normalizes large transport doubles on every read.
-    fn deserialize_length<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
-        let value = Option::<f64>::deserialize(deserializer)?.unwrap_or(f64::from(ModelConfigDefaults::DEFAULT_MAX_CONTEXT_LENGTH));
-        Ok(Self::normalize_length(value))
+    /// Converts the settings page's whole-thousand token value into exact tokens.
+    pub fn from_kilo_tokens(value: f64) -> i32 {
+        let value = if value.is_nan() {
+            f64::from(ModelConfigDefaults::DEFAULT_MAX_CONTEXT_TOKENS) / 1000.0
+        } else {
+            value.clamp(1.0, f64::from(i32::MAX) / 1000.0)
+        };
+        Self::normalize_tokens(value * 1000.0)
     }
 
-    /// Prevents directly constructed Rust profiles from persisting non-finite values.
-    fn serialize_length<S: serde::Serializer>(value: &f32, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_f32(Self::normalize_length(f64::from(*value)))
+    /// Returns the whole-thousand token value the settings pages edit.
+    pub fn kilo_tokens(&self) -> f64 {
+        f64::from(self.maxContextTokens) / 1000.0
     }
+}
 
-    /// Converts the persisted kilo-token limit into an absolute token budget.
-    #[allow(non_snake_case)]
-    pub fn maxContextTokens(&self) -> i32 {
-        (f64::from(self.maxContextLength) * 1000.0).clamp(0.0, f64::from(i32::MAX)) as i32
+/// Reads both the current token field and the previous kilo-token field.
+#[derive(Deserialize)]
+#[allow(non_snake_case)]
+struct ReadContextSpec {
+    #[serde(default)]
+    maxContextTokens: Option<f64>,
+    #[serde(default)]
+    maxContextLength: Option<f64>,
+}
+
+impl From<ReadContextSpec> for ModelContextSpec {
+    fn from(read: ReadContextSpec) -> Self {
+        let maxContextTokens = read
+            .maxContextTokens
+            .map(Self::normalize_tokens)
+            .or_else(|| read.maxContextLength.map(Self::from_kilo_tokens))
+            .unwrap_or(ModelConfigDefaults::DEFAULT_MAX_CONTEXT_TOKENS);
+        Self { maxContextTokens }
+    }
+}
+
+/// Persists only the normalized token field.
+#[derive(Serialize)]
+#[allow(non_snake_case)]
+struct WriteContextSpec {
+    maxContextTokens: i32,
+}
+
+impl From<ModelContextSpec> for WriteContextSpec {
+    fn from(spec: ModelContextSpec) -> Self {
+        Self {
+            maxContextTokens: ModelContextSpec::normalize_tokens(f64::from(spec.maxContextTokens)),
+        }
     }
 }
 
@@ -757,23 +796,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn context_budget_uses_decimal_kilo_tokens() {
-        assert_eq!(serde_json::from_str::<ModelContextSpec>(r#"{"maxContextLength":null}"#).unwrap().maxContextLength, ModelConfigDefaults::DEFAULT_MAX_CONTEXT_LENGTH);
-        assert_eq!(serde_json::from_str::<ModelContextSpec>(r#"{"maxContextLength":1e300}"#).unwrap().maxContextLength, ModelContextSpec::MAX_CONTEXT_LENGTH);
+    fn context_budget_uses_exact_tokens() {
+        assert_eq!(serde_json::from_str::<ModelContextSpec>(r#"{"maxContextTokens":null}"#).unwrap().maxContextTokens, ModelConfigDefaults::DEFAULT_MAX_CONTEXT_TOKENS);
+        assert_eq!(serde_json::from_str::<ModelContextSpec>(r#"{"maxContextTokens":1e300}"#).unwrap().maxContextTokens, i32::MAX);
+        assert_eq!(serde_json::from_str::<ModelContextSpec>(r#"{"maxContextTokens":-5}"#).unwrap().maxContextTokens, 1);
+        assert_eq!(serde_json::from_str::<ModelContextSpec>(r#"{"maxContextTokens":128000}"#).unwrap().maxContextTokens, 128_000);
+        assert_eq!(ModelContextSpec::from_kilo_tokens(0.0), 1_000);
+        assert_eq!(ModelContextSpec::from_kilo_tokens(1048.576), 1_048_576);
+        let kilo = ModelContextSpec {
+            maxContextTokens: 1_048_576,
+        }
+        .kilo_tokens();
+        assert!((kilo - 1048.576).abs() < 1e-9);
         assert_eq!(
-            ModelContextSpec {
-                maxContextLength: 128.0
-            }
-            .maxContextTokens(),
-            128_000
+            serde_json::from_str::<ModelContextSpec>(r#"{"maxContextLength":1048.576}"#)
+                .unwrap()
+                .maxContextTokens,
+            1_048_576
         );
-        assert_eq!(
-            ModelContextSpec {
-                maxContextLength: 1000.0
-            }
-            .maxContextTokens(),
-            1_000_000
-        );
+        let serialized =
+            serde_json::to_value(ModelContextSpec { maxContextTokens: 1_048_576 }).unwrap();
+        assert_eq!(serialized["maxContextTokens"], serde_json::json!(1_048_576));
+        assert!(serialized.get("maxContextLength").is_none());
     }
 
     #[test]

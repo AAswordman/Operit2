@@ -68,10 +68,10 @@ pub struct ModelsDevProviderModel {
     pub pricing: Option<ModelPricing>,
 }
 
-/// Converts a token window into the kilo-token context spec models are configured with.
+/// Converts a token window into the model context spec.
 pub fn contextSpec(tokens: u64) -> ModelContextSpec {
     ModelContextSpec {
-        maxContextLength: tokens as f32 / 1000.0,
+        maxContextTokens: ModelContextSpec::normalize_tokens(tokens as f64),
     }
 }
 

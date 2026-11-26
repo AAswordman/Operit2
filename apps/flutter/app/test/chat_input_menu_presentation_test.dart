@@ -892,7 +892,7 @@ class _ContextBridge extends OperitRuntimeBridge {
           currentWindowSize: 0,
           inputTokenCount: 0,
           outputTokenCount: 0,
-          maxContextLength: 32,
+          maxContextTokens: 32_000,
         ).toJson();
       case 'getToolPkgPublicApiOwners':
         if (args['apiName'] != 'chat.context.actions') {

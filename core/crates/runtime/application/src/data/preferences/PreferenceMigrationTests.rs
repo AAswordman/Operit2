@@ -257,7 +257,7 @@ fn model_type_normalization_preserves_name_patch_scope() {
     );
 }
 
-/// A current-format file seals an unreplayable format-8 original; new format-9 edits still commit.
+/// A current-format file seals an unreplayable format-8 original; new format-10 edits still commit.
 #[test]
 fn model_correction_seals_missing_old_context_before_new_transactions() {
     use operit_store::{PreferenceMerge, SyncOperationStore::SyncOperationStore};
@@ -305,7 +305,7 @@ fn model_correction_seals_missing_old_context_before_new_transactions() {
     }).unwrap();
     let newer = journal.preferenceHistory().unwrap().into_iter().filter(|op| !before.contains(op)).collect::<Vec<_>>();
     assert!(!newer.is_empty());
-    assert!(newer.iter().all(|op| op.payload["schemaVersion"] == 9));
+    assert!(newer.iter().all(|op| op.payload["schemaVersion"] == 10));
     let applied = registry.receive(&newer).unwrap();
     assert!(applied.errors.is_empty() && applied.pending.is_empty() && applied.skipped == 0);
     assert_eq!(open(target.host.clone(), path).unwrap().syncSnapshot().unwrap().data, store.syncSnapshot().unwrap().data);

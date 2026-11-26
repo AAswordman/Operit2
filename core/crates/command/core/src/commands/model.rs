@@ -565,11 +565,15 @@ pub async fn run_model_command(
                 2,
                 "usage: operit2 model context-set <provider-id> <model-id> <max-context-length>",
             )?;
-            let maxContextLength = parse_f32_arg(
+            let maxContextKiloTokens = parse_f32_arg(
                 args.get(3),
                 "usage: operit2 model context-set <provider-id> <model-id> <max-context-length>",
             )?;
-            let context = ModelContextSpec { maxContextLength };
+            let context = ModelContextSpec {
+                maxContextTokens: ModelContextSpec::from_kilo_tokens(f64::from(
+                    maxContextKiloTokens,
+                )),
+            };
             let model = command
                 .modelManager()
                 .updateContextForModel(providerId, modelId, context.clone())
@@ -921,7 +925,7 @@ fn print_resolved_model_config(config: &ResolvedModelConfig, output: &mut CoreCo
     ));
     output.push_stdout_line(format!(
         "Context tokens: {}",
-        config.context.maxContextLength
+        config.context.maxContextTokens
     ));
     output.push_stdout_line(format!("Direct image: {}", config.capabilities.directImage));
     output.push_stdout_line(format!("Direct audio: {}", config.capabilities.directAudio));
@@ -948,7 +952,11 @@ fn print_context_spec(
     output: &mut CoreCommandOutput,
 ) {
     output.push_stdout_line(format!("Context for {providerId}:{modelId}"));
-    output.push_stdout_line(format!("Max context length: {}", context.maxContextLength));
+    output.push_stdout_line(format!(
+        "Max context length: {}K ({} tokens)",
+        context.kilo_tokens().round(),
+        context.maxContextTokens
+    ));
 }
 
 /// Prints summary settings for one provider model.
