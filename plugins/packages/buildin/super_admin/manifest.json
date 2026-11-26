@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.super_admin",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "api_version": "2.0.0",
   "main": "dist/main.js",
   "display_name": { "zh": "超级管理员", "en": "Super Admin" },
   "description": {
-    "zh": "终端命令和会话管理，自动关闭闲置10分钟的工具终端。",
-    "en": "Terminal commands and session management with automatic cleanup after 10 idle minutes."
+    "zh": "独立命令执行与持久交互终端；命令结束后闲置10分钟自动清理，交互终端显式关闭。",
+    "en": "Independent command processes and persistent interactive terminals. Completed commands close after 10 idle minutes; interactive terminals require explicit close."
   },
   "enabled_by_default": true,
   "subpackages": [{ "id": "super_admin", "entry": "dist/tools.js" }],

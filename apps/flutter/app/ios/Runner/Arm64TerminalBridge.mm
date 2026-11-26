@@ -172,6 +172,7 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
 @property(nonatomic, assign) uint32_t rows;
 @property(nonatomic, assign) uint32_t cols;
 @property(nonatomic, assign) BOOL commandRunning;
+@property(nonatomic, assign) BOOL processOwned;
 @property(nonatomic, copy) NSString *failure;
 @property(nonatomic, copy) NSString *protocolToken;
 @property(nonatomic, strong) NSData *protocolPrefix;
@@ -1019,11 +1020,12 @@ static BOOL ORTPrepareWorkspaceMount(NSDictionary *request, NSString **error) {
   ORTConfiguration = configuration;
   return YES;
 }
-static ORTArm64TerminalSession *ORTStart(NSString *name, NSString *cwd, uint32_t rows, uint32_t cols, NSString **error) {
+static ORTArm64TerminalSession *ORTStart(NSString *name, NSString *cwd, uint32_t rows, uint32_t cols, BOOL processOwned, NSString *shellCommand, NSString **error) {
   if (![cwd hasPrefix:@"/"]) { *error = @"ARM64 working directory must be absolute"; return nil; }
   if (!ORTPrepareRoot(error)) return nil;
   ORTArm64TerminalSession *session = [ORTArm64TerminalSession new];
   session.sessionName = name;
+  session.processOwned = processOwned;
   session.workingDir = cwd;
   session.rows = rows;
   session.cols = cols;
@@ -1038,10 +1040,11 @@ static ORTArm64TerminalSession *ORTStart(NSString *name, NSString *cwd, uint32_t
     // The private record tracks cwd; the visible prompt expands it again after
     // each command so manual terminals show directory changes immediately.
     NSString *prompt = [NSString stringWithFormat:@"PS1=\036%@:prompt:${PWD}\037${PWD} # ", session.protocolToken];
-    const char *argv[] = {"/bin/sh", "-c", "cd -- \"$OPERIT_WORKING_DIR\" || exit; exec /bin/sh -i", nullptr};
+    const char *bootstrap = shellCommand ? "cd -- \"$OPERIT_WORKING_DIR\" || exit; exec /bin/sh -c \"$1\"" : "cd -- \"$OPERIT_WORKING_DIR\" || exit; exec /bin/sh -i";
+    const char *argv[] = {"/bin/sh", "-c", bootstrap, "operit-shell", shellCommand ? shellCommand.UTF8String : "", nullptr};
     const char *envp[] = {"TERM=xterm-256color", "HOME=/root", "USER=root", "LOGNAME=root",
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8", "NODE_OPTIONS=--jitless",
-      directory.UTF8String, prompt.UTF8String, "PS2=> ", nullptr};
+      directory.UTF8String, processOwned ? "PS1=$PWD # " : prompt.UTF8String, "PS2=> ", nullptr};
     if (ort_arm64_load(session.vm, "/bin/sh", argv, envp) != 0) {
       [session fail:ORTRuntimeError(session.vm, @"shell load failed")];
       return;
@@ -1051,6 +1054,11 @@ static ORTArm64TerminalSession *ORTStart(NSString *name, NSString *cwd, uint32_t
       return;
     }
     session.terminalOpen = YES;
+    if (processOwned) {
+      session.ready = YES;
+      session.commandRunning = YES;
+      dispatch_semaphore_signal(session.startup);
+    }
     [session schedulePump];
   });
   if (dispatch_semaphore_wait(session.startup, dispatch_time(DISPATCH_TIME_NOW, 30LL * NSEC_PER_SEC)) != 0)
@@ -1249,7 +1257,11 @@ static NSDictionary *ORTHandle(NSString *command, NSDictionary *request, void *c
         if (error) return;
         if (active) { session = existing; isNew = NO; }
       }
-      if (!session) session = ORTStart(name, cwd, rows, cols, &error);
+      BOOL processOwned = !reuse && [request[@"processOwned"] boolValue];
+      id shellCommand = request[@"shellCommand"];
+      if (shellCommand == NSNull.null) shellCommand = nil;
+      if (shellCommand && ![shellCommand isKindOfClass:NSString.class]) { error = @"ARM64 command must be a string"; return; }
+      if (!session) session = ORTStart(name, cwd, rows, cols, processOwned, shellCommand, &error);
     });
     return session ? ORTResult(@{ @"sessionId": session.sessionId, @"sessionName": name,
                                  @"terminalType": @"shell", @"isNewSession": @(isNew),
@@ -1260,7 +1272,7 @@ static NSDictionary *ORTHandle(NSString *command, NSDictionary *request, void *c
     dispatch_sync(ORTRegistryQueue, ^{ sessions = ORTSessions.allValues; });
     NSMutableArray *entries = [NSMutableArray array];
     for (ORTArm64TerminalSession *session in sessions)
-      dispatch_sync(session.queue, ^{ if (!session.closed) [entries addObject:ORTEntry(session)]; });
+      dispatch_sync(session.queue, ^{ if (!session.closed || session.processOwned) [entries addObject:ORTEntry(session)]; });
     [entries sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [a[@"sessionId"] compare:b[@"sessionId"]]; }];
     return ORTResult(@{ @"sessions": entries });
   }
@@ -1291,6 +1303,12 @@ static NSDictionary *ORTHandle(NSString *command, NSDictionary *request, void *c
                            @"commandRunning": @(session.commandRunning) });
     } else if ([command isEqualToString:@"terminalPoll"]) {
       result = session.failure ? ORTError(session.failure) : ORTResult(@{ @"exitCode": session.hasExitCode ? @(session.exitCode) : NSNull.null });
+    } else if ([command isEqualToString:@"terminalCloseIfIdle"]) {
+      NSString *name = ORTString(request, @"sessionName", &error);
+      if (!error && ![session.sessionName isEqualToString:name]) error = @"Terminal session name does not match";
+      if (!error && session.commandRunning) error = @"Terminal session has a process in progress";
+      if (!error) error = [session close];
+      result = error ? ORTError(error) : ORTResult(@{});
     } else if ([command isEqualToString:@"terminalClose"]) {
       error = [session close];
       result = error ? ORTError(error) : ORTResult(@{});
@@ -1333,7 +1351,7 @@ static NSDictionary *ORTHandle(NSString *command, NSDictionary *request, void *c
       result = ORTError([NSString stringWithFormat:@"Unsupported ARM64 terminal command: %@", command]);
     }
   });
-  if ([command isEqualToString:@"terminalClose"] && !error)
+  if (([command isEqualToString:@"terminalClose"] || [command isEqualToString:@"terminalCloseIfIdle"]) && !error)
     dispatch_sync(ORTRegistryQueue, ^{
       [ORTSessions removeObjectForKey:session.sessionId];
       if ([ORTSessionNames[session.sessionName] isEqualToString:session.sessionId]) [ORTSessionNames removeObjectForKey:session.sessionName];

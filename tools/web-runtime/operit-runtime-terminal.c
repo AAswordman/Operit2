@@ -14,6 +14,7 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
+#include <time.h>
 
 enum {
     control_buffer_capacity = 128,
@@ -87,7 +88,7 @@ static void configure_serial_transport(void) {
 }
 
 /** Starts the interactive shell with the PTY slave as its controlling terminal. */
-static pid_t start_shell(int pty_slave) {
+static pid_t start_shell(int pty_slave, const char *script) {
     pid_t child = fork();
 
     if (child < 0) {
@@ -108,7 +109,8 @@ static pid_t start_shell(int pty_slave) {
         if (pty_slave > STDERR_FILENO) {
             close(pty_slave);
         }
-        execl("/bin/sh", "sh", "-i", (char *)NULL);
+        if (script) execl("/bin/sh", "sh", script, (char *)NULL);
+        else execl("/bin/sh", "sh", "-i", (char *)NULL);
         perror("operit terminal shell");
         _exit(127);
     }
@@ -202,7 +204,7 @@ int main(int argument_count, char **arguments) {
     int columns;
     pid_t shell;
 
-    if (argument_count != 3) {
+    if (argument_count != 3 && argument_count != 5) {
         fprintf(stderr, "usage: operit-runtime-terminal ROWS COLUMNS\n");
         return 2;
     }
@@ -214,9 +216,15 @@ int main(int argument_count, char **arguments) {
         return 1;
     }
     set_terminal_size(pty_master, rows, columns);
-    shell = start_shell(pty_slave);
+    shell = start_shell(pty_slave, argument_count == 5 ? arguments[3] : NULL);
     close(pty_slave);
-    write_all(STDOUT_FILENO, (const unsigned char *)ready_marker, sizeof(ready_marker) - 1);
+    if (argument_count == 5) printf("\033]1337;OPERIT_PROCESS_READY\007");
+    else write_all(STDOUT_FILENO, (const unsigned char *)ready_marker, sizeof(ready_marker) - 1);
+    fflush(stdout);
+    int status = 0;
+    bool exited = false;
+    bool output_open = true;
+    double exited_at = 0, last_output = 0;
 
     for (;;) {
         fd_set read_set;
@@ -225,8 +233,26 @@ int main(int argument_count, char **arguments) {
 
         FD_ZERO(&read_set);
         FD_SET(STDIN_FILENO, &read_set);
-        FD_SET(pty_master, &read_set);
-        ready = select(maximum_file_descriptor + 1, &read_set, NULL, NULL, NULL);
+        if (output_open) FD_SET(pty_master, &read_set);
+        struct timespec stamp;
+        clock_gettime(CLOCK_MONOTONIC, &stamp);
+        double now = stamp.tv_sec + stamp.tv_nsec / 1000000000.0;
+        if (!exited) {
+            pid_t waited = waitpid(shell, &status, WNOHANG);
+            if (waited < 0) { perror("operit terminal wait"); return 1; }
+            if (waited == shell) { exited = true; exited_at = last_output = now; }
+        }
+        if (exited && (!output_open || now - last_output >= 0.1 || now - exited_at >= 1)) {
+            int code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+            if (argument_count == 5) {
+                printf("\033]1337;OPERIT_PROCESS_EXIT;%s;%d\007", arguments[4], code);
+                fflush(stdout);
+            }
+            close(pty_master);
+            return code;
+        }
+        struct timeval timeout = {.tv_sec = 0, .tv_usec = 25000};
+        ready = select(maximum_file_descriptor + 1, &read_set, NULL, NULL, &timeout);
         if (ready < 0) {
             if (errno == EINTR) {
                 continue;
@@ -245,10 +271,9 @@ int main(int argument_count, char **arguments) {
         }
         if (FD_ISSET(pty_master, &read_set)) {
             ssize_t read_length = read(pty_master, io_buffer, sizeof(io_buffer));
-            if (read_length <= 0) {
-                return shell_exit_status(shell);
-            }
+            if (read_length <= 0) { output_open = false; continue; }
             write_all(STDOUT_FILENO, io_buffer, (size_t)read_length);
+            last_output = now;
         }
     }
 }

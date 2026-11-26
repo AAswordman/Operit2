@@ -1828,7 +1828,7 @@ export interface EdgePortResultData {
 /**
  * Exchanges one scoped terminal execution observation through the common tool transport.
  */
-export type TerminalObservationResultData = { result: TerminalCommandResultData; } | { handle: string; } | { event: TerminalExecEvent | null; } | { };
+export type TerminalObservationResultData = { result: TerminalSessionCreationResultData; } | { result: TerminalCommandResultData; } | { handle: string; } | { event: TerminalExecEvent | null; } | { };
 
 /**
  * Reports exactly the requested WebSocket operation.

@@ -22,6 +22,12 @@ impl RuntimeSessionPublishingTerminalHost {
 }
 
 impl operit_host_api::TerminalHost for RuntimeSessionPublishingTerminalHost {
+    /// Publishes fresh interactive and command processes without shell bootstrap commands.
+    fn openTerminalSession(&self, request: &operit_host_api::TerminalSessionRequest) -> HostResult<operit_host_api::TerminalSessionInfo> {
+        let session = self.inner.openTerminalSession(request)?;
+        self.publish_sessions()?;
+        Ok(session)
+    }
     /// Forwards the platform-owned editing schema.
     fn terminalProfileSupport(
         &self,

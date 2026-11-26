@@ -2,7 +2,9 @@ set -eu
 rootfs=$1
 workdir=$2
 prompt=$3
-shift 3
+mode=$4
+command=$5
+shift 5
 
 # Requires Root and private propagation before mounting anything.
 [ "$(/system/bin/id -u)" = 0 ] || exit 126
@@ -40,8 +42,14 @@ while [ "$#" -gt 0 ]; do
     shift 3
 done
 
+if [ "$mode" = command ]; then
+    set -- -c "$command"
+else
+    set -- -i
+fi
+
 exec /system/bin/chroot "$rootfs" /usr/bin/env -i \
     HOME=/root TERM=xterm-256color LANG=C.UTF-8 'PS1=$PWD $ ' \
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     "PROMPT_COMMAND=$prompt" /bin/bash --noprofile --norc -c \
-    'cd -- "$1" && exec /bin/bash --noprofile --norc -i' operit-chroot "$workdir"
+    'cd -- "$1" || exit; shift; exec /bin/bash --noprofile --norc "$@"' operit-chroot "$workdir" "$@"

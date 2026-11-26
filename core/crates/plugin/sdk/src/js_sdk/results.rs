@@ -3297,6 +3297,7 @@ pub struct EdgePortResultData {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TerminalObservationResultData {
+    Session { result: TerminalSessionCreationResultData },
     Run { result: TerminalCommandResultData },
     Open { handle: String },
     Next { event: JsNullable<super::system::TerminalExecEvent> },
