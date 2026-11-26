@@ -287,3 +287,16 @@ npm run flash -- --remote-display --port COM5
 `../dist/remote-display`；烧录要求该目录已有完整固件包，正常更新保留 NVS 和布局。
 `npm run dev -- --remote-display --port COM5` 可连续执行构建和更新。
 默认命令继续使用完整应用。实际体积和功能限制见板卡 README。
+
+
+真实 TCP 场景回归使用生产 Core runtime、共享配对和显式 Space 批准，在板卡的
+2 KiB 物理帧预算下上传插件提交的全部六套原猫素材，校验分块、哈希、素材切换、
+3 倍整数缩放的原生条带渲染，以及顶部导航区域保留。临时任务画面不写 NVS，
+模拟重启后配对和 Space 归属保留，过期画面不自动恢复。此测试不运行插件的
+任务状态订阅，也不能替代真机连接 Core 后的完整验收。
+
+在仓库根目录运行（使用本机已安装的桌面 Rust 工具链）：
+
+```sh
+cargo test --locked --manifest-path edge/boards/esp32/editor/simulator/Cargo.toml --features core-integration-tests --test space_admission -- --test-threads=1
+```
