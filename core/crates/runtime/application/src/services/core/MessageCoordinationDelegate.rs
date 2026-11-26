@@ -416,7 +416,7 @@ impl MessageCoordinationDelegate {
                 &configuration.profile.modelBinding.modelId,
             )
             .map_err(|error| error.to_string())?;
-        let maxTokens = chatContextSettings.context.maxContextTokens();
+        let maxTokens = chatContextSettings.context.maxContextTokens;
         let mut variantMessage = self
             .messageProcessingDelegate
             .regenerateAiMessageVariant(RegenerateAiMessageVariantRequest {
@@ -798,7 +798,7 @@ impl MessageCoordinationDelegate {
             .modelConfigManager
             .getResolvedModelConfig(&providerId, &modelId)
             .map_err(|error| error.to_string())?;
-        let maxTokens = settings.context.maxContextTokens();
+        let maxTokens = settings.context.maxContextTokens;
         let policy = SummarySendPolicy::new(
             &settings.summary, turnOptions, checkBeforeSend, isBackgroundSend,
         );
@@ -870,7 +870,7 @@ impl MessageCoordinationDelegate {
                 &participant.modelBinding.providerId, &participant.modelBinding.modelId,
             ).map_err(|error| error.to_string())?;
             if AIMessageManager::shouldGenerateSummary(
-                window, settings.context.maxContextTokens(),
+                window, settings.context.maxContextTokens,
                 settings.summary.tokenThresholdRatio(), settings.summary.enableSummary,
             ) {
                 return self.launchSummary(service, messages, ConversationSummaryRequest {
@@ -880,7 +880,7 @@ impl MessageCoordinationDelegate {
                     autoContinue: false, requireCurrentChat: false,
                     trigger: Some(SummaryTriggerContext {
                         current_tokens: window,
-                        max_tokens: settings.context.maxContextTokens(),
+                        max_tokens: settings.context.maxContextTokens,
                         token_usage_threshold: settings.summary.tokenThresholdRatio(),
                         trigger_point: SummaryTriggerPoint::AfterReply,
                     }),
@@ -1267,7 +1267,7 @@ mod summary_send_policy_tests {
     #[test]
     fn continued_and_background_tool_loops_keep_the_configured_token_guard() {
         let settings = ModelSummarySettings::default();
-        let maxTokens = ModelContextSpec::default().maxContextTokens();
+        let maxTokens = ModelContextSpec::default().maxContextTokens;
         for deferred in [false, true] {
             for background in [false, true] {
                 let options = ChatTurnOptions {

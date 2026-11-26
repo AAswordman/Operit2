@@ -23,7 +23,7 @@ fn staleModel(id: &str) -> ModelProfile {
     let mut model = ModelProfile::new(id.into());
     model.pricingOverride = Some(ModelPricing::token(99.0, None, 99.0, PricingCurrency::USD));
     model.contextOverride = Some(ModelContextSpec {
-        maxContextLength: 8.0,
+        maxContextTokens: 8_000,
     });
     model.capabilitiesOverride = ModelCapabilityOverrides {
         directImage: Some(false),
@@ -35,7 +35,7 @@ fn staleModel(id: &str) -> ModelProfile {
     model.requestOverride.enableClaude1hPromptCache = Some(true);
     model.listed = Some(ModelListedSpec {
         context: Some(ModelContextSpec {
-            maxContextLength: 4.0,
+            maxContextTokens: 4_000,
         }),
         capabilities: Some(ModelCapabilities::default()),
         supportsStructuredTools: Some(false),
@@ -161,10 +161,10 @@ fn schema_eight_reidentifies_models_and_initializes_context_and_tools_once() {
             "provider credentials and settings must survive"
         );
         for (modelId, context, threshold, tools) in [
-            ("migration-large", 1048.576, 0.28, true),
-            ("migration-small", 128.0, 0.85, true),
-            ("migration-no-tools", 400.0, 0.75, false),
-            ("migration-unknown", 200.0, 0.85, true),
+            ("migration-large", 1_048_576, 0.28, true),
+            ("migration-small", 128_000, 0.85, true),
+            ("migration-no-tools", 400_000, 0.75, false),
+            ("migration-unknown", 200_000, 0.85, true),
         ] {
             let profile = manager.getModelProfile(providerId, modelId).unwrap();
             assert!(profile.pricingOverride.is_none());
@@ -187,7 +187,7 @@ fn schema_eight_reidentifies_models_and_initializes_context_and_tools_once() {
                 (modelId == "migration-unknown").then_some(true)
             );
             let resolved = manager.getResolvedModelConfig(providerId, modelId).unwrap();
-            assert!((resolved.context.maxContextLength - context).abs() < 1e-3);
+            assert_eq!(resolved.context.maxContextTokens, context);
             assert_eq!(resolved.capabilities.toolCall, tools);
             assert_eq!(resolved.request.supportsStructuredTools, tools);
             assert_eq!(
@@ -216,8 +216,8 @@ fn schema_eight_reidentifies_models_and_initializes_context_and_tools_once() {
         )),
         MODEL_CONFIGS_PREFERENCES_PATH,
     )
-    .withMigration(9, |_, _| panic!("completed migration must not run again"));
-    assert_eq!(reopened.schemaVersion().unwrap(), 9);
+    .withMigration(10, |_, _| panic!("completed migration must not run again"));
+    assert_eq!(reopened.schemaVersion().unwrap(), 10);
     let persisted = reopened.data().unwrap();
     let savedLocal: ProviderProfile = serde_json::from_value(
         persisted

@@ -305,7 +305,7 @@ void main() {
         endpoint: '',
         modelId: 'gpt-5',
         capabilities: capabilities,
-        context: core.ModelContextSpec(maxContextLength: 272),
+        context: core.ModelContextSpec(maxContextTokens: 272_000),
         pricing: pricing,
         thinking: core.ModelThinkingSpec(
           supported: false,

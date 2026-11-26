@@ -557,7 +557,7 @@ impl Operit1ModelConfig {
 fn buildModelProfile(modelId: &str, config: &Operit1ModelConfig) -> Result<ModelProfile, String> {
     let mut model = ModelProfile::new(modelId.to_string());
     model.contextOverride = Some(ModelContextSpec {
-        maxContextLength: config.maxContextLength,
+        maxContextTokens: ModelContextSpec::from_kilo_tokens(f64::from(config.maxContextLength)),
     });
     // Operit1 stored these as the user's settings, so they stay the user's here.
     model.capabilitiesOverride = ModelCapabilityOverrides {

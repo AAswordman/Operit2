@@ -345,7 +345,7 @@ class _DeviceStatsBridge extends OperitRuntimeBridge {
         currentWindowSize: currentWindowSize,
         inputTokenCount: 8972,
         outputTokenCount: 96,
-        maxContextLength: 1000,
+        maxContextTokens: 1_000_000,
       ).toJson(),
       'deviceSpaceTopology' => RuntimeDeviceSpaceTopology(
         currentDeviceId: 'local',

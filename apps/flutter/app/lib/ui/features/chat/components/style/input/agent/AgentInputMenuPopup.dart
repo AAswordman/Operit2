@@ -352,7 +352,7 @@ class _ChatSessionSummarySectionState
     extends State<_ChatSessionSummarySection> {
   Timer? _summaryTimer;
   bool _pollingSummary = false;
-  Future<double>? _maxContextLengthFuture;
+  Future<int>? _maxContextTokensFuture;
   int _currentWindowSize = 0;
   int _inputTokenCount = 0;
   int _outputTokenCount = 0;
@@ -364,7 +364,7 @@ class _ChatSessionSummarySectionState
   void initState() {
     super.initState();
     if (widget.showNativeStatistics) {
-      _maxContextLengthFuture = _loadSummary();
+      _maxContextTokensFuture = _loadSummary();
       _summaryTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
         if (_pollingSummary) return;
         _pollingSummary = true;
@@ -376,7 +376,7 @@ class _ChatSessionSummarySectionState
               widget.currentChatId == chatId &&
               widget.viewModel == viewModel) {
             setState(() {
-              _maxContextLengthFuture = Future.value(value);
+              _maxContextTokensFuture = Future.value(value);
             });
           }
         } catch (error) {
@@ -397,7 +397,7 @@ class _ChatSessionSummarySectionState
       _currentWindowSize = 0;
       _inputTokenCount = 0;
       _outputTokenCount = 0;
-      _maxContextLengthFuture = _loadSummary();
+      _maxContextTokensFuture = _loadSummary();
     }
   }
 
@@ -530,7 +530,7 @@ class _ChatSessionSummarySectionState
   );
 
   /// Reads native token statistics without consulting any plugin domain records.
-  Future<double> _loadSummary() async {
+  Future<int> _loadSummary() async {
     final chatId = widget.currentChatId;
     final viewModel = widget.viewModel;
     final summary = await viewModel.chatCore.chatInputMenuSummary(
@@ -545,7 +545,7 @@ class _ChatSessionSummarySectionState
         _outputTokenCount = summary.outputTokenCount;
       });
     }
-    return summary.maxContextLength;
+    return summary.maxContextTokens;
   }
 
   /// Stops overlay observers without cancelling the already detached presentation.
@@ -574,8 +574,8 @@ class _ChatSessionSummarySectionState
 
   /// Reports native statistics failures separately from plugin-owned selectors.
   Widget _buildNativeStatistics(ColorScheme colorScheme, TextTheme textTheme) =>
-      FutureBuilder<double>(
-        future: _maxContextLengthFuture,
+      FutureBuilder<int>(
+        future: _maxContextTokensFuture,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return Padding(
@@ -583,10 +583,7 @@ class _ChatSessionSummarySectionState
               child: Text('统计加载失败：${snapshot.error}'),
             );
           }
-          final maxContextLength = snapshot.data;
-          final maxContextTokens = maxContextLength == null
-              ? null
-              : (maxContextLength * 1000).round();
+          final maxContextTokens = snapshot.data;
           final contextUsagePercentage = maxContextTokens == null
               ? null
               : _contextUsagePercentage(maxContextTokens);

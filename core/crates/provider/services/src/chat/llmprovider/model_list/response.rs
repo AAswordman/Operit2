@@ -105,7 +105,7 @@ fn read_context(
         read_optional_f32(item, operation.result.maxContextLengthJsonPath.as_deref())?;
     match max_context_length {
         Some(max_context_length) => Ok(Some(ModelContextSpec {
-            maxContextLength: max_context_length / 1000.0,
+            maxContextTokens: ModelContextSpec::normalize_tokens(f64::from(max_context_length)),
         })),
         None => Ok(None),
     }

@@ -134,7 +134,7 @@ pub struct ChatInputMenuSummary {
     pub currentWindowSize: i64,
     pub inputTokenCount: i64,
     pub outputTokenCount: i64,
-    pub maxContextLength: f64,
+    pub maxContextTokens: i64,
 }
 
 /// Bounded read-only plugin projection for the chat's execution Core.
@@ -3122,7 +3122,7 @@ impl ChatServiceCore {
             currentWindowSize: if liveWindowSize > 0 { liveWindowSize } else { persistedWindowSize },
             inputTokenCount: chat.as_ref().map(|c| c.inputTokens).unwrap_or(0),
             outputTokenCount: chat.as_ref().map(|c| c.outputTokens).unwrap_or(0),
-            maxContextLength: f64::from(config.context.maxContextLength),
+            maxContextTokens: i64::from(config.context.maxContextTokens),
         })
     }
 

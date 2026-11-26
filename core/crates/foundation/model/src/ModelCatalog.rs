@@ -174,7 +174,11 @@ fn parseModelRow(line: &str) -> Result<ModelCatalogEntry, String> {
             currency,
         }),
         context: Some(ModelContextSpec {
-            maxContextLength: parseF32(parts[8], "max context length", line)?,
+            maxContextTokens: ModelContextSpec::from_kilo_tokens(f64::from(parseF32(
+                parts[8],
+                "max context length",
+                line,
+            )?)),
         }),
         capabilities: Some(ModelCapabilities {
             directImage: parseBool(parts[9], "direct image", line)?,

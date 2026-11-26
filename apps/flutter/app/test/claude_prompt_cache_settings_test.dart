@@ -133,7 +133,7 @@ class _ClaudeSettingsBridge extends OperitRuntimeBridge {
     llamaKvUnified: false,
     llamaOffloadKqv: false,
   );
-  static const contextSpec = core.ModelContextSpec(maxContextLength: 200);
+  static const contextSpec = core.ModelContextSpec(maxContextTokens: 200_000);
 
   core.ModelProfile get model => core.ModelProfile(
     id: binding.modelId,
