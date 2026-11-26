@@ -1808,6 +1808,17 @@ pub struct TerminalSessionInfo {
     pub isNewSession: bool,
 }
 
+/// Opens either an interactive shell or one command process, with its directory set before execution.
+#[derive(Clone, Debug)]
+pub struct TerminalSessionRequest {
+    pub sessionName: String,
+    pub terminal: String,
+    pub terminalType: String,
+    pub workingDir: Option<String>,
+    /// None opens an interactive shell; Some starts a fresh command whose process exit is final.
+    pub command: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalCommandOutput {
     pub command: String,
@@ -1908,6 +1919,10 @@ pub fn terminalSessionKey(terminalType: &str, name: &str) -> String {
 }
 
 pub trait TerminalHost: Send + Sync {
+    /// Starts a fresh PTY process without typing a script into an existing interactive shell.
+    fn openTerminalSession(&self, _request: &TerminalSessionRequest) -> HostResult<TerminalSessionInfo> {
+        Err(HostError::new("This terminal host does not implement process-owned sessions"))
+    }
     /// Lists archives executable by this host; an empty catalog means installation is unsupported.
     fn terminalDistributions(&self) -> HostResult<Vec<TerminalDistribution>> {
         Ok(Vec::new())

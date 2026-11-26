@@ -31,6 +31,15 @@ test('managed SDK run and wait expose typed receipts without disposing the backg
   assert.equal(f.calls.length, 2);
 });
 
+test('SDK interactive open has a distinct request and returns the real host identity', async () => {
+  const f = fixture();
+  const opening = f.run("Tools.System.terminal.open({sessionName:'interactive',profileId:'ubuntu_a'})");
+  assert.deepEqual(structuredClone(f.calls[0].parameters), {observation:{op:'session',sessionName:'interactive',profileId:'ubuntu_a'}});
+  f.settle(0,{result:{sessionId:'raw-shell',sessionName:'interactive',terminalType:'bash',isNewSession:true}});
+  assert.equal((await opening).sessionId,'raw-shell');
+  assert.equal(f.calls.length,1);
+});
+
 test('managed SDK rejects invalid wait budgets before submitting any command', () => {
   const f = fixture();
   for (const value of ['-1', 'NaN', 'Infinity', '1.5', "'1000'"]) {

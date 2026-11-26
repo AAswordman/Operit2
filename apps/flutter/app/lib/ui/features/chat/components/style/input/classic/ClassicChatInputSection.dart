@@ -11,11 +11,13 @@ import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
 import '../../../../../../../l10n/generated/app_localizations.dart';
 import '../../../../../../common/layout/OverlayGeometry.dart';
 import '../../../../../../theme/OperitTheme.dart';
-import '../../../../../packages/utils/PackageDisplayUtils.dart';
+import '../../../../voice_input/ChatVoiceInputCard.dart';
+import '../../../../voice_input/ChatVoiceInputSession.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 import '../../../ChatLayoutMetrics.dart';
 import '../agent/AgentInputMenuPopup.dart';
 import '../agent/AgentModelSelectorPopup.dart';
+import '../common/AttachmentPackageSelectorDialog.dart';
 import '../common/ChatAttachmentImagePreview.dart';
 import '../common/ChatAttachmentMenuPopup.dart';
 import '../common/ChatComposerSendActionMenu.dart';
@@ -44,9 +46,7 @@ class ClassicChatInputSection extends StatefulWidget {
     this.onGuideMessage,
     this.onInterruptAndSendMessage,
     required this.onCancelMessage,
-    required this.isSpeechRecording,
-    required this.isSpeechTranscribing,
-    required this.onSpeechInput,
+    required this.voiceInput,
     this.pendingQueueMessages = const <PendingQueueMessageItem>[],
     this.isPendingQueueExpanded = true,
     this.onPendingQueueExpandedChange,
@@ -67,6 +67,8 @@ class ClassicChatInputSection extends StatefulWidget {
     this.onAttachNotifications,
     this.onAttachLocation,
     this.onAttachPackage,
+    this.onMentionEnter,
+    this.onMentionKeyEvent,
   });
 
   final String hintSuffix;
@@ -83,9 +85,7 @@ class ClassicChatInputSection extends StatefulWidget {
   final VoidCallback? onGuideMessage;
   final VoidCallback? onInterruptAndSendMessage;
   final VoidCallback onCancelMessage;
-  final bool isSpeechRecording;
-  final bool isSpeechTranscribing;
-  final VoidCallback onSpeechInput;
+  final ChatVoiceInputSession voiceInput;
   final List<PendingQueueMessageItem> pendingQueueMessages;
   final bool isPendingQueueExpanded;
   final ValueChanged<bool>? onPendingQueueExpandedChange;
@@ -106,6 +106,8 @@ class ClassicChatInputSection extends StatefulWidget {
   final VoidCallback? onAttachNotifications;
   final VoidCallback? onAttachLocation;
   final ValueChanged<String>? onAttachPackage;
+  final bool Function()? onMentionEnter;
+  final KeyEventResult Function(KeyEvent event)? onMentionKeyEvent;
 
   /// Creates the mutable state for the classic input section.
   @override
@@ -118,7 +120,11 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
   final GlobalKey _inputMenuPopupTargetKey = GlobalKey();
   final GlobalKey _attachmentPopupTargetKey = GlobalKey();
   OverlayEntry? _inputMenuPopupEntry;
+  final GlobalKey<InputMenuPopupTransitionState> _inputMenuTransitionKey =
+      GlobalKey<InputMenuPopupTransitionState>();
   int _inputMenuContextGeneration = 0;
+  int _inputMenuOverlayGeneration = 0;
+  bool _inputMenuClosing = false;
   OverlayEntry? _attachmentPopupEntry;
   bool _draggingFiles = false;
   bool _inputExpanded = false;
@@ -185,8 +191,17 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     if (_inputMenuPopupEntry == null) {
       _dismissAttachmentPopup();
       _showInputMenuPopup();
+      if (mounted) {
+        setState(() {});
+      }
+    } else if (_inputMenuClosing) {
+      _inputMenuClosing = false;
+      _inputMenuTransitionKey.currentState?.cancelDismiss();
+      if (mounted) {
+        setState(() {});
+      }
     } else {
-      _dismissInputMenuPopup();
+      _dismissInputMenuPopupAnimated();
     }
   }
 
@@ -206,6 +221,8 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     final viewModel = widget.viewModel;
     final chatId = widget.currentChatId;
     final generation = ++_inputMenuContextGeneration;
+    ++_inputMenuOverlayGeneration;
+    _inputMenuClosing = false;
 
     /// Keeps detached presentations owned by this exact live composer context.
     bool isChatContextCurrent() =>
@@ -219,28 +236,33 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
           context,
           targetKey: _inputMenuPopupTargetKey,
           alignEnd: false,
-          maxWidth: 300,
+          maxWidth: 280,
+          maxAllowedHeight: 380,
         );
         return _ClassicPopupShell(
           left: placement.left,
           bottom: placement.bottom,
           width: placement.width,
           maxHeight: placement.maxHeight,
-          onDismiss: _dismissInputMenuPopup,
-          child: AgentInputMenuPopup(
-            viewModel: viewModel,
-            currentChatId: chatId,
-            onDismiss: _dismissInputMenuPopup,
-            isChatContextCurrent: isChatContextCurrent,
-            showNativeStatistics: false,
-            leadingChildren: <Widget>[
-              AgentModelMenuSection(
-                viewModel: viewModel,
-                currentChatId: chatId,
-                onDismiss: _dismissInputMenuPopup,
-              ),
-              const Divider(height: 1),
-            ],
+          onDismiss: _dismissInputMenuPopupAnimated,
+          child: InputMenuPopupTransition(
+            key: _inputMenuTransitionKey,
+            alignment: Alignment.bottomLeft,
+            child: AgentInputMenuPopup(
+              viewModel: viewModel,
+              currentChatId: chatId,
+              onDismiss: _dismissInputMenuPopup,
+              isChatContextCurrent: isChatContextCurrent,
+              showNativeStatistics: false,
+              leadingChildren: <Widget>[
+                AgentModelMenuSection(
+                  viewModel: viewModel,
+                  currentChatId: chatId,
+                  onDismiss: _dismissInputMenuPopup,
+                ),
+                const Divider(height: 1),
+              ],
+            ),
           ),
         );
       },
@@ -294,6 +316,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     required GlobalKey targetKey,
     required bool alignEnd,
     required double maxWidth,
+    double maxAllowedHeight = 420.0,
   }) {
     final mediaQuery = MediaQuery.of(context);
     final overlaySize = overlaySizeOf(context);
@@ -308,7 +331,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     final bottom = overlaySize.height - targetRect.top + 8;
     final maxHeight = (targetRect.top - mediaQuery.padding.top - 20).clamp(
       96.0,
-      420.0,
+      maxAllowedHeight,
     );
     return _ClassicPopupPlacement(
       left: left,
@@ -351,13 +374,9 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
   /// Opens the package selector dialog for package attachments.
   Future<void> _showAttachmentPackageSelector() async {
     _dismissAttachmentPopup();
-    final packageName = await showDialog<String>(
+    final packageName = await showAttachmentPackageSelectorDialog(
       context: context,
-      builder: (context) {
-        return _ClassicAttachmentPackageSelectorDialog(
-          viewModel: widget.viewModel,
-        );
-      },
+      viewModel: widget.viewModel,
     );
     if (packageName == null || packageName.trim().isEmpty) {
       return;
@@ -365,10 +384,47 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     widget.onAttachPackage?.call(packageName);
   }
 
+  /// Plays the reverse exit transition before removing the input settings popup.
+  void _dismissInputMenuPopupAnimated() {
+    if (_inputMenuPopupEntry == null || _inputMenuClosing) {
+      return;
+    }
+    final generation = _inputMenuOverlayGeneration;
+    _inputMenuClosing = true;
+    if (mounted) {
+      setState(() {});
+    }
+    final transition = _inputMenuTransitionKey.currentState;
+    if (transition == null) {
+      _removeInputMenuPopupImmediately();
+      return;
+    }
+    unawaited(
+      transition.dismiss().whenComplete(() {
+        if (!mounted ||
+            generation != _inputMenuOverlayGeneration ||
+            !_inputMenuClosing) {
+          return;
+        }
+        _removeInputMenuPopupImmediately();
+      }),
+    );
+  }
+
   /// Removes the input settings popup.
   void _dismissInputMenuPopup() {
+    _removeInputMenuPopupImmediately();
+  }
+
+  void _removeInputMenuPopupImmediately({bool notify = true}) {
+    final wasOpen = _inputMenuPopupEntry != null;
+    _inputMenuOverlayGeneration++;
+    _inputMenuClosing = false;
     _inputMenuPopupEntry?.remove();
     _inputMenuPopupEntry = null;
+    if (notify && wasOpen && mounted) {
+      setState(() {});
+    }
   }
 
   /// Removes the attachment popup.
@@ -383,7 +439,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     _inputMenuContextGeneration++;
     WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_handleInputChanged);
-    _dismissInputMenuPopup();
+    _removeInputMenuPopupImmediately(notify: false);
     _dismissAttachmentPopup();
     super.dispose();
   }
@@ -392,6 +448,9 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
   @override
   Widget build(BuildContext context) {
     final snapshot = OperitTheme.of(context).themePreferenceSnapshot;
+    final voiceTextStyle =
+        Theme.of(context).textTheme.bodyMedium?.copyWith(height: 20 / 14) ??
+        const TextStyle(fontSize: 14, height: 20 / 14);
     final processing = widget.isLoading || widget.inputState.isProcessing;
     final hasDraftText = widget.controller.text.trim().isNotEmpty;
     final canSendMessage = hasDraftText || widget.attachments.isNotEmpty;
@@ -451,36 +510,51 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
                             onPreviewAttachment: widget.onPreviewAttachment,
                           ),
                         ),
-                      _ClassicInputBody(
-                        hintSuffix: widget.hintSuffix,
-                        controller: widget.controller,
-                        focusNode: widget.focusNode,
-                        inputState: widget.inputState,
-                        settingsKey: _inputMenuPopupTargetKey,
-                        attachmentKey: _attachmentPopupTargetKey,
-                        processing: processing,
-                        hasDraftText: hasDraftText,
-                        canSendMessage: canSendMessage,
-                        showCancelAction: showCancelAction,
-                        showQueueAction: showQueueAction,
-                        hostMissing: widget.hostMissing,
-                        onSendMessage: widget.onSendMessage,
-                        onQueueMessage: widget.onQueueMessage,
-                        onGuideMessage: widget.onGuideMessage,
-                        onInterruptAndSendMessage:
-                            widget.onInterruptAndSendMessage,
-                        onCancelMessage: widget.onCancelMessage,
-                        isSpeechRecording: widget.isSpeechRecording,
-                        isSpeechTranscribing: widget.isSpeechTranscribing,
-                        onSpeechInput: widget.onSpeechInput,
-                        inputExpanded: _inputExpanded,
-                        onToggleInputExpansion: _toggleInputExpansion,
-                        onAttachFiles: widget.onAttachFiles,
-                        onPasteImages: widget.onPasteImages,
-                        draggingFiles: _draggingFiles,
-                        onDraggingFilesChanged: _setDraggingFiles,
-                        onSettings: _toggleInputMenuPopup,
-                        onAttach: _toggleAttachmentPopup,
+                      ChatVoiceInputSwitcher(
+                        session: widget.voiceInput,
+                        textStyle: voiceTextStyle,
+                        textOrigin: themeClassicComposerTextOrigin,
+                        surfaceBottomInset: themeComposerBottomInset(
+                          insets: themeClassicComposerInsets(
+                            floating: snapshot.chatInputFloating,
+                          ),
+                          floating: snapshot.chatInputFloating,
+                          systemBottomInset: MediaQuery.paddingOf(context).bottom,
+                        ),
+                        composer: _ClassicInputBody(
+                          hintSuffix: widget.hintSuffix,
+                          controller: widget.controller,
+                          focusNode: widget.focusNode,
+                          inputState: widget.inputState,
+                          settingsKey: _inputMenuPopupTargetKey,
+                          inputMenuOpen:
+                              _inputMenuPopupEntry != null &&
+                              !_inputMenuClosing,
+                          attachmentKey: _attachmentPopupTargetKey,
+                          processing: processing,
+                          hasDraftText: hasDraftText,
+                          canSendMessage: canSendMessage,
+                          showCancelAction: showCancelAction,
+                          showQueueAction: showQueueAction,
+                          hostMissing: widget.hostMissing,
+                          onSendMessage: widget.onSendMessage,
+                          onQueueMessage: widget.onQueueMessage,
+                          onGuideMessage: widget.onGuideMessage,
+                          onInterruptAndSendMessage:
+                              widget.onInterruptAndSendMessage,
+                          onCancelMessage: widget.onCancelMessage,
+                          voiceInput: widget.voiceInput,
+                          inputExpanded: _inputExpanded,
+                          onToggleInputExpansion: _toggleInputExpansion,
+                          onAttachFiles: widget.onAttachFiles,
+                          onPasteImages: widget.onPasteImages,
+                          draggingFiles: _draggingFiles,
+                          onDraggingFilesChanged: _setDraggingFiles,
+                          onSettings: _toggleInputMenuPopup,
+                          onAttach: _toggleAttachmentPopup,
+                          onMentionEnter: widget.onMentionEnter,
+                          onMentionKeyEvent: widget.onMentionKeyEvent,
+                        ),
                       ),
                     ],
                   ),
@@ -501,6 +575,7 @@ class _ClassicInputBody extends StatelessWidget {
     required this.focusNode,
     required this.inputState,
     required this.settingsKey,
+    required this.inputMenuOpen,
     required this.attachmentKey,
     required this.processing,
     required this.hasDraftText,
@@ -513,9 +588,7 @@ class _ClassicInputBody extends StatelessWidget {
     this.onGuideMessage,
     this.onInterruptAndSendMessage,
     required this.onCancelMessage,
-    required this.isSpeechRecording,
-    required this.isSpeechTranscribing,
-    required this.onSpeechInput,
+    required this.voiceInput,
     required this.inputExpanded,
     required this.onToggleInputExpansion,
     required this.onAttachFiles,
@@ -524,6 +597,8 @@ class _ClassicInputBody extends StatelessWidget {
     required this.onDraggingFilesChanged,
     required this.onSettings,
     required this.onAttach,
+    this.onMentionEnter,
+    this.onMentionKeyEvent,
   });
 
   final String hintSuffix;
@@ -531,6 +606,7 @@ class _ClassicInputBody extends StatelessWidget {
   final FocusNode focusNode;
   final core_proxy.InputProcessingState inputState;
   final GlobalKey settingsKey;
+  final bool inputMenuOpen;
   final GlobalKey attachmentKey;
   final bool processing;
   final bool hasDraftText;
@@ -543,9 +619,7 @@ class _ClassicInputBody extends StatelessWidget {
   final VoidCallback? onGuideMessage;
   final VoidCallback? onInterruptAndSendMessage;
   final VoidCallback onCancelMessage;
-  final bool isSpeechRecording;
-  final bool isSpeechTranscribing;
-  final VoidCallback onSpeechInput;
+  final ChatVoiceInputSession voiceInput;
   final bool inputExpanded;
   final VoidCallback onToggleInputExpansion;
   final ValueChanged<List<String>>? onAttachFiles;
@@ -554,6 +628,8 @@ class _ClassicInputBody extends StatelessWidget {
   final ValueChanged<bool> onDraggingFilesChanged;
   final VoidCallback onSettings;
   final VoidCallback? onAttach;
+  final bool Function()? onMentionEnter;
+  final KeyEventResult Function(KeyEvent event)? onMentionKeyEvent;
 
   /// Builds the traditional text field and action buttons.
   @override
@@ -562,11 +638,7 @@ class _ClassicInputBody extends StatelessWidget {
     final colorScheme = theme.colorScheme;
     final l10n = AppLocalizations.of(context)!;
     final showMissingHost =
-        hostMissing &&
-        !showCancelAction &&
-        !showQueueAction &&
-        !isSpeechRecording &&
-        !isSpeechTranscribing;
+        hostMissing && !showCancelAction && !showQueueAction;
     final inputContent = ThemeClassicComposerBody(
       inputExpanded: inputExpanded,
       actionWidth:
@@ -580,35 +652,55 @@ class _ClassicInputBody extends StatelessWidget {
         inputExpanded: inputExpanded,
         canSendMessage: canSendMessage,
         onSendMessage: onSendMessage,
-        child: ChatPastedImageHandler(
-          focusNode: focusNode,
-          enabled: !isSpeechRecording && !isSpeechTranscribing,
-          onPasteImages: onPasteImages,
-          child: ThemeClassicComposerTextEditor(
-            controller: controller,
+        onMentionEnter: onMentionEnter,
+        onMentionKeyEvent: onMentionKeyEvent,
+          child: ChatPastedImageHandler(
             focusNode: focusNode,
-            hintText: '${l10n.askOperitHint}$hintSuffix',
-            inputExpanded: inputExpanded,
-            readOnly: isSpeechRecording || isSpeechTranscribing,
-            hasDraftText: hasDraftText,
+            enabled: true,
+            onPasteImages: onPasteImages,
+            child: ThemeClassicComposerTextEditor(
+              controller: controller,
+              focusNode: focusNode,
+              hintText: '${l10n.askOperitHint}$hintSuffix',
+              inputExpanded: inputExpanded,
+              readOnly: false,
+              hasDraftText: hasDraftText,
             transparentSurface: OperitTheme.of(
               context,
             ).themePreferenceSnapshot.transparentSurfaceEnabled,
             settings: KeyedSubtree(
               key: settingsKey,
-              child: _ClassicIconTapTarget(
-                icon: Icons.tune_outlined,
-                color: colorScheme.onSurfaceVariant,
-                onTap: onSettings,
-                imageAsset: OperitTheme.of(
-                  context,
-                ).themePreferenceSnapshot.inputSettingsAsset,
-                imageSize: OperitTheme.of(
-                  context,
-                ).themePreferenceSnapshot.inputSettingsAssetSize,
-                size: 18,
-                targetSize: 34,
-                tooltip: l10n.settings,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                decoration: BoxDecoration(
+                  color: inputMenuOpen
+                      ? colorScheme.primary.withValues(alpha: 0.14)
+                      : Colors.transparent,
+                  shape: BoxShape.circle,
+                ),
+                child: _ClassicIconTapTarget(
+                  icon: Icons.tune_outlined,
+                  iconWidget: InputMenuTuneSvgIcon(
+                    size: 17,
+                    color: inputMenuOpen
+                        ? colorScheme.primary
+                        : colorScheme.onSurfaceVariant,
+                  ),
+                  color: inputMenuOpen
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                  onTap: onSettings,
+                  imageAsset: OperitTheme.of(
+                    context,
+                  ).themePreferenceSnapshot.inputSettingsAsset,
+                  imageSize: OperitTheme.of(
+                    context,
+                  ).themePreferenceSnapshot.inputSettingsAssetSize,
+                  size: 18,
+                  targetSize: 34,
+                  tooltip: l10n.settings,
+                ),
               ),
             ),
             contentInsertionConfiguration:
@@ -678,71 +770,55 @@ class _ClassicInputBody extends StatelessWidget {
                 ? null
                 : resolveThemeInputActionAsset(
                     OperitTheme.of(context).themePreferenceSnapshot,
-                    isStop: isSpeechRecording || showCancelAction,
+                    isStop: showCancelAction,
                     isSend: showQueueAction || canSendMessage,
                   ),
             imageSize: showMissingHost
                 ? null
                 : resolveThemeInputActionAssetSize(
                     OperitTheme.of(context).themePreferenceSnapshot,
-                    isStop: isSpeechRecording || showCancelAction,
+                    isStop: showCancelAction,
                     isSend: showQueueAction || canSendMessage,
                   ),
-            processing: processing || isSpeechTranscribing,
-            progress: isSpeechTranscribing
-                ? null
-                : _classicProgressFor(inputState),
-            background: isSpeechRecording
-                ? colorScheme.error
-                : _classicActionBackground(
-                    colorScheme,
-                    showCancelAction: showCancelAction,
-                    showQueueAction: showQueueAction,
-                    canSend: canSendMessage,
-                  ),
-            foreground: isSpeechRecording
-                ? colorScheme.onError
-                : _classicActionForeground(
-                    colorScheme,
-                    showCancelAction: showCancelAction,
-                    showQueueAction: showQueueAction,
-                    canSend: canSendMessage,
-                  ),
-            icon: isSpeechRecording
-                ? Icons.stop
-                : isSpeechTranscribing
-                ? Icons.graphic_eq
-                : showMissingHost
+            processing: processing,
+            progress: _classicProgressFor(inputState),
+            background: _classicActionBackground(
+              colorScheme,
+              showCancelAction: showCancelAction,
+              showQueueAction: showQueueAction,
+              canSend: canSendMessage,
+            ),
+            foreground: _classicActionForeground(
+              colorScheme,
+              showCancelAction: showCancelAction,
+              showQueueAction: showQueueAction,
+              canSend: canSendMessage,
+            ),
+            icon: showMissingHost
                 ? Icons.device_unknown
                 : _classicActionIcon(
                     showCancelAction: showCancelAction,
                     showQueueAction: showQueueAction,
                     canSend: canSendMessage,
                   ),
-            tooltip: isSpeechRecording
-                ? '停止录音'
-                : isSpeechTranscribing
-                ? '正在识别'
-                : showCancelAction
+            tooltip: showCancelAction
                 ? l10n.cancel
                 : showQueueAction
                 ? l10n.chatQueueAddMessage
                 : showMissingHost
                 ? l10n.chatRouteClaimHostPrompt
                 : (canSendMessage ? l10n.send : ''),
-            onPressed: isSpeechTranscribing
-                ? null
-                : () {
-                    if (showCancelAction) {
-                      onCancelMessage();
-                    } else if (showQueueAction) {
-                      onQueueMessage();
-                    } else if (showMissingHost || canSendMessage) {
-                      onSendMessage();
-                    } else {
-                      onSpeechInput();
-                    }
-                  },
+            onPressed: () {
+              if (showCancelAction) {
+                onCancelMessage();
+              } else if (showQueueAction) {
+                onQueueMessage();
+              } else if (showMissingHost || canSendMessage) {
+                onSendMessage();
+              } else {
+                voiceInput.start();
+              }
+            },
           ),
         ],
       ),
@@ -848,161 +924,6 @@ class _ClassicPopupPlacement {
   final double bottom;
   final double width;
   final double maxHeight;
-}
-
-class _ClassicAttachmentPackageSelectorDialog extends StatefulWidget {
-  const _ClassicAttachmentPackageSelectorDialog({required this.viewModel});
-
-  final ChatViewModel viewModel;
-
-  /// Creates the mutable state for the package selector dialog.
-  @override
-  State<_ClassicAttachmentPackageSelectorDialog> createState() =>
-      _ClassicAttachmentPackageSelectorDialogState();
-}
-
-class _ClassicAttachmentPackageSelectorDialogState
-    extends State<_ClassicAttachmentPackageSelectorDialog> {
-  late final Future<List<_ClassicAttachmentPackageOption>> _future =
-      _loadClassicAttachmentPackageOptions(widget.viewModel);
-
-  /// Builds the package selector dialog.
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-    return AlertDialog(
-      title: Text(
-        l10n.attachmentPackageSelectTitle,
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
-      content: SizedBox(
-        width: 420,
-        child: FutureBuilder<List<_ClassicAttachmentPackageOption>>(
-          future: _future,
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
-            }
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const SizedBox(
-                height: 120,
-                child: Center(child: CircularProgressIndicator()),
-              );
-            }
-            final options = snapshot.requireData;
-            if (options.isEmpty) {
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 24),
-                child: Text(
-                  l10n.attachmentPackageEmpty,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              );
-            }
-            return ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 400),
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: options.length,
-                itemBuilder: (context, index) {
-                  final option = options[index];
-                  return _ClassicAttachmentPackageOptionTile(
-                    option: option,
-                    onTap: () => Navigator.of(context).pop(option.packageName),
-                  );
-                },
-              ),
-            );
-          },
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.cancel),
-        ),
-      ],
-    );
-  }
-}
-
-enum _ClassicAttachmentPackageKind { package, skill, mcp }
-
-class _ClassicAttachmentPackageOption {
-  const _ClassicAttachmentPackageOption({
-    required this.packageName,
-    required this.title,
-    required this.description,
-    required this.kind,
-  });
-
-  final String packageName;
-  final String title;
-  final String description;
-  final _ClassicAttachmentPackageKind kind;
-}
-
-class _ClassicAttachmentPackageOptionTile extends StatelessWidget {
-  const _ClassicAttachmentPackageOptionTile({
-    required this.option,
-    required this.onTap,
-  });
-
-  final _ClassicAttachmentPackageOption option;
-  final VoidCallback onTap;
-
-  /// Builds one package option tile.
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-          child: Row(
-            children: <Widget>[
-              Icon(Icons.auto_awesome, size: 20, color: colorScheme.primary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      option.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: colorScheme.onSurface,
-                      ),
-                    ),
-                    Text(
-                      _classicAttachmentPackageSubtitle(
-                        AppLocalizations.of(context)!,
-                        option,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _ClassicAttachmentStrip extends StatelessWidget {
@@ -1223,6 +1144,7 @@ class _ClassicIconTapTarget extends StatelessWidget {
     required this.color,
     required this.onTap,
     required this.tooltip,
+    this.iconWidget,
     this.imageAsset,
     this.imageSize,
     this.size = 20,
@@ -1233,6 +1155,7 @@ class _ClassicIconTapTarget extends StatelessWidget {
   final Color color;
   final VoidCallback? onTap;
   final String tooltip;
+  final Widget? iconWidget;
   final String? imageAsset;
   final double? imageSize;
   final double size;
@@ -1246,6 +1169,7 @@ class _ClassicIconTapTarget extends StatelessWidget {
       color: color,
       onTap: onTap,
       tooltip: tooltip,
+      iconWidget: iconWidget,
       imageAsset: imageAsset,
       imageSize: imageSize,
       size: size,
@@ -1373,100 +1297,4 @@ IconData _classicActionIcon({
     return Icons.send;
   }
   return Icons.mic;
-}
-
-/// Loads package attachment choices from package, skill, and MCP sources.
-Future<List<_ClassicAttachmentPackageOption>>
-_loadClassicAttachmentPackageOptions(ChatViewModel viewModel) async {
-  final packageManager = viewModel.clients.application.packageManager();
-  final skillRepository = viewModel.clients.application.skillRepository();
-  final permissionsMcpRuntimeMcpLocalServer =
-      viewModel.clients.permissionsMcpRuntimeMcpLocalServer;
-  final options = <String, _ClassicAttachmentPackageOption>{};
-
-  final availablePackages = await packageManager.getAvailablePackages();
-  final packageEntries = availablePackages.entries.toList()
-    ..sort((left, right) => left.key.compareTo(right.key));
-  for (final entry in packageEntries) {
-    final packageName = entry.key;
-    final isContainer = await packageManager.isToolPkgContainer(
-      packageName: packageName,
-    );
-    if (isContainer) {
-      continue;
-    }
-    options.putIfAbsent(
-      packageName,
-      () => _ClassicAttachmentPackageOption(
-        packageName: packageName,
-        title: toolPackageDisplayName(entry.value),
-        description: localizedText(entry.value.description),
-        kind: _ClassicAttachmentPackageKind.package,
-      ),
-    );
-  }
-
-  final skillPackages = await skillRepository.getAiVisibleSkillPackages();
-  final skillEntries = skillPackages.entries.toList()
-    ..sort((left, right) => left.key.compareTo(right.key));
-  for (final entry in skillEntries) {
-    options.putIfAbsent(
-      entry.key,
-      () => _ClassicAttachmentPackageOption(
-        packageName: entry.key,
-        title: entry.key,
-        description: entry.value.description,
-        kind: _ClassicAttachmentPackageKind.skill,
-      ),
-    );
-  }
-
-  final mcpServers = await permissionsMcpRuntimeMcpLocalServer
-      .getAllMcpServers();
-  final mcpMetadata = await permissionsMcpRuntimeMcpLocalServer
-      .getAllPluginMetadata();
-  final mcpEntries = mcpServers.entries.toList()
-    ..sort((left, right) => left.key.compareTo(right.key));
-  for (final entry in mcpEntries) {
-    final metadata = mcpMetadata[entry.key];
-    options.putIfAbsent(
-      entry.key,
-      () => _ClassicAttachmentPackageOption(
-        packageName: entry.key,
-        title: _classicMcpPackageTitle(entry.key, metadata),
-        description: metadata?.description ?? '',
-        kind: _ClassicAttachmentPackageKind.mcp,
-      ),
-    );
-  }
-
-  return options.values.toList(growable: false);
-}
-
-/// Resolves the visible MCP package title.
-String _classicMcpPackageTitle(
-  String serverName,
-  core_proxy.PluginMetadata? metadata,
-) {
-  final title = metadata?.name.trim() ?? '';
-  if (title.isEmpty) {
-    return serverName;
-  }
-  return title;
-}
-
-/// Builds the subtitle for a package attachment option.
-String _classicAttachmentPackageSubtitle(
-  AppLocalizations l10n,
-  _ClassicAttachmentPackageOption option,
-) {
-  final typeLabel = switch (option.kind) {
-    _ClassicAttachmentPackageKind.package => l10n.attachmentPackageKindPackage,
-    _ClassicAttachmentPackageKind.skill => l10n.attachmentPackageKindSkill,
-    _ClassicAttachmentPackageKind.mcp => l10n.attachmentPackageKindMcp,
-  };
-  if (option.description.trim().isEmpty) {
-    return typeLabel;
-  }
-  return '$typeLabel · ${option.description}';
 }

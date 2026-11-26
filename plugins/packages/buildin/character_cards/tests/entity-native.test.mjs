@@ -23,7 +23,7 @@ async function click(ui, key, prop = "onClick", payload) { return ui.dispatch(ke
 /** Supplies only explicitly controlled independent catalogues/native chat summaries, never entity CRUD. */
 async function environment(t, themes = [], runtimeGlobals = {}) {
   const plugin = await selectorEnvironment(t, {Theme: { async listConfigs() { return { configs: themes }; }
-  }}, runtimeGlobals, composeModules);
+  }}, { getLang: () => "zh-CN", ...runtimeGlobals }, composeModules);
   plugin.tools.Chat.listAll = async () => ({ totalCount: plugin.records.size, chats: [...plugin.records.keys()].map(id => ({ id, title: "Controlled native conversation", messageCount: 0, createdAt: "2026-10-08T12:00:00Z", updatedAt: "2026-10-08T12:00:00Z", isCurrent: true, inputTokens: 0, outputTokens: 0 })) });
   return plugin;
 }
@@ -168,6 +168,16 @@ test("native edit roots save/cancel/delete through the real generic terminal con
   assert.equal(composeNodes(remove.render().tree, node => node.props.key === "entity-error").length, 0, composeNodes(remove.render().tree, node => node.props.key === "entity-error").map(node => node.props.text).join("\n"));
   assert.deepEqual(plain(deleted.actionResult), { type: "toolpkg.presentation.complete", requestId: "edit-delete", value: { mode: "edit", entity: "card", id: card.id, operation: "deleted" } });
   assert.equal((await plugin.api("character.list", {})).some(value => value.id === card.id), false);
+});
+
+test("deletion confirmation follows the application language", async t => {
+  for (const [locale, expected] of [["zh-CN", "绑定它的聊天将解除绑定"], ["en-US", "Chats bound to it will be unbound"]]) {
+    const plugin = await environment(t, [], { getLang: () => locale });
+    const card = await plugin.api("character.create", { values: { name: "Test" } });
+    const ui = mount(plugin, "edit", "card", card.id); await ui.load();
+    await click(ui, "entity-delete");
+    assert.ok(composeNodes(ui.render().tree, node => typeof node.props.text === "string" && node.props.text.includes(expected)).length);
+  }
 });
 
 test("invalid native drafts remain visible and cancellable without writes or premature completion", async t => {

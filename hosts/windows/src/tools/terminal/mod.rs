@@ -6,7 +6,6 @@ mod conpty;
 mod powershell_runtime;
 mod wsl;
 
-use operit_host_api::TerminalControl::{controlToSequence, normalizeControl};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -66,7 +65,9 @@ struct PtySession {
     commandOutput: PtyCommandOutput,
     screenOutput: Arc<Mutex<VecDeque<u8>>>,
     commandRunning: bool,
+    processOwned: bool,
     exitCode: Option<i32>,
+    scriptFile: Option<tempfile::TempPath>,
 }
 
 type PtyCommandOutput = Arc<operit_host_api::TerminalCommand::TerminalCommandBuffer>;
@@ -103,6 +104,18 @@ impl WindowsTerminalHost {
 }
 
 impl TerminalHost for WindowsTerminalHost {
+    /// Starts a complete command directly through ConPTY without typing into a line editor.
+    fn openTerminalSession(&self, request: &operit_host_api::TerminalSessionRequest) -> HostResult<TerminalSessionInfo> {
+        requireNativeTerminal(&request.terminal)?;
+        let (terminalType, kind) = normalizeTerminalType(&request.terminalType)?;
+        let name = nonBlank(&request.sessionName, "session_name")?;
+        let directory = match &request.workingDir { Some(directory) => directory.clone(), None => std::env::current_dir()?.to_string_lossy().into_owned() };
+        let session = createPtyProcess(&self.powershell, self.profile.as_ref(), name.clone(), terminalType.clone(), kind, directory, 24, 80, request.command.as_deref(), false)?;
+        let id = nextSessionId();
+        self.lockState()?.ptySessions.insert(id.clone(), session);
+        Ok(TerminalSessionInfo { sessionId: id, sessionName: name, platform: PLATFORM.into(), terminal: TERMINAL.into(), terminalType, isNewSession: true })
+    }
+
     /// Registers configurable interpreter executables and launcher argument prefixes.
     fn terminalProfileSupport(&self) -> HostResult<Vec<operit_host_api::TerminalProfileSupport>> {
         let distributions = wsl::registered_distributions()?;
@@ -268,15 +281,13 @@ impl TerminalHost for WindowsTerminalHost {
     }
 
     fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
-        let mut state = self.lockState()?;
-        let session = state
-            .ptySessions
-            .get_mut(sessionId)
-            .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?;
-        let mut writer = session
-            .writer
-            .lock()
-            .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
+        let writer = {
+            let state = self.lockState()?;
+            let session = state.ptySessions.get(sessionId)
+                .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?;
+            session.writer.clone()
+        };
+        let mut writer = writer.lock().map_err(|_| HostError::new("PTY writer mutex poisoned"))?;
         writer.write_all(data)?;
         writer.flush()?;
         Ok(data.len())
@@ -303,6 +314,8 @@ impl TerminalHost for WindowsTerminalHost {
         match session.process.try_wait()? {
             Some(code) => {
                 session.exitCode = Some(code);
+                session.commandRunning = false;
+                session.scriptFile.take();
                 Ok(Some(code))
             }
             None => Ok(None),
@@ -330,7 +343,8 @@ impl TerminalHost for WindowsTerminalHost {
                     session.exitCode = Some(code);
                 }
             }
-            if session.exitCode.is_some() {
+            if session.exitCode.is_some() { session.commandRunning = false; session.scriptFile.take(); }
+            if session.exitCode.is_some() && !session.processOwned {
                 continue;
             }
             entries.push(TerminalSessionListEntry {
@@ -469,20 +483,9 @@ impl TerminalHost for WindowsTerminalHost {
         control: Option<&str>,
     ) -> HostResult<TerminalInputOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
-        if input.is_none() && control.and_then(normalizeControl).is_none() {
-            return Err(HostError::new(
-                "At least one of input or control is required",
-            ));
-        }
-        let mut state = self.lockState()?;
-        let session = state
-            .ptySessions
-            .get_mut(&normalizedSessionId)
-            .ok_or_else(|| {
-                HostError::new(format!("Terminal session does not exist: {sessionId}"))
-            })?;
-        let acceptedChars =
-            applyPtyTerminalInput(session, input, control.and_then(normalizeControl))?;
+        let data = operit_host_api::TerminalControl::terminalInput(input, control)?;
+        self.writePtySession(&normalizedSessionId, data.as_bytes())?;
+        let acceptedChars = data.chars().count();
         Ok(TerminalInputOutput {
             sessionId: normalizedSessionId,
             acceptedChars,
@@ -527,7 +530,16 @@ impl TerminalHost for WindowsTerminalHost {
             .ok_or_else(|| {
                 HostError::new(format!("Terminal session does not exist: {sessionId}"))
             })?;
-        let content = ptyScreenContent(session)?;
+        if session.processOwned && session.exitCode.is_none() {
+            session.exitCode = session.process.try_wait()?;
+            if session.exitCode.is_some() { session.commandRunning = false; session.scriptFile.take(); }
+        }
+        let terminalType = session.terminalType.clone();
+        let commandRunning = session.commandRunning;
+        let screenOutput = session.screenOutput.clone();
+        let (screenRows, screenCols) = (session.process.rows, session.process.cols);
+        drop(state);
+        let content = ptyScreenContent(&screenOutput, screenRows, screenCols)?;
         let rows = content.lines().count();
         let cols = content
             .lines()
@@ -538,11 +550,11 @@ impl TerminalHost for WindowsTerminalHost {
             sessionId: normalizedSessionId,
             platform: PLATFORM.to_string(),
             terminal: TERMINAL.to_string(),
-            terminalType: session.terminalType.clone(),
+            terminalType,
             rows,
             cols,
             content,
-            commandRunning: session.commandRunning,
+            commandRunning,
         })
     }
 }
@@ -816,10 +828,26 @@ fn createPtySession(
     rows: u16,
     cols: u16,
 ) -> HostResult<PtySession> {
-    let command = match profile {
-        Some(profile) => configuredPtyCommand(profile, kind, &workingDir)?,
-        None => ptyCommand(powershell, kind, &workingDir)?,
-    };
+    createPtyProcess(powershell, profile, sessionName, terminalType, kind, workingDir, rows, cols, None, true)
+}
+
+/// Reuses ConPTY readers and input while letting the child process own completion.
+fn createPtyProcess(powershell: &PowerShellSource, profile: Option<&operit_host_api::TerminalProfile>,
+    sessionName: String, terminalType: String, kind: TerminalKind, workingDir: String,
+    rows: u16, cols: u16, script: Option<&str>, managedPrompt: bool) -> HostResult<PtySession> {
+    let scriptFile = script.map(|script| -> HostResult<tempfile::TempPath> {
+        let extension = match kind { TerminalKind::Bash => ".sh", TerminalKind::PowerShell => ".ps1" };
+        let mut file = tempfile::Builder::new().prefix("operit-command-").suffix(extension).tempfile()?;
+        file.write_all(script.as_bytes())?;
+        file.flush()?;
+        Ok(file.into_temp_path())
+    }).transpose()?;
+    let command = if managedPrompt {
+        match profile {
+            Some(profile) => configuredPtyCommand(profile, kind, &workingDir)?,
+            None => ptyCommand(powershell, kind, &workingDir)?,
+        }
+    } else { processCommand(powershell, profile, kind, &workingDir, scriptFile.as_deref())? };
     let (process, writer, reader) = conpty::Process::spawn(command, rows, cols)?;
     let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(Box::new(writer)));
     let output = Arc::new(Mutex::new(VecDeque::new()));
@@ -849,13 +877,14 @@ fn createPtySession(
                         let visibleChunk = stripPtyPromptMarkers(&commandChunk);
                         appendPtyOutput(&outputForThread, &visibleChunk, PTY_OUTPUT_LIMIT);
                         appendPtyOutput(&screenOutputForThread, &visibleChunk, PTY_OUTPUT_LIMIT);
-                        appendPtyCommandOutput(&commandOutputForThread, &commandChunk);
+                        if managedPrompt { appendPtyCommandOutput(&commandOutputForThread, &commandChunk); }
                     }
                     }
                 }
             }.await;
             commandOutputForThread.fail(result.unwrap_err());
         })))?;
+    if managedPrompt {
     operit_host_native_common::waitForTerminalPrompt(
         &commandOutput,
         10000,
@@ -864,6 +893,7 @@ fn createPtySession(
         |_| HostError::new("Timed out waiting for terminal prompt"),
     )?;
     clearPtyCommandOutput(&commandOutput)?;
+    }
     Ok(PtySession {
         sessionName,
         terminalType,
@@ -874,9 +904,48 @@ fn createPtySession(
         output,
         commandOutput,
         screenOutput,
-        commandRunning: false,
+        commandRunning: !managedPrompt,
+        processOwned: !managedPrompt,
         exitCode: None,
+        scriptFile,
     })
+}
+
+/// Builds raw interpreter arguments while preserving the selected runtime and launcher environment.
+fn processCommand(powershell: &PowerShellSource, profile: Option<&operit_host_api::TerminalProfile>,
+    kind: TerminalKind, directory: &str, script: Option<&Path>) -> HostResult<CommandBuilder> {
+    if let Some(profile) = profile {
+        if let Some(distribution) = profile.options.get("wslDistribution") {
+            let mut command = CommandBuilder::new(configuredExecutable(profile)?);
+            command.args(operit_host_api::TerminalProfiles::profileArguments(profile)?);
+            command.args(["--distribution", distribution, "--cd", directory, "--exec", "/usr/bin/env",
+                "TERM=xterm-256color", "COLORTERM=truecolor", "LANG=C.UTF-8", "/bin/bash", "--noprofile", "--norc"]);
+            match script { Some(script) => { command.arg(wslDirectory(profile, &script.to_string_lossy())?); }, None => { command.arg("-i"); } }
+            return Ok(command);
+        }
+    }
+    let original = match profile {
+        Some(profile) => configuredPtyCommand(profile, kind, directory)?,
+        None => ptyCommand(powershell, kind, directory)?,
+    };
+    let mut command = CommandBuilder::new(original.get_program());
+    // Only replace the interpreter suffix we own; profile arguments are literal launcher prefixes.
+    let args = original.get_args().collect::<Vec<_>>();
+    let suffix = match kind { TerminalKind::Bash => 1, TerminalKind::PowerShell => 3 };
+    command.args(&args[..args.len() - suffix]);
+    for (key, value) in original.get_envs() {
+        match value { Some(value) => { command.env(key, value); }, None => { command.env_remove(key); } }
+    }
+    command.env_remove("PS1");
+    command.env_remove("PROMPT_COMMAND");
+    command.current_dir(directory);
+    match (kind, script) {
+        (TerminalKind::Bash, Some(script)) => { command.arg(script.to_string_lossy().replace('\\', "/")); },
+        (TerminalKind::Bash, None) => { command.arg("-i"); },
+        (TerminalKind::PowerShell, Some(script)) => { command.arg("-File").arg(script); },
+        (TerminalKind::PowerShell, None) => {},
+    }
+    Ok(command)
 }
 
 /// Encodes scripts that interactive line editors cannot accept losslessly as one UTF-8 input line.
@@ -903,6 +972,7 @@ fn ptyCommand(powershell: &PowerShellSource, kind: TerminalKind, workingDir: &st
             let executable = bundledBashExecutable()?;
             let root = executable
                 .parent()
+                .and_then(|path| path.parent())
                 .and_then(|path| path.parent())
                 .ok_or_else(|| HostError::new("Bundled Bash executable has no runtime root"))?;
             let mut paths = vec![root.join("bin"), root.join("usr/bin")];
@@ -1044,7 +1114,8 @@ fn bundledBashExecutable() -> HostResult<PathBuf> {
     let root = executable
         .parent()
         .ok_or_else(|| HostError::new("Operit executable has no parent directory"))?;
-    let bashExecutable = root.join("bash/bin/bash.exe");
+    // Invoke the packaged interpreter directly, without the compatibility launcher.
+    let bashExecutable = root.join("bash/usr/bin/bash.exe");
     if !bashExecutable.is_file() {
         return Err(HostError::new(format!(
             "Bundled Bash executable does not exist: {}",
@@ -1210,21 +1281,21 @@ fn completedPtyPrompt(raw: &[u8], kind: TerminalKind, renderer: TerminalTextRend
 #[allow(non_snake_case)]
 /// Reconstructs the terminal viewport and scrollback using the session's actual dimensions.
 fn ptyScreenRenderer(session: &PtySession) -> HostResult<TerminalTextRenderer> {
-    let size = &session.process;
-    let buffer = session
-        .screenOutput
-        .lock()
-        .map_err(|_| HostError::new("pty screen output mutex poisoned"))?;
-    let bytes = buffer.iter().copied().collect::<Vec<_>>();
-    let mut renderer = TerminalTextRenderer::new(usize::from(size.rows), usize::from(size.cols));
+    renderScreenBuffer(&session.screenOutput, session.process.rows, session.process.cols)
+}
+
+/// Copies terminal bytes before rendering, without retaining the session or output registry lock.
+fn renderScreenBuffer(output: &Arc<Mutex<VecDeque<u8>>>, rows: u16, cols: u16) -> HostResult<TerminalTextRenderer> {
+    let bytes = output.lock().map_err(|_| HostError::new("PTY screen output mutex poisoned"))?
+        .iter().copied().collect::<Vec<_>>();
+    let mut renderer = TerminalTextRenderer::new(usize::from(rows), usize::from(cols));
     renderer.write(&String::from_utf8_lossy(&bytes));
     Ok(renderer)
 }
 
-#[allow(non_snake_case)]
-/// Returns the rendered session transcript without exposing internal completion markers.
-fn ptyScreenContent(session: &PtySession) -> HostResult<String> {
-    Ok(ptyScreenRenderer(session)?.textFrom(0))
+/// Renders a copied screen independently of the terminal registry used by input and close.
+fn ptyScreenContent(output: &Arc<Mutex<VecDeque<u8>>>, rows: u16, cols: u16) -> HostResult<String> {
+    Ok(renderScreenBuffer(output, rows, cols)?.textFrom(0))
 }
 
 #[derive(Clone)]
@@ -1553,37 +1624,7 @@ fn toHostError(error: impl std::fmt::Display) -> HostError {
     HostError::new(error.to_string())
 }
 
-#[allow(non_snake_case)]
-fn applyPtyTerminalInput(
-    session: &mut PtySession,
-    input: Option<&str>,
-    control: Option<&str>,
-) -> HostResult<usize> {
-    let mut acceptedChars = 0;
-    if let Some(input) = input {
-        let mut writer = session
-            .writer
-            .lock()
-            .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
-        writer.write_all(input.as_bytes())?;
-        writer.flush()?;
-        acceptedChars += input.chars().count();
-    }
-    if let Some(control) = control {
-        let sequence = match control {
-            "enter" => "\r".to_string(),
-            value => controlToSequence(value, input)?,
-        };
-        let mut writer = session
-            .writer
-            .lock()
-            .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
-        writer.write_all(sequence.as_bytes())?;
-        writer.flush()?;
-        acceptedChars += sequence.chars().count();
-    }
-    Ok(acceptedChars)
-}
+
 
 #[allow(non_snake_case)]
 fn normalizeTerminalType(terminalType: &str) -> HostResult<(String, TerminalKind)> {

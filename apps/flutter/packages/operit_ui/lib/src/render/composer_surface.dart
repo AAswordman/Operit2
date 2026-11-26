@@ -8,6 +8,25 @@ import 'chat_input_surface.dart';
 const double themeChatContentMaxWidth = 700;
 const double themeChatWideContentMaxWidth = 1040;
 
+/// Space between the Agent composer surface and its content.
+const EdgeInsets themeAgentComposerInsets = EdgeInsets.fromLTRB(12, 14, 12, 8);
+
+/// Space between the Classic composer surface and its content.
+EdgeInsets themeClassicComposerInsets({required bool floating}) =>
+    EdgeInsets.symmetric(
+      horizontal: floating ? 14 : 22,
+      vertical: floating ? 6 : 8,
+    );
+
+/// Space between a composer's content and the bottom edge of its surface,
+/// counting the system inset that a surface keeps clear below it when it is
+/// not floating.
+double themeComposerBottomInset({
+  required EdgeInsets insets,
+  required bool floating,
+  required double systemBottomInset,
+}) => insets.bottom + (floating ? 0 : systemBottomInset);
+
 /// Extracts the nine-slice image style for the chat input box when configured.
 BubbleImageStyle? buildThemeInputImageStyle(ThemePreferenceSnapshot snapshot) {
   final imagePath = snapshot.inputImageUri;
@@ -71,7 +90,7 @@ class ThemeComposerCard extends StatelessWidget {
               ? const EdgeInsets.fromLTRB(8, 4, 8, 6)
               : const EdgeInsets.only(top: 4),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
+            padding: themeAgentComposerInsets,
             child: child,
           ),
         );
@@ -93,10 +112,7 @@ class ThemeComposerCard extends StatelessWidget {
               ? const EdgeInsets.fromLTRB(8, 0, 8, 6)
               : EdgeInsets.zero,
           child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: floating ? 14 : 22,
-              vertical: floating ? 6 : 8,
-            ),
+            padding: themeClassicComposerInsets(floating: floating),
             child: child,
           ),
         );

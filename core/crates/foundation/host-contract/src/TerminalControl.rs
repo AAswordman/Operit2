@@ -6,7 +6,7 @@ use crate::{HostError, HostResult};
 /// Encodes an explicit terminal control without performing platform I/O.
 pub fn controlToSequence(control: &str, input: Option<&str>) -> HostResult<String> {
     match control {
-        "enter" => Ok("\n".to_string()),
+        "enter" => Ok("\r".to_string()),
         "tab" => Ok("\t".to_string()),
         "esc" => Ok("\x1b".to_string()),
         "up" => Ok("\x1b[A".to_string()),
@@ -27,6 +27,19 @@ pub fn controlToSequence(control: &str, input: Option<&str>) -> HostResult<Strin
         ))),
     }
 }
+
+/// Encodes a single atomic PTY write, without typing modifier keys as literal text first.
+pub fn terminalInput(input: Option<&str>, control: Option<&str>) -> HostResult<String> {
+    let control = control.filter(|value| !value.trim().is_empty()).map(|value|
+        normalizeControl(value).ok_or_else(|| HostError::new(format!("Unsupported terminal control: {value}")))
+    ).transpose()?;
+    match control {
+        Some(control @ ("ctrl" | "control" | "alt" | "meta" | "cmd" | "shift")) => controlToSequence(control, input),
+        Some(control) => Ok(format!("{}{}", input.unwrap_or_default(), controlToSequence(control, None)?)),
+        None => input.map(str::to_string).ok_or_else(|| HostError::new("At least one of input or control is required")),
+    }
+}
+
 /// Encodes one supported control character and rejects ambiguous input.
 pub fn ctrlSequence(input: Option<&str>) -> HostResult<String> {
     let input = input.ok_or_else(|| HostError::new("ctrl control requires input"))?;

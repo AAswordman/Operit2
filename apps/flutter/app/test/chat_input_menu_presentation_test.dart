@@ -681,6 +681,28 @@ void main() {
       await _removeHost(tester);
     },
   );
+
+  testWidgets(
+    'plugin menu sections render inside secondary plugins tab instead of controls tab',
+    (tester) async {
+      final bridge = _ContextBridge(
+        currentChatId: 'chat-a',
+        publishIdentity: true,
+        includeSectionEntry: true,
+      );
+      addTearDown(bridge.close);
+      await tester.pumpWidget(_app(bridge));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Choose example.selector'), findsOneWidget);
+      expect(find.text('Choose example.section'), findsNothing);
+
+      await tester.tap(find.text('插件'));
+      await tester.pumpAndSettle();
+      expect(find.text('Choose example.section'), findsOneWidget);
+      await _removeHost(tester);
+    },
+  );
 }
 
 /// Mounts a real shared menu under a root navigator without loading a plugin WebView.
@@ -794,8 +816,17 @@ Map<String, Object?> _contextActions(
 /// Implements real proxy codecs and catalog/DSL events, never alternate production providers.
 class _ContextBridge extends OperitRuntimeBridge {
   /// Requires explicit independent chat selection and plugin display state.
-  _ContextBridge({required this.currentChatId, required this.publishIdentity})
-    : routes = [_route('example.selector'), _route('example.other')];
+  _ContextBridge({
+    required this.currentChatId,
+    required this.publishIdentity,
+    this.includeSectionEntry = false,
+  }) : routes = [
+         _route('example.selector'),
+         _route('example.other'),
+         if (includeSectionEntry) _route('example.section'),
+       ];
+
+  final bool includeSectionEntry;
 
   late final compose = ComposeSessionFixture(
     render: (state) {
@@ -927,6 +958,20 @@ class _ContextBridge extends OperitRuntimeBridge {
               params: _opaqueInput(owner),
               surface: 'chat_input_menu',
               title: 'Registration title',
+              description: '',
+              action: null,
+              icon: null,
+              order: 0,
+            ).toJson(),
+          if (includeSectionEntry)
+            core_proxy.ToolPkgNavigationEntry(
+              containerPackageName: 'example.section',
+              toolPkgId: 'example.section',
+              entryId: 'section-menu',
+              routeId: 'selector-route',
+              params: _opaqueInput('example.section'),
+              surface: 'chat_input_menu_sections',
+              title: 'Section title',
               description: '',
               action: null,
               icon: null,

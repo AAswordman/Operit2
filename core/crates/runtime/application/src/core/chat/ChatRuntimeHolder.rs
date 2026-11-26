@@ -142,6 +142,21 @@ pub struct ChatRuntimeHolder {
 }
 
 impl ChatRuntimeHolder {
+    /// Commits a prepared reply once and publishes its canonical record to every open runtime slot.
+    #[allow(non_snake_case)]
+    pub(crate) fn commitPreparedAssistantMessage(
+        &mut self,
+        chatId: &str,
+        message: operit_model::ChatMessage::ChatMessage,
+    ) -> Result<bool, String> {
+        let history = &mut self.getCore(ChatRuntimeSlot::MAIN).chatHistoryDelegate;
+        let (duplicate, message) = history.commitPreparedAssistantMessageSnapshot(chatId, message)?;
+        for core in self.cores.values() {
+            core.chatHistoryDelegate.publishChatMessage(chatId, message.clone());
+        }
+        Ok(duplicate)
+    }
+
     /// Resolves one generated proxy object id to the main chat service core.
     #[allow(non_snake_case)]
     pub fn coreForTarget(&mut self, _target: &str) -> Option<&mut ChatServiceCore> {

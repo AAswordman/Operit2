@@ -60,6 +60,22 @@ struct ConversationSummaryRequest {
     trigger: Option<SummaryTriggerContext>,
 }
 
+/// Uses the original snapshot while it remains a prefix, otherwise uses current history.
+fn summaryHistoryForExecution(snapshot: Vec<ChatMessage>, current: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    if snapshot.len() <= current.len()
+        && snapshot.iter().zip(&current).all(|(captured, live)| {
+            captured.timestamp == live.timestamp
+                && captured.sender == live.sender
+                && captured.parts == live.parts
+                && captured.selectedVariantIndex == live.selectedVariantIndex
+        })
+    {
+        snapshot
+    } else {
+        current
+    }
+}
+
 /// Separates optional history scheduling from the token guard needed during every persisted tool loop.
 struct SummarySendPolicy {
     tokenUsageThreshold: f64,
@@ -186,6 +202,24 @@ impl MessageCoordinationDelegate {
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
     ) -> Result<(i64, Option<ContextWindowBreakdown>), String> {
+        let history = chatHistoryDelegate.getRuntimeChatHistory(chatId.to_string());
+        Self::calculateStableWindowForHistoryFromDelegates(
+            chatHistoryDelegate, service, chatId, participantId, promptFunctionType,
+            chatProviderIdOverride, chatModelIdOverride, history,
+        ).await
+    }
+
+    /// Estimates one captured history while preserving its category breakdown.
+    async fn calculateStableWindowForHistoryFromDelegates(
+        chatHistoryDelegate: &ChatHistoryDelegate,
+        service: &mut EnhancedAIService,
+        chatId: &str,
+        participantId: Option<String>,
+        promptFunctionType: PromptFunctionType,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
+        history: Vec<ChatMessage>,
+    ) -> Result<(i64, Option<ContextWindowBreakdown>), String> {
         let currentChat = chatHistoryDelegate
             .chatHistoriesFlow()
             .value()
@@ -217,7 +251,7 @@ impl MessageCoordinationDelegate {
                     enhancedAiService: service,
                     chatId: Some(chatId.to_string()),
                     messageContent: String::new(),
-                    chatHistory: chatHistoryDelegate.getRuntimeChatHistory(chatId.to_string()),
+                    chatHistory: history.clone(),
                     workspacePath: chatHistoryDelegate.primaryWorkspacePathForChat(&currentChat),
                     workspaceFolders: chatHistoryDelegate.workspaceFolderPathsForChat(&currentChat),
                     promptFunctionType: promptFunctionType.clone(),
@@ -890,9 +924,9 @@ impl MessageCoordinationDelegate {
             chatId: Some(chatId.clone()), executionParticipantId: Some(participantId),
             ..SendMessageOptions::new()
         }).await.map_err(|error| error.to_string())?;
-        let window = self.recalculateStableWindowSize(
-            service, chatId.clone(), None, PromptFunctionType::CHAT, None, None,
-        ).await?;
+        let window = self.refreshStableContextWindow(
+            service, Some(chatId.clone()), None, Some(PromptFunctionType::CHAT), None, None,
+        ).await.ok_or_else(|| format!("Failed to refresh context after reply: {chatId}"))?;
         let messages = self.chatHistoryDelegate.getRuntimeChatHistory(chatId.clone());
         for participant in &configuration.participants {
             let settings = self.messageProcessingDelegate.modelConfigManager.getResolvedModelConfig(
@@ -945,14 +979,20 @@ impl MessageCoordinationDelegate {
             .boxed()
             .shared();
         let taskId = Arc::new(());
-        self.messageProcessingDelegate.registerSummaryTask(
-            chatId.clone(),
-            ChatSummaryTask {
-                taskId: taskId.clone(),
-                abortHandle,
-                completion: completion.clone(),
-            },
-        )?;
+        let task = ChatSummaryTask {
+            taskId: taskId.clone(),
+            abortHandle,
+            completion: completion.clone(),
+        };
+        if request.trigger.is_some() {
+            if let Err(existing) = self.messageProcessingDelegate
+                .registerSummaryTaskOrGet(chatId.clone(), task)
+            {
+                return Ok(existing.completion);
+            }
+        } else {
+            self.messageProcessingDelegate.registerSummaryTask(chatId.clone(), task)?;
+        }
         let mut worker = Self::forBackgroundWork(
             self.chatHistoryDelegate.clone_for_core(),
             self.messageProcessingDelegate.clone_for_core(),
@@ -1066,11 +1106,36 @@ impl MessageCoordinationDelegate {
     async fn generateAndStoreSummary(
         &mut self,
         enhancedAiService: &mut EnhancedAIService,
-        messages: Vec<ChatMessage>,
-        request: ConversationSummaryRequest,
+        mut messages: Vec<ChatMessage>,
+        mut request: ConversationSummaryRequest,
         progress: Option<operit_providers::chat::enhance::ConversationService::SummaryProgressCallback>,
         onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<(), String> {
+        if let Some(trigger) = request.trigger.as_mut() {
+            let current = self.chatHistoryDelegate.getRuntimeChatHistory(request.chatId.clone());
+            messages = summaryHistoryForExecution(messages, current);
+            let (window, _) = Self::calculateStableWindowForHistoryFromDelegates(
+                &self.chatHistoryDelegate,
+                enhancedAiService,
+                &request.chatId,
+                request.participantId.clone(),
+                request.promptFunctionType.clone(),
+                request.chatProviderIdOverride.clone(),
+                request.chatModelIdOverride.clone(),
+                messages.clone(),
+            ).await?;
+            if !AIMessageManager::shouldGenerateSummary(
+                window, trigger.max_tokens, trigger.token_usage_threshold, true,
+            ) {
+                AppLogger::v_with_level(
+                    "MessageCoordinationDelegate",
+                    &format!("chat.summary.skipped chatId={} snapshotWindow={window}", request.chatId),
+                    operit_util::AppLogger::VERBOSE_LEVEL_2,
+                );
+                return Ok(());
+            }
+            trigger.current_tokens = window;
+        }
         let insertPosition = self
             .chatHistoryDelegate
             .findProperSummaryPosition(messages.clone());
@@ -1359,5 +1424,26 @@ mod summary_send_policy_tests {
                 true,
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod automatic_summary_tests {
+    use super::*;
+
+    /// Changed history is reconsidered; a new turn alone preserves the captured boundary.
+    #[test]
+    fn automatic_summary_selects_current_history_when_snapshot_changes() {
+        let old = ChatMessage::new_with_markdown_timestamp("summary".into(), "old".into(), 1);
+        let next = ChatMessage::new_with_markdown_timestamp("summary".into(), "new".into(), 2);
+        let user = ChatMessage::new_with_markdown_timestamp("user".into(), "question".into(), 3);
+        let snapshot = vec![old.clone(), user.clone()];
+        let replaced = vec![next, user.clone()];
+        assert_eq!(summaryHistoryForExecution(snapshot.clone(), replaced.clone()), replaced);
+        let edited = ChatMessage::new_with_markdown_timestamp("user".into(), "edited".into(), 3);
+        let changed = vec![snapshot[0].clone(), edited];
+        assert_eq!(summaryHistoryForExecution(snapshot.clone(), changed.clone()), changed);
+        let appended = vec![old, user.clone(), user];
+        assert_eq!(summaryHistoryForExecution(snapshot.clone(), appended), snapshot);
     }
 }

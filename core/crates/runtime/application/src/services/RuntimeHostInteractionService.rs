@@ -1244,7 +1244,10 @@ impl Stream for RuntimeHostInteractionEventStream {
             let broker = runtimeHostInteractionBroker();
             let mut delivered = BTreeSet::<String>::new();
             loop {
-                let changed = broker.asyncChanged.notified();
+                // Register before scanning: notify_waiters does not retain a
+                // notification emitted between the scan and the first poll.
+                let mut changed = Box::pin(broker.asyncChanged.notified());
+                changed.as_mut().enable();
                 let next = broker
                     .state
                     .lock()
@@ -1841,11 +1844,7 @@ impl RuntimeHostInteractionBroker {
             // response inserted between the scan and the select below would
             // otherwise be missed until the timeout fires.
             let mut changed = Box::pin(self.asyncChanged.notified());
-            std::future::poll_fn(|context| {
-                let _ = changed.as_mut().poll(context);
-                std::task::Poll::Ready(())
-            })
-            .await;
+            changed.as_mut().enable();
             {
                 let mut state = self
                     .state

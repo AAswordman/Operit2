@@ -270,6 +270,28 @@ impl IosTerminalHost {
 }
 
 impl TerminalHost for IosTerminalHost {
+    /// Launches a fresh guest or system shell whose process owns its exit status.
+    fn openTerminalSession(&self, request: &operit_host_api::TerminalSessionRequest) -> HostResult<TerminalSessionInfo> {
+        let backend = self.requestedBackend(&request.terminal, &request.terminalType)?;
+        let session = match backend {
+            IosTerminalBackend::SystemShell => {
+                let mut selected = request.clone();
+                selected.terminal = NATIVE_TERMINAL.into();
+                systemSessionInfo(self.systemShell.openTerminalSession(&selected)?)
+            },
+            IosTerminalBackend::Arm64 => {
+                let response = callArm64Terminal("terminalStart", json!({ "sessionName": request.sessionName,
+                    "terminalType": SHELL_TERMINAL_TYPE, "workingDir": request.workingDir.as_deref().unwrap_or("/root"),
+                    "rows": 24, "cols": 80, "processOwned": true, "shellCommand": request.command }))?;
+                self.requireArm64Configuration(&response)?;
+                TerminalSessionInfo { sessionId: requiredString(&response, "sessionId")?, sessionName: request.sessionName.clone(),
+                    platform: PLATFORM.into(), terminal: ARM64_TERMINAL.into(), terminalType: SHELL_TERMINAL_TYPE.into(), isNewSession: true }
+            },
+        };
+        self.recordSession(&session.sessionId, backend)?;
+        Ok(session)
+    }
+
     /// Resolves ARM64 guest paths without requiring a Linux mount on the iOS host.
     fn resolveWorkingDirectory(
         &self,
@@ -545,31 +567,16 @@ impl TerminalHost for IosTerminalHost {
         input: Option<&str>,
         control: Option<&str>,
     ) -> HostResult<TerminalInputOutput> {
-        let content = match (input, control) {
-            (Some(value), None) => value,
-            (None, Some(value)) => controlSequence(value)?,
-            (Some(_), Some(_)) => {
-                return Err(HostError::new(
-                    "iOS terminal input accepts either text or one control sequence",
-                ));
-            }
-            (None, None) => {
-                return Err(HostError::new(
-                    "iOS terminal input requires text or one control sequence",
-                ));
-            }
+        let content = match control.map(str::trim) {
+            Some("interrupt") => "\x03".to_string(),
+            Some("eof") => "\x04".to_string(),
+            Some("newline") => "\n".to_string(),
+            _ => operit_host_api::TerminalControl::terminalInput(input, control)?,
         };
-        let acceptedChars = if control.map(str::trim) == Some("interrupt")
-            && self.sessionBackend(sessionId)? == IosTerminalBackend::Arm64
-        {
-            callArm64Terminal(
-                "terminalSignal",
-                json!({"sessionId": requiredText(sessionId, "session_id")?, "signal": 2}),
-            )?;
-            1
-        } else {
-            self.writePtySession(sessionId, content.as_bytes())?
-        };
+        if content == "\x03" && self.sessionBackend(sessionId)? == IosTerminalBackend::Arm64 {
+            callArm64Terminal("terminalSignal", json!({"sessionId": requiredText(sessionId, "session_id")?, "signal": 2}))?;
+        } else { self.writePtySession(sessionId, content.as_bytes())?; }
+        let acceptedChars = content.chars().count();
         Ok(TerminalInputOutput {
             sessionId: sessionId.to_string(),
             acceptedChars,
@@ -585,6 +592,19 @@ impl TerminalHost for IosTerminalHost {
             success: true,
             message: "iOS terminal session closed".to_string(),
         })
+    }
+
+    /// Closes an idle process atomically on its actual backend queue.
+    fn closeSessionIfIdle(&self, sessionId: &str, sessionName: &str) -> HostResult<TerminalCloseOutput> {
+        let result = match self.sessionBackend(sessionId)? {
+            IosTerminalBackend::SystemShell => self.systemShell.closeSessionIfIdle(sessionId, sessionName)?,
+            IosTerminalBackend::Arm64 => {
+                callArm64Terminal("terminalCloseIfIdle", json!({"sessionId": sessionId, "sessionName": sessionName}))?;
+                TerminalCloseOutput { sessionId: sessionId.into(), success: true, message: "Idle terminal session closed".into() }
+            },
+        };
+        self.removeSession(sessionId)?;
+        Ok(result)
     }
 
     /// Returns the retained screen model for one registered iOS terminal session.
@@ -759,18 +779,6 @@ fn requiredUsize(value: &Value, field: &str) -> HostResult<usize> {
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
         .ok_or_else(|| HostError::new(format!("iOS terminal result has invalid {field}")))
-}
-
-/// Maps a supported iOS terminal control name into its UTF-8 byte sequence.
-fn controlSequence(control: &str) -> HostResult<&'static str> {
-    match control.trim() {
-        "interrupt" => Ok("\u{3}"),
-        "eof" => Ok("\u{4}"),
-        "newline" => Ok("\n"),
-        value => Err(HostError::new(format!(
-            "unsupported iOS terminal control sequence: {value}"
-        ))),
-    }
 }
 
 /// Retains guest command frames while the native session queue owns execution and readiness.

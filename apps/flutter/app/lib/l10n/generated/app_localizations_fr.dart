@@ -974,6 +974,15 @@ class AppLocalizationsFr extends AppLocalizations {
   String get chatSpeechNoTextRecognized => 'Aucune parole reconnue.';
 
   @override
+  String get chatVoiceListening => 'Écoute en cours…';
+
+  @override
+  String get chatVoiceStopListening => 'Arrêter la saisie vocale';
+
+  @override
+  String get chatVoiceThinking => 'reconnaissance';
+
+  @override
   String get history => 'Historique';
 
   @override

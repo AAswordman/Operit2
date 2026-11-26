@@ -7,10 +7,12 @@ publish = false
 [workspace]
 
 [dependencies]
+operit-host-api = { path = "../../../core/crates/foundation/host-api" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 base64 = "0.22"
 libc = "0.2"
-operit-host-api = { path = "../../../core/crates/foundation/host-api" }
-operit-host-native-common = { path = "../../common/operit-host-native-common", default-features = false, features = ["http", "terminal"] }
+operit-host-native-common = { path = "../../common/operit-host-native-common", default-features = false, features = ["http", "terminal", "terminal-rootfs"] }
 portable-pty = "0.9.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -24,4 +26,14 @@ operit-util = { path = "../../../core/crates/foundation/util" }
 
 [target.'cfg(windows)'.dependencies]
 tokio = { version = "1", features = ["io-util", "net"] }
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Globalization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Pipes", "Win32_System_Threading"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Globalization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Registry", "Win32_System_SystemInformation"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+uuid = { version = "1", features = ["js"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+vt100 = "0.15"

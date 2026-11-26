@@ -653,12 +653,16 @@ export namespace System {
      */
     function input(sessionId: string, options?: System.TerminalHostInputOptions): Promise<string>;
     /**
-     * Runs a command under session ownership. Expired foreground waits retain the running command.
-     * A yielded session is reserved; the next run with this name acquires a new session generation.
+     * Opens a fresh persistent interactive shell. Input is literal; screen state has no per-command exit receipt.
+     */
+    function open(request: TerminalOpenRequest): Promise<TerminalSessionCreationResultData>;
+    /**
+     * Runs a fresh command process. Expired foreground waits retain it for screen, input and wait.
+     * Each call starts a new environment; variables and directory changes do not carry across calls.
      */
     function run(request: TerminalRunRequest): Promise<TerminalCommandResultData>;
     /**
-     * Streams a named-session command until it completes; returning detaches its observation.
+     * Streams a fresh command process until it completes; returning detaches its observation.
      */
     function runStream(request: TerminalRunStreamRequest): AsyncIterable<TerminalExecEvent>;
     /**
@@ -726,7 +730,16 @@ export interface TerminalExecRequest {
 }
 
 /**
- * Runs a command in the newest available named session with an independent foreground wait.
+ * Selects a fresh persistent interactive terminal without command-completion instrumentation.
+ */
+export interface TerminalOpenRequest {
+  sessionName: string;
+  profileId?: string;
+  terminalType?: TerminalType;
+}
+
+/**
+ * Runs a fresh command process with an independent foreground wait.
  */
 export interface TerminalRunRequest {
   sessionName: string;
@@ -746,7 +759,7 @@ export interface TerminalRunRequest {
 }
 
 /**
- * Streams a named-session command until actual completion, independently of foreground waits.
+ * Streams a fresh command process until actual completion, independently of foreground waits.
  */
 export interface TerminalRunStreamRequest {
   sessionName: string;

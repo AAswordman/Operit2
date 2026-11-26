@@ -1816,6 +1816,24 @@ abstract class AppLocalizations {
   /// **'No speech recognized.'**
   String get chatSpeechNoTextRecognized;
 
+  /// No description provided for @chatVoiceListening.
+  ///
+  /// In en, this message translates to:
+  /// **'Listening…'**
+  String get chatVoiceListening;
+
+  /// No description provided for @chatVoiceStopListening.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop listening'**
+  String get chatVoiceStopListening;
+
+  /// No description provided for @chatVoiceThinking.
+  ///
+  /// In en, this message translates to:
+  /// **'thinking'**
+  String get chatVoiceThinking;
+
   /// No description provided for @history.
   ///
   /// In en, this message translates to:

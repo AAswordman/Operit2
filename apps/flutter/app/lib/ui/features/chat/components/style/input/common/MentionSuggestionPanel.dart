@@ -1,5 +1,7 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../../../../../l10n/generated/app_localizations.dart';
@@ -7,8 +9,105 @@ import '../../../../../../theme/OperitGlassSurface.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 import '../../../../viewmodel/WorkspaceFileModels.dart';
 import 'MentionPackageOptions.dart';
+import 'SlashCommandCatalog.dart';
 
-/// Renders package and workspace suggestions for @ and / input mentions.
+/// Callback invoked when a slash command suggestion is selected.
+typedef SlashCommandSelectedCallback =
+    void Function(SlashCommandOption option, {required bool completeOnly});
+
+/// Represents one selectable item in the mention/command suggestion panel.
+sealed class MentionSuggestionItem {
+  const MentionSuggestionItem();
+}
+
+/// A slash command entry in the suggestion list.
+class CommandMentionSuggestionItem extends MentionSuggestionItem {
+  const CommandMentionSuggestionItem(this.option);
+
+  final SlashCommandOption option;
+}
+
+/// An enabled package/skill/MCP entry in the suggestion list.
+class PackageMentionSuggestionItem extends MentionSuggestionItem {
+  const PackageMentionSuggestionItem(this.option);
+
+  final MentionPackageOption option;
+}
+
+/// A workspace file/folder entry in the suggestion list.
+class FileMentionSuggestionItem extends MentionSuggestionItem {
+  const FileMentionSuggestionItem(this.entry);
+
+  final WorkspaceFileEntry entry;
+}
+
+/// Coordinates keyboard highlight and acceptance with [MentionSuggestionPanel].
+class MentionSuggestionController extends ChangeNotifier {
+  int _selectedIndex = 0;
+  List<MentionSuggestionItem> _items = const <MentionSuggestionItem>[];
+  VoidCallback? _acceptHandler;
+
+  int get selectedIndex => _selectedIndex;
+
+  bool get hasItems => _items.isNotEmpty;
+
+  MentionSuggestionItem? get selectedItem {
+    if (_items.isEmpty) {
+      return null;
+    }
+    return _items[_selectedIndex.clamp(0, _items.length - 1)];
+  }
+
+  /// Registers the active panel callback that accepts the highlighted item.
+  void attachAcceptHandler(VoidCallback? handler) {
+    _acceptHandler = handler;
+  }
+
+  /// Replaces the visible suggestion items and keeps the highlight index valid.
+  void setItems(List<MentionSuggestionItem> items, {bool resetIndex = false}) {
+    _items = items;
+    if (_items.isEmpty) {
+      _selectedIndex = 0;
+    } else if (resetIndex || _selectedIndex >= _items.length) {
+      _selectedIndex = 0;
+    }
+    notifyListeners();
+  }
+
+  /// Moves the active highlight cyclically by [delta].
+  void moveSelection(int delta) {
+    if (_items.isEmpty) {
+      return;
+    }
+    var next = (_selectedIndex + delta) % _items.length;
+    if (next < 0) {
+      next += _items.length;
+    }
+    if (next == _selectedIndex) {
+      return;
+    }
+    _selectedIndex = next;
+    notifyListeners();
+  }
+
+  /// Clears stored items when the suggestion panel closes.
+  void resetSelection() {
+    _selectedIndex = 0;
+    _items = const <MentionSuggestionItem>[];
+    _acceptHandler = null;
+  }
+
+  /// Accepts the currently highlighted item if one is available.
+  bool acceptSelected() {
+    if (_items.isEmpty || _acceptHandler == null) {
+      return false;
+    }
+    _acceptHandler!();
+    return true;
+  }
+}
+
+/// Renders command, package, and workspace suggestions for @ and / input mentions.
 class MentionSuggestionPanel extends StatefulWidget {
   /// Creates a mention suggestion panel for the active input token.
   const MentionSuggestionPanel({
@@ -19,6 +118,9 @@ class MentionSuggestionPanel extends StatefulWidget {
     required this.hasBoundWorkspace,
     required this.onPackageSelected,
     required this.onFileSelected,
+    this.showsCommands = false,
+    this.onCommandSelected,
+    this.controller,
   });
 
   final ChatViewModel viewModel;
@@ -27,33 +129,290 @@ class MentionSuggestionPanel extends StatefulWidget {
   final bool hasBoundWorkspace;
   final ValueChanged<String> onPackageSelected;
   final ValueChanged<String> onFileSelected;
+  final bool showsCommands;
+  final SlashCommandSelectedCallback? onCommandSelected;
+  final MentionSuggestionController? controller;
 
-  /// Creates mutable state for loaded package and workspace suggestions.
+  /// Creates mutable state for loaded command, package, and workspace suggestions.
   @override
   State<MentionSuggestionPanel> createState() => _MentionSuggestionPanelState();
 }
 
 class _MentionSuggestionPanelState extends State<MentionSuggestionPanel> {
-  late Future<List<MentionPackageOption>> _packageOptionsFuture;
-  Future<List<WorkspaceFileEntry>>? _fileSuggestionsFuture;
+  final Map<int, GlobalKey> _itemKeys = <int, GlobalKey>{};
+  int _commandLoadGeneration = 0;
+  int _packageLoadGeneration = 0;
+  int _fileLoadGeneration = 0;
+  bool? _useEnglish;
   String _fileSuggestionKey = '';
 
-  /// Loads package options and prepares the first workspace query.
+  bool _loadingCommands = false;
+  Object? _commandsError;
+  List<SlashCommandOption> _loadedCommands = const <SlashCommandOption>[];
+
+  bool _loadingPackages = true;
+  Object? _packagesError;
+  List<MentionPackageOption> _loadedPackages = const <MentionPackageOption>[];
+
+  bool _loadingFiles = false;
+  Object? _filesError;
+  List<WorkspaceFileEntry> _loadedFiles = const <WorkspaceFileEntry>[];
+
   @override
   void initState() {
     super.initState();
-    _packageOptionsFuture = loadMentionPackageOptions(widget.viewModel);
+    widget.controller?.addListener(_onControllerChanged);
+    widget.controller?.attachAcceptHandler(_acceptCurrentSelection);
+    _loadPackages();
     _syncFileSuggestions();
   }
 
-  /// Refreshes futures when the active trigger or query changes.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final useEnglish = !Localizations.localeOf(
+      context,
+    ).languageCode.toLowerCase().startsWith('zh');
+    if (_useEnglish != useEnglish) {
+      _useEnglish = useEnglish;
+      if (widget.showsCommands) {
+        _loadCommands(useEnglish: useEnglish);
+      }
+    }
+  }
+
   @override
   void didUpdateWidget(covariant MentionSuggestionPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller?.removeListener(_onControllerChanged);
+      oldWidget.controller?.attachAcceptHandler(null);
+      widget.controller?.addListener(_onControllerChanged);
+      widget.controller?.attachAcceptHandler(_acceptCurrentSelection);
+    }
     if (oldWidget.viewModel != widget.viewModel) {
-      _packageOptionsFuture = loadMentionPackageOptions(widget.viewModel);
+      _loadPackages();
+      if (widget.showsCommands && _useEnglish != null) {
+        _loadCommands(useEnglish: _useEnglish!);
+      }
+    } else if (!oldWidget.showsCommands &&
+        widget.showsCommands &&
+        _useEnglish != null) {
+      _loadCommands(useEnglish: _useEnglish!);
     }
     _syncFileSuggestions();
+    final queryOrTriggerChanged =
+        oldWidget.searchQuery != widget.searchQuery ||
+        oldWidget.triggerChar != widget.triggerChar ||
+        oldWidget.showsCommands != widget.showsCommands ||
+        oldWidget.controller != widget.controller;
+    if (queryOrTriggerChanged) {
+      _syncControllerItems(resetIndex: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller?.removeListener(_onControllerChanged);
+    widget.controller?.attachAcceptHandler(null);
+    super.dispose();
+  }
+
+  void _onControllerChanged() {
+    if (!mounted) {
+      return;
+    }
+    final selectedIndex = widget.controller?.selectedIndex ?? 0;
+    final key = _itemKeys[selectedIndex];
+    if (key != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final targetContext = key.currentContext;
+        if (targetContext != null && targetContext.mounted) {
+          Scrollable.ensureVisible(
+            targetContext,
+            alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+          );
+          Scrollable.ensureVisible(
+            targetContext,
+            alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+          );
+        }
+      });
+    }
+  }
+
+  void _loadCommands({required bool useEnglish}) {
+    final generation = ++_commandLoadGeneration;
+    _loadingCommands = true;
+    _commandsError = null;
+    unawaited(
+      loadSlashCommandOptions(widget.viewModel, useEnglish: useEnglish)
+          .then((commands) {
+            if (!mounted || generation != _commandLoadGeneration) {
+              return;
+            }
+            setState(() {
+              _loadingCommands = false;
+              _commandsError = null;
+              _loadedCommands = commands;
+            });
+            _syncControllerItems();
+          })
+          .catchError((Object error) {
+            if (!mounted || generation != _commandLoadGeneration) {
+              return;
+            }
+            setState(() {
+              _loadingCommands = false;
+              _commandsError = error;
+              _loadedCommands = const <SlashCommandOption>[];
+            });
+            _syncControllerItems();
+          }),
+    );
+  }
+
+  void _loadPackages() {
+    final generation = ++_packageLoadGeneration;
+    _loadingPackages = true;
+    _packagesError = null;
+    unawaited(
+      loadMentionPackageOptions(widget.viewModel)
+          .then((packages) {
+            if (!mounted || generation != _packageLoadGeneration) {
+              return;
+            }
+            setState(() {
+              _loadingPackages = false;
+              _packagesError = null;
+              _loadedPackages = packages;
+            });
+            _syncControllerItems();
+          })
+          .catchError((Object error) {
+            if (!mounted || generation != _packageLoadGeneration) {
+              return;
+            }
+            setState(() {
+              _loadingPackages = false;
+              _packagesError = error;
+              _loadedPackages = const <MentionPackageOption>[];
+            });
+            _syncControllerItems();
+          }),
+    );
+  }
+
+  bool get _showsWorkspaceSuggestions => widget.triggerChar == '@';
+
+  void _syncFileSuggestions() {
+    final key = <Object?>[
+      widget.triggerChar,
+      widget.searchQuery,
+      widget.hasBoundWorkspace,
+      widget.viewModel,
+    ].join('\n');
+    if (_fileSuggestionKey == key) {
+      return;
+    }
+    _fileSuggestionKey = key;
+    if (_showsWorkspaceSuggestions && widget.hasBoundWorkspace) {
+      final generation = ++_fileLoadGeneration;
+      _loadingFiles = true;
+      _filesError = null;
+      unawaited(
+        widget.viewModel
+            .listMentionWorkspaceSuggestions(widget.searchQuery)
+            .then((files) {
+              if (!mounted || generation != _fileLoadGeneration) {
+                return;
+              }
+              setState(() {
+                _loadingFiles = false;
+                _filesError = null;
+                _loadedFiles = files;
+              });
+              _syncControllerItems();
+            })
+            .catchError((Object error) {
+              if (!mounted || generation != _fileLoadGeneration) {
+                return;
+              }
+              setState(() {
+                _loadingFiles = false;
+                _filesError = error;
+                _loadedFiles = const <WorkspaceFileEntry>[];
+              });
+              _syncControllerItems();
+            }),
+      );
+    } else {
+      _fileLoadGeneration++;
+      _loadingFiles = false;
+      _filesError = null;
+      _loadedFiles = const <WorkspaceFileEntry>[];
+      _syncControllerItems();
+    }
+  }
+
+  List<SlashCommandOption> get _filteredCommands {
+    if (!widget.showsCommands || _loadingCommands || _commandsError != null) {
+      return const <SlashCommandOption>[];
+    }
+    return filterSlashCommandOptions(_loadedCommands, widget.searchQuery);
+  }
+
+  List<MentionPackageOption> get _filteredPackages {
+    if (_loadingPackages || _packagesError != null) {
+      return const <MentionPackageOption>[];
+    }
+    return filterMentionPackageOptions(_loadedPackages, widget.searchQuery);
+  }
+
+  List<WorkspaceFileEntry> get _filteredFiles {
+    if (!_showsWorkspaceSuggestions ||
+        !widget.hasBoundWorkspace ||
+        _loadingFiles ||
+        _filesError != null) {
+      return const <WorkspaceFileEntry>[];
+    }
+    return _loadedFiles;
+  }
+
+  void _syncControllerItems({bool resetIndex = false}) {
+    final controller = widget.controller;
+    if (controller == null) {
+      return;
+    }
+    final items = <MentionSuggestionItem>[
+      for (final command in _filteredCommands)
+        CommandMentionSuggestionItem(command),
+      for (final pkg in _filteredPackages) PackageMentionSuggestionItem(pkg),
+      for (final file in _filteredFiles) FileMentionSuggestionItem(file),
+    ];
+    controller.setItems(items, resetIndex: resetIndex);
+  }
+
+  void _acceptCurrentSelection() {
+    final selected = widget.controller?.selectedItem;
+    if (selected == null) {
+      return;
+    }
+    switch (selected) {
+      case CommandMentionSuggestionItem(:final option):
+        widget.onCommandSelected?.call(
+          option,
+          completeOnly: option.acceptsArguments,
+        );
+      case PackageMentionSuggestionItem(:final option):
+        widget.onPackageSelected(option.packageName);
+      case FileMentionSuggestionItem(:final entry):
+        widget.onFileSelected(entry.relativePath);
+    }
+  }
+
+  GlobalKey _keyForFlatIndex(int index) {
+    return _itemKeys.putIfAbsent(index, GlobalKey.new);
   }
 
   /// Builds the complete suggestion panel.
@@ -61,6 +420,12 @@ class _MentionSuggestionPanelState extends State<MentionSuggestionPanel> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final l10n = AppLocalizations.of(context)!;
+    final commands = _filteredCommands;
+    final packages = _filteredPackages;
+    final files = _filteredFiles;
+    final hasQuery = widget.searchQuery.trim().isNotEmpty;
+
     return SizedBox(
       width: double.infinity,
       child: OperitGlassSurface(
@@ -80,168 +445,197 @@ class _MentionSuggestionPanelState extends State<MentionSuggestionPanel> {
         material: true,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 280),
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            children: <Widget>[
-              _MentionSuggestionSectionHeader(
-                title: _mentionText(
-                  AppLocalizations.of(context)!,
-                  zh: 'Packages',
-                  en: 'Packages',
-                ),
-              ),
-              _PackageSuggestionSection(
-                future: _packageOptionsFuture,
-                searchQuery: widget.searchQuery,
-                onPackageSelected: widget.onPackageSelected,
-              ),
-              if (_showsWorkspaceSuggestions) ...<Widget>[
-                Divider(
-                  height: 12,
-                  color: colorScheme.outlineVariant.withValues(alpha: 0.32),
-                ),
-                _MentionSuggestionSectionHeader(
-                  title: _mentionText(
-                    AppLocalizations.of(context)!,
-                    zh: 'Files',
-                    en: 'Files',
+          child: widget.controller != null
+              ? ListenableBuilder(
+                  listenable: widget.controller!,
+                  builder: (context, _) => _buildListContent(
+                    context,
+                    l10n: l10n,
+                    colorScheme: colorScheme,
+                    commands: commands,
+                    packages: packages,
+                    files: files,
+                    hasQuery: hasQuery,
+                    selectedIndex: widget.controller!.selectedIndex,
                   ),
+                )
+              : _buildListContent(
+                  context,
+                  l10n: l10n,
+                  colorScheme: colorScheme,
+                  commands: commands,
+                  packages: packages,
+                  files: files,
+                  hasQuery: hasQuery,
+                  selectedIndex: -1,
                 ),
-                _WorkspaceSuggestionSection(
-                  future: _fileSuggestionsFuture,
-                  searchQuery: widget.searchQuery,
-                  hasBoundWorkspace: widget.hasBoundWorkspace,
-                  onFileSelected: widget.onFileSelected,
-                ),
-              ],
-            ],
-          ),
         ),
       ),
     );
   }
 
-  /// Reports whether the active trigger can show workspace suggestions.
-  bool get _showsWorkspaceSuggestions => widget.triggerChar == '@';
+  Widget _buildListContent(
+    BuildContext context, {
+    required AppLocalizations l10n,
+    required ColorScheme colorScheme,
+    required List<SlashCommandOption> commands,
+    required List<MentionPackageOption> packages,
+    required List<WorkspaceFileEntry> files,
+    required bool hasQuery,
+    required int selectedIndex,
+  }) {
+    final children = <Widget>[];
+    var flatIndex = 0;
 
-  /// Synchronizes the workspace suggestion future with the active query.
-  void _syncFileSuggestions() {
-    final key = <Object?>[
-      widget.triggerChar,
-      widget.searchQuery,
-      widget.hasBoundWorkspace,
-    ].join('\n');
-    if (_fileSuggestionKey == key) {
-      return;
-    }
-    _fileSuggestionKey = key;
-    if (_showsWorkspaceSuggestions && widget.hasBoundWorkspace) {
-      _fileSuggestionsFuture = widget.viewModel.listMentionWorkspaceSuggestions(
-        widget.searchQuery,
-      );
-    } else {
-      _fileSuggestionsFuture = null;
-    }
-  }
-}
-
-class _PackageSuggestionSection extends StatelessWidget {
-  /// Creates the package section for a mention panel.
-  const _PackageSuggestionSection({
-    required this.future,
-    required this.searchQuery,
-    required this.onPackageSelected,
-  });
-
-  final Future<List<MentionPackageOption>> future;
-  final String searchQuery;
-  final ValueChanged<String> onPackageSelected;
-
-  /// Builds package suggestion rows from the loaded package list.
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return FutureBuilder<List<MentionPackageOption>>(
-      future: future,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return _MentionSuggestionEmptyRow(text: snapshot.error.toString());
-        }
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const _MentionSuggestionLoadingRow();
-        }
-        final suggestions = filterMentionPackageOptions(
-          snapshot.requireData,
-          searchQuery,
+    if (widget.showsCommands) {
+      final showCommandSection =
+          !hasQuery ||
+          _loadingCommands ||
+          _commandsError != null ||
+          commands.isNotEmpty;
+      if (showCommandSection) {
+        children.add(
+          _MentionSuggestionSectionHeader(
+            title: _mentionText(l10n, zh: '命令', en: 'Commands'),
+          ),
         );
-        if (suggestions.isEmpty) {
-          return _MentionSuggestionEmptyRow(
-            text: searchQuery.trim().isEmpty
-                ? l10n.attachmentPackageEmpty
-                : l10n.attachmentPackageSearchEmpty,
+        if (_commandsError != null) {
+          children.add(
+            _MentionSuggestionEmptyRow(text: _commandsError.toString()),
+          );
+        } else if (_loadingCommands) {
+          children.add(const _MentionSuggestionLoadingRow());
+        } else if (commands.isEmpty) {
+          children.add(
+            _MentionSuggestionEmptyRow(
+              text: _mentionText(
+                l10n,
+                zh: '暂无可用命令',
+                en: 'No available commands',
+              ),
+            ),
+          );
+        } else {
+          for (final command in commands) {
+            final index = flatIndex++;
+            children.add(
+              KeyedSubtree(
+                key: _keyForFlatIndex(index),
+                child: _MentionSuggestionCommandRow(
+                  option: command,
+                  selected: index == selectedIndex,
+                  onTap: () => widget.onCommandSelected?.call(
+                    command,
+                    completeOnly: command.acceptsArguments,
+                  ),
+                ),
+              ),
+            );
+          }
+        }
+      }
+    }
+
+    final showPackageSection =
+        !widget.showsCommands ||
+        !hasQuery ||
+        _loadingPackages ||
+        _packagesError != null ||
+        packages.isNotEmpty;
+    if (showPackageSection) {
+      if (children.isNotEmpty) {
+        children.add(
+          Divider(
+            height: 12,
+            color: colorScheme.outlineVariant.withValues(alpha: 0.32),
+          ),
+        );
+      }
+      children.add(
+        _MentionSuggestionSectionHeader(
+          title: _mentionText(l10n, zh: '工具包', en: 'Packages'),
+        ),
+      );
+      if (_packagesError != null) {
+        children.add(
+          _MentionSuggestionEmptyRow(text: _packagesError.toString()),
+        );
+      } else if (_loadingPackages) {
+        children.add(const _MentionSuggestionLoadingRow());
+      } else if (packages.isEmpty) {
+        children.add(
+          _MentionSuggestionEmptyRow(
+            text: hasQuery
+                ? l10n.attachmentPackageSearchEmpty
+                : l10n.attachmentPackageEmpty,
+          ),
+        );
+      } else {
+        for (final pkg in packages) {
+          final index = flatIndex++;
+          children.add(
+            KeyedSubtree(
+              key: _keyForFlatIndex(index),
+              child: _MentionSuggestionPackageRow(
+                option: pkg,
+                selected: index == selectedIndex,
+                onTap: () => widget.onPackageSelected(pkg.packageName),
+              ),
+            ),
           );
         }
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: suggestions
-              .map(
-                (suggestion) => _MentionSuggestionPackageRow(
-                  option: suggestion,
-                  onTap: () => onPackageSelected(suggestion.packageName),
-                ),
-              )
-              .toList(growable: false),
-        );
-      },
-    );
-  }
-}
+      }
+    }
 
-class _WorkspaceSuggestionSection extends StatelessWidget {
-  /// Creates the workspace file section for a mention panel.
-  const _WorkspaceSuggestionSection({
-    required this.future,
-    required this.searchQuery,
-    required this.hasBoundWorkspace,
-    required this.onFileSelected,
-  });
-
-  final Future<List<WorkspaceFileEntry>>? future;
-  final String searchQuery;
-  final bool hasBoundWorkspace;
-  final ValueChanged<String> onFileSelected;
-
-  /// Builds workspace file suggestion rows for @ mentions.
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    if (!hasBoundWorkspace) {
-      return _MentionSuggestionEmptyRow(
-        text: _mentionText(
-          l10n,
-          zh: '当前对话未绑定工作区',
-          en: 'Current chat not bound to workspace',
+    if (widget.showsCommands &&
+        hasQuery &&
+        !_loadingCommands &&
+        !_loadingPackages &&
+        _commandsError == null &&
+        _packagesError == null &&
+        commands.isEmpty &&
+        packages.isEmpty) {
+      children.add(
+        _MentionSuggestionEmptyRow(
+          text: _mentionText(
+            l10n,
+            zh: '没有匹配的命令或工具包',
+            en: 'No matching commands or packages',
+          ),
         ),
       );
     }
-    final activeFuture = future;
-    if (activeFuture == null) {
-      return const SizedBox.shrink();
-    }
-    return FutureBuilder<List<WorkspaceFileEntry>>(
-      future: activeFuture,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return _MentionSuggestionEmptyRow(text: snapshot.error.toString());
-        }
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const _MentionSuggestionLoadingRow();
-        }
-        final suggestions = snapshot.requireData;
-        if (suggestions.isEmpty) {
-          return _MentionSuggestionEmptyRow(
-            text: searchQuery.trim().isEmpty
+
+    if (_showsWorkspaceSuggestions) {
+      children.add(
+        Divider(
+          height: 12,
+          color: colorScheme.outlineVariant.withValues(alpha: 0.32),
+        ),
+      );
+      children.add(
+        _MentionSuggestionSectionHeader(
+          title: _mentionText(l10n, zh: 'Files', en: 'Files'),
+        ),
+      );
+      if (!widget.hasBoundWorkspace) {
+        children.add(
+          _MentionSuggestionEmptyRow(
+            text: _mentionText(
+              l10n,
+              zh: '当前对话未绑定工作区',
+              en: 'Current chat not bound to workspace',
+            ),
+          ),
+        );
+      } else if (_filesError != null) {
+        children.add(_MentionSuggestionEmptyRow(text: _filesError.toString()));
+      } else if (_loadingFiles) {
+        children.add(const _MentionSuggestionLoadingRow());
+      } else if (files.isEmpty) {
+        children.add(
+          _MentionSuggestionEmptyRow(
+            text: !hasQuery
                 ? _mentionText(
                     l10n,
                     zh: '输入名称或路径搜索工作区项目',
@@ -252,20 +646,29 @@ class _WorkspaceSuggestionSection extends StatelessWidget {
                     zh: '没有匹配的文件或文件夹',
                     en: 'No matching files or folders',
                   ),
+          ),
+        );
+      } else {
+        for (final file in files) {
+          final index = flatIndex++;
+          children.add(
+            KeyedSubtree(
+              key: _keyForFlatIndex(index),
+              child: _MentionSuggestionFileRow(
+                entry: file,
+                selected: index == selectedIndex,
+                onTap: () => widget.onFileSelected(file.relativePath),
+              ),
+            ),
           );
         }
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: suggestions
-              .map(
-                (suggestion) => _MentionSuggestionFileRow(
-                  entry: suggestion,
-                  onTap: () => onFileSelected(suggestion.relativePath),
-                ),
-              )
-              .toList(growable: false),
-        );
-      },
+      }
+    }
+
+    return ListView(
+      shrinkWrap: true,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      children: children,
     );
   }
 }
@@ -332,14 +735,94 @@ class _MentionSuggestionEmptyRow extends StatelessWidget {
   }
 }
 
+class _MentionSuggestionCommandRow extends StatelessWidget {
+  const _MentionSuggestionCommandRow({
+    required this.option,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final SlashCommandOption option;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Material(
+      color: selected
+          ? colors.primaryContainer.withValues(alpha: 0.42)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          child: SizedBox(
+            width: double.infinity,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                RichText(
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  text: TextSpan(
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontSize: 12,
+                      height: 14 / 12,
+                      color: colors.onSurface,
+                    ),
+                    children: <InlineSpan>[
+                      TextSpan(
+                        text: '/${option.name}',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      if (option.argumentHint != null &&
+                          option.argumentHint!.isNotEmpty) ...<InlineSpan>[
+                        const TextSpan(text: '  '),
+                        TextSpan(
+                          text: option.argumentHint!,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: colors.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (option.description.isNotEmpty)
+                  Text(
+                    option.description,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontSize: 10,
+                      height: 13 / 10,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _MentionSuggestionPackageRow extends StatelessWidget {
   /// Creates one package suggestion row.
   const _MentionSuggestionPackageRow({
     required this.option,
+    required this.selected,
     required this.onTap,
   });
 
   final MentionPackageOption option;
+  final bool selected;
   final VoidCallback onTap;
 
   /// Builds the package suggestion row.
@@ -347,8 +830,15 @@ class _MentionSuggestionPackageRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final subtitle = buildMentionPackageSubtitle(
+      AppLocalizations.of(context)!,
+      option,
+    );
     return Material(
-      color: Colors.transparent,
+      color: selected
+          ? colors.primaryContainer.withValues(alpha: 0.42)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
         onTap: onTap,
@@ -377,15 +867,9 @@ class _MentionSuggestionPackageRow extends StatelessWidget {
                         color: colors.onSurface,
                       ),
                     ),
-                    if (buildMentionPackageSubtitle(
-                      AppLocalizations.of(context)!,
-                      option,
-                    ).isNotEmpty)
+                    if (subtitle.isNotEmpty)
                       Text(
-                        buildMentionPackageSubtitle(
-                          AppLocalizations.of(context)!,
-                          option,
-                        ),
+                        subtitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall?.copyWith(
@@ -407,9 +891,14 @@ class _MentionSuggestionPackageRow extends StatelessWidget {
 
 class _MentionSuggestionFileRow extends StatelessWidget {
   /// Creates one workspace file suggestion row.
-  const _MentionSuggestionFileRow({required this.entry, required this.onTap});
+  const _MentionSuggestionFileRow({
+    required this.entry,
+    required this.selected,
+    required this.onTap,
+  });
 
   final WorkspaceFileEntry entry;
+  final bool selected;
   final VoidCallback onTap;
 
   /// Builds the workspace file suggestion row.
@@ -420,7 +909,10 @@ class _MentionSuggestionFileRow extends StatelessWidget {
     final title = _workspaceEntryTitle(entry);
     final detail = _workspaceEntryParentPath(entry.relativePath);
     return Material(
-      color: Colors.transparent,
+      color: selected
+          ? colors.primaryContainer.withValues(alpha: 0.42)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
         onTap: onTap,

@@ -101,6 +101,89 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets(
+    'refactored scheme switches permission levels, renders plugin descriptions, and shows empty state',
+    (tester) async {
+      final bridge = _MenuBridge()
+        ..customPluginToggles = const <InputMenuToggleDefinitionSnapshot>[
+          InputMenuToggleDefinitionSnapshot(
+            id: 'plan-mode',
+            title: '计划模式',
+            description: '先梳理步骤再执行',
+            icon: 'Assignment',
+            isChecked: true,
+            isEnabled: true,
+            slot: null,
+          ),
+        ];
+      await tester.pumpWidget(
+        _app(
+          AgentInputMenuPopup(
+            viewModel: ChatViewModel(bridge: bridge),
+            currentChatId: 'computer-chat',
+            onDismiss: () {},
+            isChatContextCurrent: () => true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('开放全部工具与终端'), findsOneWidget);
+      expect(find.text('计划模式'), findsNothing);
+
+      await tester.tap(find.text('读写'));
+      await tester.pumpAndSettle();
+      expect(find.text('仅限当前工作区读写'), findsOneWidget);
+
+      await tester.tap(find.text('插件'));
+      await tester.pumpAndSettle();
+      expect(find.text('计划模式'), findsOneWidget);
+      expect(find.text('先梳理步骤再执行'), findsOneWidget);
+
+      bridge.customPluginToggles = const <InputMenuToggleDefinitionSnapshot>[];
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      expect(find.text('暂无可用插件开关'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'popup transition animates entrance, dismiss, and cancelDismiss cleanly',
+    (tester) async {
+      final transitionKey = GlobalKey<InputMenuPopupTransitionState>();
+      await tester.pumpWidget(
+        _app(
+          InputMenuPopupTransition(
+            key: transitionKey,
+            alignment: Alignment.bottomRight,
+            child: const SizedBox(width: 200, height: 120, child: Text('Menu')),
+          ),
+        ),
+      );
+      final transitionFadeFinder = find.descendant(
+        of: find.byType(InputMenuPopupTransition),
+        matching: find.byType(FadeTransition),
+      );
+      expect(tester.widget<FadeTransition>(transitionFadeFinder).opacity.value, 0.0);
+
+      await tester.pumpAndSettle();
+      expect(tester.widget<FadeTransition>(transitionFadeFinder).opacity.value, 1.0);
+
+      final dismissFuture = transitionKey.currentState!.dismiss();
+      await tester.pump(const Duration(milliseconds: 60));
+      transitionKey.currentState!.cancelDismiss();
+      await dismissFuture;
+      await tester.pumpAndSettle();
+      expect(tester.widget<FadeTransition>(transitionFadeFinder).opacity.value, 1.0);
+
+      final finalDismiss = transitionKey.currentState!.dismiss();
+      await tester.pumpAndSettle();
+      await finalDismiss;
+      expect(tester.widget<FadeTransition>(transitionFadeFinder).opacity.value, 0.0);
+    },
+  );
+
   for (final action in <({String section, String control, String method})>[
     (section: '工具', control: '只读', method: 'saveChatInputMenuSettings'),
     (section: '行为', control: '流式输出', method: 'saveChatInputMenuSettings'),
@@ -273,6 +356,48 @@ void main() {
     expect(attempts, 2);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets(
+    'sliding tracks support horizontal drag and ignore stale polling during rapid mode clicks',
+    (tester) async {
+      final pending = Completer<void>();
+      final bridge = _MenuBridge()..pendingMutation = pending;
+      await tester.pumpWidget(
+        _app(
+          AgentInputMenuPopup(
+            viewModel: ChatViewModel(bridge: bridge),
+            currentChatId: 'computer-chat',
+            onDismiss: () {},
+            isChatContextCurrent: () => true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('读写'));
+      await tester.pump(const Duration(milliseconds: 30));
+      await tester.tap(find.text('完整'));
+      await tester.pump();
+      expect(find.text('开放全部工具与终端'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('开放全部工具与终端'), findsOneWidget);
+
+      pending.complete();
+      await tester.pumpAndSettle();
+
+      await tester.drag(find.text('完整'), const Offset(-140, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('开放全部工具与终端'), findsNothing);
+
+      await tester.drag(find.text('控制'), const Offset(110, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('测试插件'), findsOneWidget);
+
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 }
 
 /// Serves real generic menu and permission contracts and rejects retired owner APIs.
@@ -280,6 +405,7 @@ class _MenuBridge extends OperitRuntimeBridge {
   final calls = <CoreCallRequest>[];
   bool disableStream = true;
   Completer<void>? pendingMutation;
+  List<InputMenuToggleDefinitionSnapshot>? customPluginToggles;
 
   /// Records exact owning-chat calls and the actual empty plugin registry.
   @override
@@ -291,7 +417,11 @@ class _MenuBridge extends OperitRuntimeBridge {
         value = <String, Object?>{
           ..._settings.toJson(),
           'disableStreamOutput': disableStream,
-          if (pendingMutation != null)
+          if (customPluginToggles != null)
+            'pluginToggles': customPluginToggles!
+                .map((toggle) => toggle.toJson())
+                .toList(growable: false)
+          else if (pendingMutation != null)
             'pluginToggles': <Object?>[
               const InputMenuToggleDefinitionSnapshot(
                 id: 'test-plugin',
