@@ -2929,6 +2929,40 @@ fn constrained_typed_replace_preserves_raw_payloads_and_rolls_back_failed_public
 }
 
 #[test]
+fn constrained_typed_replace_keeps_durable_state_when_either_encoding_pass_fails() {
+    use serde::Serialize;
+    struct FailingValue {
+        calls: std::cell::Cell<usize>,
+        failAt: usize,
+    }
+    impl Serialize for FailingValue {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let call = self.calls.get() + 1;
+            self.calls.set(call);
+            if call == self.failAt { return Err(serde::ser::Error::custom("injected serializer failure")); }
+            json!({"status": "approved", "text": "设备\n\""}).serialize(serializer)
+        }
+    }
+    let host = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
+    let path = "runtime/two-pass-replace.json";
+    let original = br#"{"__operit_preferences_schema_version":1,"keep":{"n":1e2},"request":"pending"}"#;
+    let store = super::CoreNodeStateStore::newWithStorage(host.clone(), path).withSchema(1, |_, _| Ok(()));
+    for failAt in [1, 2] {
+        host.writeBytes(path, original).unwrap();
+        let writes = host.writeCount();
+        let value = FailingValue { calls: std::cell::Cell::new(0), failAt };
+        let error = store.setTypedEntry("request", &value).unwrap_err();
+        assert!(error.to_string().contains("injected serializer failure"));
+        assert_eq!(value.calls.get(), failAt);
+        assert_eq!(host.writeCount(), writes, "neither encoding pass may publish partial bytes");
+        assert_eq!(host.readBytes(path).unwrap(), original);
+        assert_eq!(store.typedEntry::<String>("request").unwrap().as_deref(), Some("pending"));
+        store.setTypedEntry("request", &"approved").unwrap();
+        assert_eq!(store.typedEntry::<String>("request").unwrap().as_deref(), Some("approved"));
+    }
+}
+
+#[test]
 fn constrained_typed_replace_migrates_atomically_and_rejects_future_or_corrupt_files() {
     let host = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
     let path = "runtime/raw-replace-schema.json";

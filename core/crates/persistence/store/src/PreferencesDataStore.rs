@@ -2026,23 +2026,31 @@ impl CoreNodeStateStore {
 
     /// Reads selected records without initializing an absent node-local collection.
     fn typedEntriesMatching<T: serde::de::DeserializeOwned>(&self, only: Option<&str>) -> Result<Vec<(String, T)>, PreferencesDataStoreError> {
-        let transaction = self.inner.sharedState.transaction.lock()
-            .expect("PreferencesDataStore transaction mutex must not be poisoned");
-        if !self.inner.storageHost.exists(&self.inner.storagePath)? { return Ok(Vec::new()); }
-        if !self.inner.storageHost.retainPreferencesCache() {
-            self.inner.releaseNodeLocalCacheUnlocked();
-            let bytes = self.inner.storageHost.readBytes(&self.inner.storagePath)?;
-            if !bytes.iter().all(u8::is_ascii_whitespace) {
-                if self.encodedNodeSchemaIsCurrent(&bytes)? {
-                    return deserializeTypedNodeEntries(&bytes, only).map_err(Into::into);
-                }
-            }
+        if let Some(bytes) = self.currentEncodedNodeEntries()? {
+            if bytes.is_empty() { return Ok(Vec::new()); }
+            return deserializeTypedNodeEntries(&bytes, only).map_err(Into::into);
         }
-        drop(transaction);
         self.data()?.iterEntries()
             .filter(|(key, _)| *key != PREFERENCES_SCHEMA_VERSION_KEY_NAME && only.is_none_or(|selected| *key == selected))
             .map(|(key, value)| T::deserialize(value).map(|value| (key.to_owned(), value)).map_err(Into::into))
             .collect()
+    }
+
+    /// Share snapshot acquisition and schema checks across typed record scans.
+    /// The owned bytes remain immutable after the storage transaction ends.
+    #[inline(never)]
+    fn currentEncodedNodeEntries(&self) -> Result<Option<Vec<u8>>, PreferencesDataStoreError> {
+        let _transaction = self.inner.sharedState.transaction.lock()
+            .expect("PreferencesDataStore transaction mutex must not be poisoned");
+        if !self.inner.storageHost.exists(&self.inner.storagePath)? { return Ok(Some(Vec::new())); }
+        if !self.inner.storageHost.retainPreferencesCache() {
+            self.inner.releaseNodeLocalCacheUnlocked();
+            let bytes = self.inner.storageHost.readBytes(&self.inner.storagePath)?;
+            if !bytes.iter().all(u8::is_ascii_whitespace) && self.encodedNodeSchemaIsCurrent(&bytes)? {
+                return Ok(Some(bytes));
+            }
+        }
+        Ok(None)
     }
 
     /// Inspect a consistent encoded snapshot without copying its payloads.
@@ -2212,44 +2220,53 @@ impl CoreNodeStateStore {
     fn editTypedEntry<T: Serialize>(&self, key: &str, value: Option<&T>, compactEntries: bool) -> Result<(), PreferencesDataStoreError> {
         if !self.inner.storageHost.retainPreferencesCache()
             && !matches!(key, PREFERENCES_SCHEMA_VERSION_KEY_NAME | PREFERENCES_REPLICATION_KEY) {
-            let transaction = self.inner.sharedState.transaction.lock()
-                .expect("PreferencesDataStore transaction mutex must not be poisoned");
-            self.inner.releaseNodeLocalCacheUnlocked();
-            let bytes = if self.inner.storageHost.exists(&self.inner.storagePath)? {
-                self.inner.storageHost.readBytes(&self.inner.storagePath)?
-            } else { Vec::new() };
-            let entries: BTreeMap<String, &serde_json::value::RawValue> = if bytes.iter().all(u8::is_ascii_whitespace) {
-                BTreeMap::new()
-            } else { serde_json::from_slice(&bytes)? };
-            let version = entries.get(PREFERENCES_SCHEMA_VERSION_KEY_NAME)
-                .map(|version| serde_json::from_slice((version.get()).as_bytes())).transpose()?;
-            if self.nodeSchemaIsCurrent(version)? && !entries.contains_key(PREFERENCES_REPLICATION_KEY) {
-                let replacement = NodeEntryReplacement { entries: &entries, key, value };
-                let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true, compact: false, inString: false, escaped: false };
-                content.compact = compactEntries;
-                let encode = |output: &mut PreferencesJsonBuffer| {
-                    replacement.serialize(&mut serde_json::Serializer::with_formatter(output, serde_json::ser::CompactFormatter))
-                };
-                encode(&mut content)?;
-                content.bytes.try_reserve_exact(content.measured)
-                    .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
-                content.countOnly = false;
-                encode(&mut content)?;
-                if content.bytes == bytes { return Ok(()); }
-                drop(entries);
-                drop(bytes);
-                self.inner.storageHost.writeBytesAtomically(&self.inner.storagePath, &content.bytes)?;
-                drop(transaction);
-                self.inner.notifyChanged();
-                return Ok(());
-            }
-            drop(transaction);
+            let mut encodeValue = value.map(|value| move |output: &mut PreferencesJsonBuffer| {
+                value.serialize(&mut serde_json::Serializer::with_formatter(output, serde_json::ser::CompactFormatter))
+            });
+            let mut encode = encodeValue.as_mut().map(|encode| encode as &mut NodeEntryEncoder<'_>);
+            if self.editEncodedNodeEntry(key, compactEntries, &mut encode)? { return Ok(()); }
         }
         let encoded = value.map(serde_json::to_value).transpose()?;
         self.edit(|preferences| match encoded {
             Some(value) => preferences.set(&stringPreferencesKey(key), value),
             None => { preferences.remove(&stringPreferencesKey(key)); }
         })
+    }
+
+    /// Share the lock, raw map and two-pass writer across record types. Only the
+    /// replacement value's serializer is specialized; no extra JSON tree or
+    /// intermediate payload buffer is allocated on constrained hosts.
+    #[inline(never)]
+    fn editEncodedNodeEntry(
+        &self, key: &str, compactEntries: bool, encode: &mut Option<&mut NodeEntryEncoder<'_>>,
+    ) -> Result<bool, PreferencesDataStoreError> {
+        let transaction = self.inner.sharedState.transaction.lock()
+            .expect("PreferencesDataStore transaction mutex must not be poisoned");
+        self.inner.releaseNodeLocalCacheUnlocked();
+        let bytes = if self.inner.storageHost.exists(&self.inner.storagePath)? {
+            self.inner.storageHost.readBytes(&self.inner.storagePath)?
+        } else { Vec::new() };
+        let entries: BTreeMap<String, &serde_json::value::RawValue> = if bytes.iter().all(u8::is_ascii_whitespace) {
+            BTreeMap::new()
+        } else { serde_json::from_slice(&bytes)? };
+        let version = entries.get(PREFERENCES_SCHEMA_VERSION_KEY_NAME)
+            .map(|version| serde_json::from_slice((version.get()).as_bytes())).transpose()?;
+        if !self.nodeSchemaIsCurrent(version)? || entries.contains_key(PREFERENCES_REPLICATION_KEY) {
+            return Ok(false);
+        }
+        let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true, compact: compactEntries, inString: false, escaped: false };
+        writeNodeEntryReplacement(&mut content, &entries, key, encode)?;
+        content.bytes.try_reserve_exact(content.measured)
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+        content.countOnly = false;
+        writeNodeEntryReplacement(&mut content, &entries, key, encode)?;
+        if content.bytes == bytes { return Ok(true); }
+        drop(entries);
+        drop(bytes);
+        self.inner.storageHost.writeBytesAtomically(&self.inner.storagePath, &content.bytes)?;
+        drop(transaction);
+        self.inner.notifyChanged();
+        Ok(true)
     }
 
     /// Deletes a node-local record and its shared preferences snapshot together.
@@ -2353,28 +2370,50 @@ impl<'de, F: FnMut(&str, &serde_json::value::RawValue) -> Result<(), String>> se
     }
 }
 
-/// Borrow old JSON payloads and serialize only the replaced typed value.
-struct NodeEntryReplacement<'a, T> {
-    entries: &'a BTreeMap<String, &'a serde_json::value::RawValue>,
-    key: &'a str,
-    value: Option<&'a T>,
-}
-impl<T: Serialize> Serialize for NodeEntryReplacement<'_, T> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let count = self.entries.len() - usize::from(self.entries.contains_key(self.key)) + usize::from(self.value.is_some());
-        let mut map = serializer.serialize_map(Some(count))?;
-        let mut inserted = false;
-        for (key, value) in self.entries {
-            if !inserted && key.as_str() >= self.key {
-                if let Some(value) = self.value { map.serialize_entry(self.key, value)?; }
-                inserted = true;
+type NodeEntryEncoder<'a> = dyn FnMut(&mut PreferencesJsonBuffer) -> Result<(), serde_json::Error> + 'a;
+
+/// Emit the same sorted JSON map without specializing its raw-record traversal
+/// for each replacement type. The callback writes directly into the measured
+/// destination, including on the count-only pass.
+#[inline(never)]
+fn writeNodeEntryReplacement(
+    output: &mut PreferencesJsonBuffer,
+    entries: &BTreeMap<String, &serde_json::value::RawValue>,
+    key: &str,
+    encode: &mut Option<&mut NodeEntryEncoder<'_>>,
+) -> Result<(), serde_json::Error> {
+    use std::io::Write;
+    output.write_all(b"{").map_err(serde_json::Error::io)?;
+    let mut first = true;
+    let mut inserted = false;
+    for (oldKey, oldValue) in entries {
+        if !inserted && oldKey.as_str() >= key {
+            if let Some(encode) = encode.as_mut() {
+                writeNodeEntryKey(output, key, &mut first)?;
+                encode(output)?;
             }
-            if key != self.key { map.serialize_entry(key, value)?; }
+            inserted = true;
         }
-        if !inserted { if let Some(value) = self.value { map.serialize_entry(self.key, value)?; } }
-        map.end()
+        if oldKey != key {
+            writeNodeEntryKey(output, oldKey, &mut first)?;
+            serde_json::to_writer(&mut *output, oldValue)?;
+        }
     }
+    if !inserted {
+        if let Some(encode) = encode.as_mut() {
+            writeNodeEntryKey(output, key, &mut first)?;
+            encode(output)?;
+        }
+    }
+    output.write_all(b"}").map_err(serde_json::Error::io)
+}
+
+fn writeNodeEntryKey(output: &mut PreferencesJsonBuffer, key: &str, first: &mut bool) -> Result<(), serde_json::Error> {
+    use std::io::Write;
+    if !*first { output.write_all(b",").map_err(serde_json::Error::io)?; }
+    *first = false;
+    serde_json::to_writer(&mut *output, key)?;
+    output.write_all(b":").map_err(serde_json::Error::io)
 }
 
 /// Merge two sorted maps without cloning any unchanged business value.
