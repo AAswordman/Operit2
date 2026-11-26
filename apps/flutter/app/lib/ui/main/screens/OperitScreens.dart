@@ -208,8 +208,13 @@ class MarketBrowseScreenRoute extends OperitScreen {
 
 /// Complete list of the official extensions bundled with the app.
 class OfficialExtensionsScreenRoute extends OperitScreen {
+  /// Preserves the list while details cover it and releases it when popped.
   const OfficialExtensionsScreenRoute()
-    : super(routeTypeName: 'OfficialExtensions', title: '官方扩展');
+    : super(
+        routeTypeName: 'OfficialExtensions',
+        title: '官方扩展',
+        retainInBackStack: true,
+      );
 
   @override
   String? stableScreenKey() => 'OfficialExtensions';

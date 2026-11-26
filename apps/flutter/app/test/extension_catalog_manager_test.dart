@@ -12,6 +12,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/features/packages/components/StoreVisuals.dart';
 import 'package:operit2/ui/features/packages/components/StoreCards.dart';
+import 'package:operit2/ui/features/packages/components/StoreOfficialExtensionRow.dart';
 import 'package:operit2/ui/features/packages/model/ExtensionCatalogController.dart';
 import 'package:operit2/ui/features/packages/model/ToolPkgDependencyGraph.dart';
 import 'package:operit2/ui/features/packages/components/ExtensionAvatar.dart';
@@ -31,6 +32,201 @@ import 'package:operit2/ui/main/screens/OperitScreens.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
 void main() {
+  final binding = TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() {
+    // The catalog interaction assertions use the Chinese application labels.
+    binding.platformDispatcher.localesTestValue = const [Locale('zh')];
+  });
+  tearDown(binding.platformDispatcher.clearLocalesTestValue);
+
+  for (final width in [390.0, 1000.0]) {
+    for (final animate in [true, false]) {
+      testWidgets(
+        'official list retains scroll through detail and installation at $width (animation: $animate)',
+        (tester) async {
+          tester.view.physicalSize = Size(width, 720);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          final bridge = _CatalogBridge();
+          bridge.bundledCandidates.addAll([
+            for (var i = 0; i < 50; i++)
+              core_proxy.ExtensionCatalogCandidate(
+                id: 'official_$i',
+                kind: 'toolpkg',
+                displayName: 'Official $i',
+                description: 'Offline extension $i',
+                version: '1.0.0',
+                authors: const ['Operit'],
+                category: 'ToolPkg',
+                requiredScope: 'device',
+                toolCount: 1,
+                subpackageCount: 0,
+              ),
+          ]);
+          bridge.onBundledImported = (id) {
+            bridge.bundledCandidates.removeWhere((candidate) => candidate.id == id);
+            bridge.dependencyEntries.add(
+              _entry(id: id, kind: 'toolpkg', source: 'bundled'),
+            );
+          };
+          final clients = GeneratedCoreProxyClients(bridge);
+          final topBar = TopBarController();
+          final layout = MainLayoutController();
+          final router = AppRouterState(RouteEntry(routeId: 'home'));
+          addTearDown(topBar.dispose);
+          addTearDown(layout.dispose);
+          addTearDown(router.dispose);
+          addTearDown(AppRouterGateway.clear);
+          var navigatingBack = false;
+
+          /// Returns through the same shell back action used by the top bar.
+          void back() {
+            navigatingBack = true;
+            router.pop();
+            topBar.clear();
+          }
+
+          AppRouterGateway.install(
+            handler: (routeId, args, source) {
+              navigatingBack = false;
+              router.navigate(routeId: routeId, args: args, source: source);
+              topBar.clear();
+            },
+            reset: (routeId, args, source) {
+              router.resetTo(
+                RouteEntry(routeId: routeId, args: args, source: source),
+              );
+            },
+          );
+          router.navigate(routeId: 'native.official_extensions');
+          await tester.pumpWidget(
+            OperitTheme(
+              initialThemePreferenceSnapshot:
+                  UserPreferencesManager.defaultThemePreferenceSnapshot,
+              initialThemeIsReady: false,
+              unconfiguredChildEnabled: true,
+              hostInteractionHostsEnabled: false,
+              child: MainLayoutScope(
+                controller: layout,
+                child: TopBarScope(
+                  controller: topBar,
+                  child: ListenableBuilder(
+                    listenable: router,
+                    builder: (context, _) {
+                      final entry = router.currentEntry;
+                      final screen = switch (entry.routeId) {
+                        'native.official_extensions' => _OfficialListRoute(
+                          clients,
+                        ),
+                        'native.extension_detail' => _DependencyDetailRoute(
+                          id: entry.args['id']! as String,
+                          clients: clients,
+                        ),
+                        'home' => const _CatalogScreen(
+                          SizedBox(),
+                          inList: true,
+                        ),
+                        _ => throw StateError(
+                          'Unexpected route: ${entry.routeId}',
+                        ),
+                      };
+                      return Scaffold(
+                        body: AppContent(
+                          routerState: router,
+                          currentScreen: screen,
+                          currentRouteEntry: entry,
+                          currentRouteTitle: screen.title ?? '',
+                          useTabletLayout: width >= 600,
+                          isTabletSidebarExpanded: false,
+                          canGoBack: router.canPop,
+                          enableNavigationAnimation: animate,
+                          isNavigatingBack: navigatingBack,
+                          topBarController: topBar,
+                          appBarEntries: const [],
+                          onGoBack: back,
+                          onNavigationButtonPressed: () {},
+                          onAppBarEntrySelected: (_) {},
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final list = find.byType(
+            OfficialExtensionsScreen,
+            skipOffstage: false,
+          );
+          final original = tester.state(list);
+          final scrollable = find.descendant(
+            of: list,
+            matching: find.byType(Scrollable, skipOffstage: false),
+            skipOffstage: false,
+          );
+          final position = tester.state<ScrollableState>(scrollable).position;
+          await tester.drag(
+            find.byType(CustomScrollView),
+            const Offset(0, -1300),
+          );
+          await tester.pumpAndSettle();
+          final offset = position.pixels;
+          expect(offset, greaterThan(0));
+          final row = find
+              .byType(StoreOfficialExtensionRow)
+              .hitTestable()
+              .at(2);
+          final candidate = tester
+              .widget<StoreOfficialExtensionRow>(row)
+              .candidate;
+          bridge.dependencyRuntimes.add(_toolpkgRuntime(id: candidate.id));
+
+          for (final install in [false, true]) {
+            await tester.tap(find.text(candidate.displayName));
+            await tester.pumpAndSettle();
+            expect(router.currentEntry.routeId, 'native.extension_detail');
+            expect(list, findsOneWidget);
+            expect(tester.state(list), same(original));
+            expect(TickerMode.valuesOf(tester.element(list)).enabled, isFalse);
+            if (install) {
+              await tester.tap(find.text('安装'));
+              await tester.pumpAndSettle();
+              expect(bridge.imports, [candidate.id]);
+            }
+            await tester.tap(find.byTooltip('Back'));
+            await tester.pumpAndSettle();
+            expect(tester.state(list), same(original));
+            expect(
+              tester.state<ScrollableState>(scrollable).position,
+              same(position),
+            );
+            expect(position.pixels, closeTo(offset, 0.1));
+            expect(find.text(candidate.displayName), findsOneWidget);
+            expect(
+              find.byType(ExtensionDetailScreen, skipOffstage: false),
+              findsNothing,
+            );
+          }
+          expect(bridge.marketRequests, isEmpty);
+          await tester.tap(find.byTooltip('Back'));
+          await tester.pumpAndSettle();
+          // Disabled entrance motion can settle before shell cleanup runs.
+          await tester.pump(const Duration(milliseconds: 500));
+          await tester.pumpAndSettle();
+          expect(router.currentEntry.routeId, 'home');
+          expect(list, findsNothing);
+          // Catalog recency uses wall-clock time, independently of test frames.
+          await tester.runAsync(
+            () => Future<void>.delayed(ExtensionCatalogController.recentWindow),
+          );
+          await tester.pump(ExtensionCatalogController.recentWindow);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
   group('local package import scope', () {
     for (final installedScope in <String>['device', 'space']) {
       for (final requireToolPkg in <bool>[false, true]) {
@@ -1554,6 +1750,21 @@ class _CatalogBridge extends OperitRuntimeBridge {
   Object? mcpStartupFailure;
   int mcpStartAttempts = 0;
   final imports = <String>[];
+  void Function(String id)? onBundledImported;
+  final bundledCandidates = <core_proxy.ExtensionCatalogCandidate>[
+    const core_proxy.ExtensionCatalogCandidate(
+      id: 'official_extra',
+      kind: 'toolpkg',
+      displayName: 'Official Extra',
+      description: 'Offline extension',
+      version: '1.1.0',
+      authors: <String>['Operit'],
+      category: 'ToolPkg',
+      requiredScope: 'device',
+      toolCount: 1,
+      subpackageCount: 0,
+    ),
+  ];
   final scopeMoves = <String>[];
   final scopeMoveRequests = <({String kind, String id, String scope})>[];
   final packageFileImports = <String>[];
@@ -1706,7 +1917,9 @@ class _CatalogBridge extends OperitRuntimeBridge {
         onEnabledChanged?.call(true);
         return 'Enabled';
       case 'importBundledExternalToolPkgContainer':
-        imports.add((request.args as Map)['containerPackageName'] as String);
+        final id = (request.args as Map)['containerPackageName'] as String;
+        imports.add(id);
+        onBundledImported?.call(id);
         return 'Imported';
       case 'setExtensionScope':
         final scopeArgs = request.args as Map;
@@ -1791,20 +2004,7 @@ class _CatalogBridge extends OperitRuntimeBridge {
           ),
         _entry(id: 'mcp', kind: 'mcp', source: 'manual', enabled: true),
       ],
-      bundledAvailable: const <core_proxy.ExtensionCatalogCandidate>[
-        core_proxy.ExtensionCatalogCandidate(
-          id: 'official_extra',
-          kind: 'toolpkg',
-          displayName: 'Official Extra',
-          description: 'Offline extension',
-          version: '1.1.0',
-          authors: <String>['Operit'],
-          category: 'ToolPkg',
-          requiredScope: 'device',
-          toolCount: 1,
-          subpackageCount: 0,
-        ),
-      ],
+      bundledAvailable: bundledCandidates,
       diagnostics: List<core_proxy.ExtensionCatalogDiagnostic>.of(diagnostics),
     );
   }
@@ -1912,4 +2112,16 @@ class _DependencyDetailRoute extends ExtensionDetailScreenRoute {
   @override
   Widget build(BuildContext context) =>
       ExtensionDetailScreen(kind: kind, id: id, clients: clients);
+}
+
+/// Uses the official list's production retention policy with a test connection.
+class _OfficialListRoute extends OfficialExtensionsScreenRoute {
+  /// Supplies the in-memory Core connection without overriding route retention.
+  const _OfficialListRoute(this.clients);
+  final GeneratedCoreProxyClients clients;
+
+  /// Builds the real offline list and its catalog subscription lifecycle.
+  @override
+  Widget build(BuildContext context) =>
+      OfficialExtensionsScreen(clients: clients);
 }
