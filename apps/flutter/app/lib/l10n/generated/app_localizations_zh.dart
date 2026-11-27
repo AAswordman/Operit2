@@ -7082,4 +7082,321 @@ class AppLocalizationsZh extends AppLocalizations {
   String settingsToolsItemCount(int count) {
     return '$count 项';
   }
+
+  @override
+  String get settingsUsageTabAnalytics => 'Token 用量与性能';
+
+  @override
+  String get settingsUsageTabQuotas => '供应商余额与配额';
+
+  @override
+  String get settingsUsageDeviceScopeAll => '全部 Space 设备';
+
+  @override
+  String get settingsUsageDeviceScopeLocal => '仅本机';
+
+  @override
+  String get settingsUsageExportJson => '复制 JSON 报告';
+
+  @override
+  String get settingsUsageExportCsv => '复制 CSV 表格';
+
+  @override
+  String get settingsUsageExportCopied => '统计报告已复制到剪贴板';
+
+  @override
+  String get settingsUsageResetScopeTitle => '重置使用统计';
+
+  @override
+  String get settingsUsageResetLocalOnly => '仅清空本机产生记录';
+
+  @override
+  String get settingsUsageResetAllSpace => '清空整个 Space 跨设备记录';
+
+  @override
+  String get settingsUsageResetScopeWarning =>
+      '「仅清空本机」仅移除本机产生的数据并保留其他设备记录；「清空整个 Space」将同步清理所有设备上的历史。';
+
+  @override
+  String get settingsUsageKpiThroughput => '平均生成速度';
+
+  @override
+  String settingsUsageKpiTtftMedian(String ttft) {
+    return '首字延迟 P50：$ttft';
+  }
+
+  @override
+  String settingsUsageKpiSpeedSamples(int count) {
+    return '$count 次流式样本';
+  }
+
+  @override
+  String get settingsUsageKpiReasoning => '思考';
+
+  @override
+  String get settingsUsageKpiCacheWrite => '缓存写入';
+
+  @override
+  String settingsUsageKpiSuccessRate(int ok, int err) {
+    return '$ok 成功 · $err 失败/取消';
+  }
+
+  @override
+  String get settingsUsageTimelineSpeedTitle => '输出吞吐速度 (tok/s)';
+
+  @override
+  String settingsUsageTimelineSpeedDetail(String speed, String ttft) {
+    return '流式输出 $speed tok/s · 首字延迟 $ttft';
+  }
+
+  @override
+  String get settingsUsageTimelineNoSpeedData => '暂无满足 ≥100ms 的流式测速样本';
+
+  @override
+  String get settingsUsageAttrModels => '模型明细';
+
+  @override
+  String get settingsUsageAttrSources => '角色与来源';
+
+  @override
+  String get settingsUsageAttrDevices => '跨设备归因';
+
+  @override
+  String get settingsUsageAttrLogs => '请求流水';
+
+  @override
+  String get settingsUsageColSpeed => '速度';
+
+  @override
+  String get settingsUsageColTtft => '首字';
+
+  @override
+  String get settingsUsageColSpend => '估算费用';
+
+  @override
+  String get settingsUsageColShare => '占比';
+
+  @override
+  String get settingsUsageDeviceUnknown => '本机 / 历史记录';
+
+  @override
+  String get settingsUsageLogFilterRecent => '最新';
+
+  @override
+  String get settingsUsageLogFilterTopTokens => '最高用量';
+
+  @override
+  String get settingsUsageLogFilterIssues => '失败与取消';
+
+  @override
+  String get settingsUsageLogFilterReasoning => '含推理过程';
+
+  @override
+  String get settingsUsageStatusCompleted => '已完成';
+
+  @override
+  String get settingsUsageStatusCancelled => '已取消';
+
+  @override
+  String get settingsUsageStatusFailed => '失败';
+
+  @override
+  String get settingsUsageRequestDetailTitle => '请求遥测详情';
+
+  @override
+  String settingsUsageLatencyBreakdown(String wait, String stream) {
+    return '等待 $wait · 输出 $stream';
+  }
+
+  @override
+  String get settingsQuotaProbeAll => '全部刷新';
+
+  @override
+  String get settingsQuotaProbeSingle => '刷新余额';
+
+  @override
+  String get settingsQuotaProbeViaNode => '通过 Space 在线节点代查';
+
+  @override
+  String get settingsQuotaFilterAll => '全部';
+
+  @override
+  String get settingsQuotaFilterBalance => '按量余额';
+
+  @override
+  String get settingsQuotaFilterSubscription => '订阅配额';
+
+  @override
+  String get settingsQuotaFilterLocal => '本地算力';
+
+  @override
+  String get settingsQuotaFilterBudget => '预算与控制台';
+
+  @override
+  String get settingsQuotaRemainingLabel => '可用余额';
+
+  @override
+  String get settingsQuotaCashLabel => '充值';
+
+  @override
+  String get settingsQuotaGrantedLabel => '赠金';
+
+  @override
+  String get settingsQuotaUsedLabel => '已用';
+
+  @override
+  String get settingsQuotaDailyUsedLabel => '今日';
+
+  @override
+  String get settingsQuotaMonthlyUsedLabel => '本月';
+
+  @override
+  String settingsQuotaKeyPoolCount(int count) {
+    return 'Key 池 ($count)';
+  }
+
+  @override
+  String get settingsQuotaStatusOk => '正常';
+
+  @override
+  String get settingsQuotaStatusUnauthorized => '认证失败';
+
+  @override
+  String get settingsQuotaStatusError => '查询失败';
+
+  @override
+  String get settingsQuotaStatusStale => '未查询';
+
+  @override
+  String get settingsQuotaStatusUnsupported => '无公开余额接口';
+
+  @override
+  String settingsQuotaProbedBy(String device, String time) {
+    return '由 $device 查询于 $time';
+  }
+
+  @override
+  String get settingsQuotaOpenConsole => '官网账单';
+
+  @override
+  String get settingsQuotaProtocolConfig => '探测协议';
+
+  @override
+  String get settingsQuotaSetBudget => '月度预算';
+
+  @override
+  String get settingsQuotaEditBudget => '调整预算';
+
+  @override
+  String settingsQuotaBudgetProgress(String spent, String limit) {
+    return '本周期已消耗 $spent / $limit';
+  }
+
+  @override
+  String get settingsQuotaBudgetExceeded => '已达到预算预警阈值';
+
+  @override
+  String get settingsQuotaDialogBudgetLimit => '每月费用上限';
+
+  @override
+  String get settingsQuotaDialogResetDay => '账单重置日 (1-28)';
+
+  @override
+  String get settingsQuotaDialogAlertPct => '预警百分比 (%)';
+
+  @override
+  String get settingsQuotaDialogProtocolLabel => '余额探测协议';
+
+  @override
+  String get settingsQuotaDialogCustomPath => '自定义接口路径 (如 /api/balance)';
+
+  @override
+  String get settingsQuotaDialogAmountJsonPath =>
+      '余额字段 JSON 路径 (如 data.balance)';
+
+  @override
+  String get settingsQuotaDialogCurrencyJsonPath => '币种字段 JSON 路径（可选）';
+
+  @override
+  String get settingsQuotaDialogClear => '清除';
+
+  @override
+  String get settingsQuotaEmptyProviders => '尚未配置任何模型供应商';
+
+  @override
+  String get settingsQuotaLocalZeroCost => '端侧本地算力 · 零 API 费用';
+
+  @override
+  String get settingsUsageColStatus => '状态';
+
+  @override
+  String get settingsUsageColTime => '时间';
+
+  @override
+  String get settingsUsageModeStream => '流式';
+
+  @override
+  String get settingsUsageModeNonStream => '非流式';
+
+  @override
+  String get settingsUsageTopModelsTitle => '模型分布与 Token 构成';
+
+  @override
+  String get settingsUsageTokenMixLabel => 'Token 构成比例';
+
+  @override
+  String get settingsUsageDirectInputLabel => '直传输入';
+
+  @override
+  String get settingsUsageNoModelsInRange => '当前时间窗口暂无模型调用';
+
+  @override
+  String get settingsUsageKpiNoPriceHint => '未匹配模型单价，请检查定价';
+
+  @override
+  String get settingsUsageKpiStreamHint => '需包含 ≥100ms 流式输出';
+
+  @override
+  String settingsUsageHeatmapWeeks(int weeks) {
+    return '近 $weeks 周活跃度';
+  }
+
+  @override
+  String get settingsQuotaSummaryTotalRemaining => '已探测总余额';
+
+  @override
+  String settingsQuotaSummaryProviders(int ready, int total) {
+    return '$ready 项正常 · 共 $total 个供应商';
+  }
+
+  @override
+  String settingsQuotaSummaryAlertCount(int count) {
+    return '$count 项预警';
+  }
+
+  @override
+  String settingsUsageHeatmapSubtitle(int weeks) {
+    return '最近 $weeks 周的每日用量';
+  }
+
+  @override
+  String get settingsUsageHeatmapMetricTokens => 'Token';
+
+  @override
+  String get settingsUsageHeatmapMetricRequests => '请求';
+
+  @override
+  String get settingsUsageHeatmapMetricCost => '费用';
+
+  @override
+  String get settingsUsageWeekdayMon => '周一';
+
+  @override
+  String get settingsUsageWeekdayWed => '周三';
+
+  @override
+  String get settingsUsageWeekdayFri => '周五';
+
+  @override
+  String get settingsUsageWeekdaySun => '周日';
 }

@@ -14,7 +14,7 @@ use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::MessagePartEntity::MessagePartEntity;
 
 /// Current SQLite schema version expected by the runtime.
-pub const DATABASE_VERSION: i32 = 30;
+pub const DATABASE_VERSION: i32 = 31;
 
 #[derive(Debug, Error)]
 /// Error surface for opening and migrating the application database.
@@ -147,6 +147,7 @@ impl AppDatabase {
             27 => MIGRATION_27_28(self)?,
             28 => MIGRATION_28_29(self)?,
             29 => MIGRATION_29_30(self)?,
+            30 => MIGRATION_30_31(self)?,
             version => {
                 return Err(AppDatabaseError::MissingMigration {
                     from: version,
@@ -1102,7 +1103,20 @@ fn createUsageRequestRecordsTable(store: &SqliteStore) -> Result<(), SqliteStore
             chatId TEXT,
             inputTokens INTEGER NOT NULL,
             outputTokens INTEGER NOT NULL,
-            cachedInputTokens INTEGER NOT NULL
+            cachedInputTokens INTEGER NOT NULL,
+            cacheWriteTokens INTEGER NOT NULL DEFAULT 0,
+            reasoningTokens INTEGER NOT NULL DEFAULT 0,
+            waitDurationMs INTEGER NOT NULL DEFAULT 0,
+            outputDurationMs INTEGER NOT NULL DEFAULT 0,
+            totalDurationMs INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'COMPLETED',
+            originNodeId TEXT NOT NULL DEFAULT '',
+            providerId TEXT NOT NULL DEFAULT '',
+            keyId TEXT NOT NULL DEFAULT '',
+            keyFingerprint TEXT NOT NULL DEFAULT '',
+            estimatedCost REAL NOT NULL DEFAULT 0.0,
+            currency TEXT NOT NULL DEFAULT '',
+            stream INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS index_usage_request_records_createdAtMs
             ON usage_request_records(createdAtMs);
@@ -1118,6 +1132,8 @@ fn createUsageRequestRecordsTable(store: &SqliteStore) -> Result<(), SqliteStore
             ON usage_request_records(source);
         CREATE INDEX IF NOT EXISTS index_usage_request_records_chatId
             ON usage_request_records(chatId);
+        CREATE INDEX IF NOT EXISTS index_usage_request_records_originNodeId ON usage_request_records(originNodeId);
+        CREATE INDEX IF NOT EXISTS index_usage_request_records_providerId ON usage_request_records(providerId);
         "#,
     )
 }
@@ -1367,6 +1383,46 @@ fn MIGRATION_29_30(database: &AppDatabase) -> Result<(), SqliteStoreError> {
             }
         }
         transaction.execute("PRAGMA user_version = 30", Vec::new())?;
+        Ok(())
+    })
+}
+
+#[allow(non_snake_case)]
+fn MIGRATION_30_31(database: &AppDatabase) -> Result<(), SqliteStoreError> {
+    database.store.transaction(|transaction| {
+        let rows = transaction.queryRows("PRAGMA table_info(\"usage_request_records\")", Vec::new())?;
+        let existing: std::collections::HashSet<String> = rows
+            .into_iter()
+            .map(|row| row.get::<_, String>("name"))
+            .collect::<Result<_, _>>()?;
+        for (column, ddl) in [
+            ("cacheWriteTokens", "ALTER TABLE usage_request_records ADD COLUMN cacheWriteTokens INTEGER NOT NULL DEFAULT 0"),
+            ("reasoningTokens", "ALTER TABLE usage_request_records ADD COLUMN reasoningTokens INTEGER NOT NULL DEFAULT 0"),
+            ("waitDurationMs", "ALTER TABLE usage_request_records ADD COLUMN waitDurationMs INTEGER NOT NULL DEFAULT 0"),
+            ("outputDurationMs", "ALTER TABLE usage_request_records ADD COLUMN outputDurationMs INTEGER NOT NULL DEFAULT 0"),
+            ("totalDurationMs", "ALTER TABLE usage_request_records ADD COLUMN totalDurationMs INTEGER NOT NULL DEFAULT 0"),
+            ("status", "ALTER TABLE usage_request_records ADD COLUMN status TEXT NOT NULL DEFAULT 'COMPLETED'"),
+            ("originNodeId", "ALTER TABLE usage_request_records ADD COLUMN originNodeId TEXT NOT NULL DEFAULT ''"),
+            ("providerId", "ALTER TABLE usage_request_records ADD COLUMN providerId TEXT NOT NULL DEFAULT ''"),
+            ("keyId", "ALTER TABLE usage_request_records ADD COLUMN keyId TEXT NOT NULL DEFAULT ''"),
+            ("keyFingerprint", "ALTER TABLE usage_request_records ADD COLUMN keyFingerprint TEXT NOT NULL DEFAULT ''"),
+            ("estimatedCost", "ALTER TABLE usage_request_records ADD COLUMN estimatedCost REAL NOT NULL DEFAULT 0.0"),
+            ("currency", "ALTER TABLE usage_request_records ADD COLUMN currency TEXT NOT NULL DEFAULT ''"),
+            ("stream", "ALTER TABLE usage_request_records ADD COLUMN stream INTEGER NOT NULL DEFAULT 0"),
+        ] {
+            if !existing.contains(column) {
+                transaction.execute(ddl, Vec::new())?;
+            }
+        }
+        transaction.execute(
+            "CREATE INDEX IF NOT EXISTS index_usage_request_records_originNodeId ON usage_request_records(originNodeId)",
+            Vec::new(),
+        )?;
+        transaction.execute(
+            "CREATE INDEX IF NOT EXISTS index_usage_request_records_providerId ON usage_request_records(providerId)",
+            Vec::new(),
+        )?;
+        transaction.execute("PRAGMA user_version = 31", Vec::new())?;
         Ok(())
     })
 }

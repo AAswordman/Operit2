@@ -2,7 +2,10 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde_json::json;
 
-use super::{OpenAIProvider, ResponsesStreamProtocol, StreamingState, TokenCounts, ToolCallState};
+use super::{
+    ExtendedTokenCounts, OpenAIProvider, ResponsesStreamProtocol, StreamingState, TokenCounts,
+    ToolCallState,
+};
 use crate::chat::llmprovider::AIService::SendMessageRequest;
 use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
 use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
@@ -19,6 +22,7 @@ fn streamingState() -> StreamingState {
             cached_input: 0,
             output: 0,
         },
+        extendedUsage: ExtendedTokenCounts::default(),
         chunkCount: 0,
         isInReasoningMode: false,
         hasEmittedThinkStart: false,

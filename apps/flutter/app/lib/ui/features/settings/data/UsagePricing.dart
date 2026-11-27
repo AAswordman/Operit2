@@ -3,12 +3,25 @@
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core;
 
 /// Prices are current configured estimates, not historical provider invoices.
+class UsageRecordCost {
+  const UsageRecordCost({
+    required this.currency,
+    required this.cost,
+    required this.fromSnapshot,
+  });
+
+  final String currency;
+  final double cost;
+  final bool fromSnapshot;
+}
+
 class UsageModelPrice {
   const UsageModelPrice({
     required this.currency,
     this.billingMode = 'TOKEN',
     this.inputPerMillion,
     this.cachedPerMillion,
+    this.cacheWritePerMillion,
     this.outputPerMillion,
     this.perRequest,
   });
@@ -17,12 +30,14 @@ class UsageModelPrice {
   final String billingMode;
   final double? inputPerMillion;
   final double? cachedPerMillion;
+  final double? cacheWritePerMillion;
   final double? outputPerMillion;
   final double? perRequest;
 
   double? estimate({
     required int input,
     required int cached,
+    int cacheWrite = 0,
     required int output,
   }) {
     bool valid(double? value) => value != null && value.isFinite && value >= 0;
@@ -32,6 +47,7 @@ class UsageModelPrice {
     final hits = cached.clamp(0, input);
     final misses = input - hits;
     final cachePrice = cachedPerMillion ?? inputPerMillion;
+    final writePrice = cacheWritePerMillion ?? 0;
     if ((misses > 0 && !valid(inputPerMillion)) ||
         (hits > 0 && !valid(cachePrice)) ||
         (output > 0 && !valid(outputPerMillion))) {
@@ -41,6 +57,7 @@ class UsageModelPrice {
     if (!valid(inputPerMillion) && !valid(outputPerMillion)) return null;
     return (misses * (inputPerMillion ?? 0) +
             hits * (cachePrice ?? 0) +
+            cacheWrite.clamp(0, 1 << 60) * writePrice +
             output * (outputPerMillion ?? 0)) /
         1000000;
   }
@@ -88,6 +105,7 @@ class UsagePricingIndex {
         billingMode: (price.billingMode?.toString() ?? 'TOKEN').toUpperCase(),
         inputPerMillion: price.inputPricePerMillion,
         cachedPerMillion: price.cachedInputPricePerMillion,
+        cacheWritePerMillion: price.cacheWritePricePerMillion,
         outputPerMillion: price.outputPricePerMillion,
         perRequest: price.pricePerRequest,
       );
@@ -127,6 +145,33 @@ class UsagePricingIndex {
 
   UsageModelPrice? forModel(String provider, String model) =>
       _prices[_key(provider, model)];
+
+  /// Returns the snapshotted request cost when stored, otherwise estimates from pricing rules.
+  UsageRecordCost? costForRecord(core.UsageRequestRecord record) {
+    final currency = record.currency.trim().toUpperCase();
+    if (currency.isNotEmpty) {
+      return UsageRecordCost(
+        currency: currency,
+        cost: record.estimatedCost,
+        fromSnapshot: true,
+      );
+    }
+    final price = forModel(record.provider, record.modelName);
+    final calculated = price?.estimate(
+      input: record.inputTokens,
+      cached: record.cachedInputTokens,
+      cacheWrite: record.cacheWriteTokens,
+      output: record.outputTokens,
+    );
+    if (calculated == null || price == null) {
+      return null;
+    }
+    return UsageRecordCost(
+      currency: price.currency.trim().toUpperCase(),
+      cost: calculated,
+      fromSnapshot: false,
+    );
+  }
 }
 
 String formatUsageMoney(num amount, {bool detailed = false}) {

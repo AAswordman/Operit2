@@ -5,6 +5,7 @@ use super::ApiPreferences::ApiPreferences;
 use super::OnboardingPreferences::OnboardingPreferences;
 use super::RemoteAnnouncementPreferences::RemoteAnnouncementPreferences;
 use super::SidebarDockPreferences::SidebarDockPreferences;
+use super::ProviderQuotaPreferences::ProviderQuotaPreferences;
 use operit_host_api::PluginStorage::{
     StoragePreferencesMergeCatalog, StoragePreferencesMergeDescriptor, StoragePreferencesMergeKey,
     StoragePreferencesMergePathSegment, StoragePreferencesMergeProjection,
@@ -154,6 +155,9 @@ pub(crate) fn schema() -> PreferenceMergeSchema {
             },
             {
                 operit_store::PreferenceMerge::PreferenceMergeStore::values(operit_util::RuntimeStorageLayout::SIDEBAR_DOCK_PREFERENCES_PATH, false, |storage, _| SidebarDockPreferences::store(storage))
+            },
+            {
+                operit_store::PreferenceMerge::PreferenceMergeStore::values(operit_util::RuntimeStorageLayout::PROVIDER_QUOTA_PREFERENCES_PATH, false, |storage, _| ProviderQuotaPreferences::store(storage))
             },
             PreferenceMergeStore::values(
             operit_util::RuntimeStorageLayout::WORKSPACES_PREFERENCES_PATH, false,

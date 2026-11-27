@@ -8,8 +8,8 @@ import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
+import 'package:operit2/ui/features/settings/data/UsageBentoComponents.dart';
 import 'package:operit2/ui/features/settings/data/UsageStatisticsDetailScreen.dart';
-import 'package:operit2/ui/theme/OperitGlassSurface.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
 void main() {
@@ -53,13 +53,40 @@ void main() {
         bridge: _UsageStatisticsBridge(),
         size: size,
       );
-      expect(cardSize.height, lessThanOrEqualTo(86));
+      expect(cardSize.height, greaterThan(92));
+      expect(
+        find.byKey(const ValueKey('usage-model-composition-card')),
+        findsOneWidget,
+      );
       expect(find.text('Usage heatmap'), findsOneWidget);
+      expect(find.text('Daily usage over the last 53 weeks'), findsOneWidget);
       expect(find.text('Tap a cell to view details'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('usage-heatmap-metric-tokens')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('usage-heatmap-metric-requests')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('usage-heatmap-metric-cost')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('usage-heatmap-metric-requests')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('usage-heatmap-metric-cost')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('usage-heatmap-metric-tokens')),
+      );
+      await tester.pumpAndSettle();
       await _scrollToText(tester, 'Model usage over time');
       expect(find.text('3h'), findsOneWidget);
       expect(find.textContaining('min buckets'), findsOneWidget);
-      expect(find.textContaining('OpenAI · gpt-5'), findsOneWidget);
+      expect(find.textContaining('OpenAI · gpt-5'), findsWidgets);
       expect(find.text('Daily usage trend'), findsNothing);
       expect(find.text('Function model ranking'), findsNothing);
       expect(tester.takeException(), isNull);
@@ -97,12 +124,15 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         tester
-            .widget<ChoiceChip>(
-              find.ancestor(
-                of: find.text('3h'),
-                matching: find.byType(ChoiceChip),
-              ),
+            .widget<Semantics>(
+              find
+                  .ancestor(
+                    of: find.byKey(const ValueKey('usage-timeline-preset-180')),
+                    matching: find.byType(Semantics),
+                  )
+                  .first,
             )
+            .properties
             .selected,
         isFalse,
       );
@@ -131,7 +161,13 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Requests').last);
       await tester.pumpAndSettle();
-      expect(find.text('Requests'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('usage-timeline-metric')),
+          matching: find.text('Requests'),
+        ),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     },
   );
@@ -415,7 +451,7 @@ void main() {
       expect(find.text('Model usage over time'), findsOneWidget);
       expect(
         find.text('Could not load model prices. Refresh to retry.'),
-        findsNWidgets(2),
+        findsNWidgets(3),
       );
       expect(
         find.byKey(const ValueKey('usage-timeline-cacheRate-plot')),
@@ -438,7 +474,7 @@ void main() {
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
       await _scrollToText(tester, 'Model usage over time');
-      expect(find.textContaining('OpenAI · gpt-5'), findsOneWidget);
+      expect(find.textContaining('OpenAI · gpt-5'), findsWidgets);
       expect(find.textContaining('LegacyAI · legacy-model'), findsNothing);
       await tester.tap(find.byTooltip('Refresh'));
       await tester.pumpAndSettle();
@@ -466,8 +502,128 @@ void main() {
     await tester.tap(find.widgetWithText(TextButton, 'Reset statistics'));
     await tester.pumpAndSettle();
     expect(bridge.resetCount, 1);
+    expect(bridge.lastResetScope, 'LOCAL_ONLY');
     expect(find.text('No detailed usage records yet'), findsOneWidget);
   });
+
+  testWidgets(
+    'reset dialog can target all devices in Space',
+    (tester) async {
+      final bridge = _UsageStatisticsBridge();
+      await _pumpDashboard(tester, bridge: bridge, size: const Size(390, 844));
+      await tester.tap(find.byTooltip('Reset statistics'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('All devices in Space'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, 'Reset statistics'));
+      await tester.pumpAndSettle();
+      expect(bridge.resetCount, 1);
+      expect(bridge.lastResetScope, 'ALL_DEVICES_IN_SPACE');
+    },
+  );
+
+  testWidgets(
+    'renders speed KPI, speed timeline, attribution tabs and request detail sheet',
+    (tester) async {
+      final bridge = _UsageStatisticsBridge();
+      await _pumpDashboard(
+        tester,
+        bridge: bridge,
+        size: const Size(1440, 1200),
+      );
+
+      expect(find.text('57.1 tok/s'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('usage-timeline-speed-card')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('usage-timeline-speed-plot')),
+        findsOneWidget,
+      );
+
+      await _scrollToText(tester, 'Request Logs');
+      await tester.tap(find.byKey(const ValueKey('usage-attr-tab-sources')));
+      await tester.pumpAndSettle();
+      expect(find.text('Function models'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('usage-attr-tab-devices')));
+      await tester.pumpAndSettle();
+      expect(find.text('Workstation'), findsOneWidget);
+      expect(find.text('Pixel Phone'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('usage-attr-tab-logs')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.textContaining('OpenAI · gpt-5').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('OpenAI · gpt-5').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Request Telemetry'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(BottomSheet),
+          matching: find.textContaining('sk-o...1111'),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'switches to quota center tab, filters categories, expands key pool and probes',
+    (tester) async {
+      final bridge = _UsageStatisticsBridge();
+      for (final size in [const Size(390, 844), const Size(1440, 1100)]) {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await _pumpDashboard(tester, bridge: bridge, size: size);
+        await tester.tap(find.byKey(const ValueKey('usage-tab-quotas')));
+        await tester.pumpAndSettle();
+
+        final deepseekCard = find.byKey(const ValueKey('quota-card-p-deepseek'));
+        expect(deepseekCard, findsOneWidget);
+        expect(
+          find.descendant(of: deepseekCard, matching: find.text('¥42.50')),
+          findsOneWidget,
+        );
+        expect(find.text('GLM Coding Pro'), findsOneWidget);
+
+        await tester.tap(find.text('2 pool keys'));
+        await tester.pumpAndSettle();
+        expect(find.textContaining('Primary (sk-d...1111)'), findsOneWidget);
+
+        await _scrollToText(tester, 'Ollama Local');
+        expect(find.byKey(const ValueKey('quota-card-p-ollama')), findsOneWidget);
+
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('quota-filter-subscription')),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const ValueKey('quota-filter-subscription')),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('quota-card-p-zhipu')), findsOneWidget);
+        expect(find.byKey(const ValueKey('quota-card-p-deepseek')), findsNothing);
+
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('quota-filter-all')),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('quota-filter-all')));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      }
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('quota-probe-all-button')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('quota-probe-all-button')));
+      await tester.pumpAndSettle();
+      expect(bridge.probeAllCount, 1);
+    },
+  );
 }
 
 Future<void> _scrollToText(WidgetTester tester, String text) async {
@@ -528,7 +684,7 @@ Future<Size> _pumpDashboard(
   final metricSurface = find
       .ancestor(
         of: find.byIcon(Icons.bolt_outlined),
-        matching: find.byType(OperitGlassSurface),
+        matching: find.byType(BentoSurfaceCard),
       )
       .first;
   expect(metricSurface, findsOneWidget);
@@ -547,6 +703,11 @@ class _UsageStatisticsBridge extends OperitRuntimeBridge {
   final List<Map<String, Object?>> extraRecords;
   final double cachePriceMultiplier;
   int resetCount = 0;
+  int probeCount = 0;
+  int probeAllCount = 0;
+  String? lastResetScope;
+  final Map<String, Map<String, Object?>> _savedBudgets = {};
+  final Map<String, Map<String, Object?>> _savedConfigs = {};
   static final List<Map<String, Object?>> _records = <Map<String, Object?>>[
     <String, Object?>{
       'id': '1',
@@ -562,6 +723,19 @@ class _UsageStatisticsBridge extends OperitRuntimeBridge {
       'inputTokens': 165000,
       'outputTokens': 42000,
       'cachedInputTokens': 45000,
+      'cacheWriteTokens': 0,
+      'reasoningTokens': 0,
+      'waitDurationMs': 420,
+      'outputDurationMs': 525000,
+      'totalDurationMs': 525420,
+      'status': 'COMPLETED',
+      'originNodeId': 'node-desktop',
+      'providerId': 'p-openai',
+      'keyId': 'k1',
+      'keyFingerprint': 'sk-o...1111',
+      'estimatedCost': 0.0,
+      'currency': '',
+      'stream': true,
     },
     <String, Object?>{
       'id': '2',
@@ -577,6 +751,19 @@ class _UsageStatisticsBridge extends OperitRuntimeBridge {
       'inputTokens': 100000,
       'outputTokens': 28000,
       'cachedInputTokens': 20000,
+      'cacheWriteTokens': 5000,
+      'reasoningTokens': 1200,
+      'waitDurationMs': 640,
+      'outputDurationMs': 700000,
+      'totalDurationMs': 700640,
+      'status': 'COMPLETED',
+      'originNodeId': 'node-phone',
+      'providerId': 'p-anthropic',
+      'keyId': 'k2',
+      'keyFingerprint': 'sk-a...2222',
+      'estimatedCost': 0.0,
+      'currency': '',
+      'stream': true,
     },
     <String, Object?>{
       'id': '3',
@@ -592,10 +779,156 @@ class _UsageStatisticsBridge extends OperitRuntimeBridge {
       'inputTokens': 1000000,
       'outputTokens': 250000,
       'cachedInputTokens': 200000,
+      'cacheWriteTokens': 0,
+      'reasoningTokens': 0,
+      'waitDurationMs': 0,
+      'outputDurationMs': 0,
+      'totalDurationMs': 0,
+      'status': 'COMPLETED',
+      'originNodeId': 'node-desktop',
+      'providerId': 'p-legacy',
+      'keyId': '',
+      'keyFingerprint': '',
+      'estimatedCost': 0.0,
+      'currency': '',
+      'stream': false,
     },
   ];
 
-  /// Returns deterministic token records through the generated bridge codec.
+  static final List<Map<String, Object?>> _mockSnapshots =
+      <Map<String, Object?>>[
+        <String, Object?>{
+          'providerId': 'p-deepseek',
+          'providerName': 'DeepSeek',
+          'providerType': 'DEEPSEEK',
+          'providerTypeId': 'DEEPSEEK',
+          'accountKind': 'BALANCE',
+          'protocol': 'DEEPSEEK_BALANCE',
+          'status': 'OK',
+          'plan': null,
+          'accountLabel': null,
+          'balance': <String, Object?>{
+            'currency': 'CNY',
+            'totalBalance': 42.5,
+            'cashBalance': 32.5,
+            'grantedBalance': 10.0,
+            'usedAmount': null,
+            'dailyUsed': null,
+            'monthlyUsed': null,
+            'isAvailable': true,
+            'isFreeTier': false,
+          },
+          'windows': const <Object?>[],
+          'keySnapshots': <Object?>[
+            <String, Object?>{
+              'keyId': 'ds-1',
+              'keyName': 'Primary',
+              'keyFingerprint': 'sk-d...1111',
+              'isEnabled': true,
+              'status': 'OK',
+              'balance': <String, Object?>{
+                'currency': 'CNY',
+                'totalBalance': 30.0,
+                'cashBalance': 20.0,
+                'grantedBalance': 10.0,
+                'usedAmount': null,
+                'dailyUsed': null,
+                'monthlyUsed': null,
+                'isAvailable': true,
+                'isFreeTier': false,
+              },
+              'windows': const <Object?>[],
+              'error': null,
+              'asOfMs': 1700000000000,
+            },
+            <String, Object?>{
+              'keyId': 'ds-2',
+              'keyName': 'Backup',
+              'keyFingerprint': 'sk-d...2222',
+              'isEnabled': true,
+              'status': 'OK',
+              'balance': <String, Object?>{
+                'currency': 'CNY',
+                'totalBalance': 12.5,
+                'cashBalance': 12.5,
+                'grantedBalance': null,
+                'usedAmount': null,
+                'dailyUsed': null,
+                'monthlyUsed': null,
+                'isAvailable': true,
+                'isFreeTier': false,
+              },
+              'windows': const <Object?>[],
+              'error': null,
+              'asOfMs': 1700000000000,
+            },
+          ],
+          'consoleUrl': 'https://platform.deepseek.com/usage',
+          'error': null,
+          'held': false,
+          'asOfMs': 1700000000000,
+          'probedByNodeId': 'node-desktop',
+          'probedByDeviceName': 'Workstation',
+        },
+        <String, Object?>{
+          'providerId': 'p-zhipu',
+          'providerName': 'Zhipu GLM',
+          'providerType': 'ZHIPU',
+          'providerTypeId': 'ZHIPU',
+          'accountKind': 'SUBSCRIPTION',
+          'protocol': 'ZHIPU_CODING_PLAN',
+          'status': 'OK',
+          'plan': 'GLM Coding Pro',
+          'accountLabel': null,
+          'balance': null,
+          'windows': <Object?>[
+            <String, Object?>{
+              'name': '5小时配额',
+              'kind': 'HOUR_5',
+              'display': '32.0% used',
+              'used': 32.0,
+              'remaining': 68.0,
+              'limit': 100.0,
+              'usedPercent': 32.0,
+              'unlimited': false,
+              'resetsAtMs': null,
+              'resetSecs': 3600,
+              'spanLabel': null,
+              'model': null,
+              'unit': '%',
+            },
+          ],
+          'keySnapshots': const <Object?>[],
+          'consoleUrl': 'https://bigmodel.cn/finance-center/subscribe/overview',
+          'error': null,
+          'held': false,
+          'asOfMs': 1700000000000,
+          'probedByNodeId': 'node-desktop',
+          'probedByDeviceName': 'Workstation',
+        },
+        <String, Object?>{
+          'providerId': 'p-ollama',
+          'providerName': 'Ollama Local',
+          'providerType': 'OLLAMA',
+          'providerTypeId': 'OLLAMA',
+          'accountKind': 'LOCAL_COMPUTE',
+          'protocol': 'LOCAL_COMPUTE',
+          'status': 'OK',
+          'plan': 'LOCAL',
+          'accountLabel': null,
+          'balance': null,
+          'windows': const <Object?>[],
+          'keySnapshots': const <Object?>[],
+          'consoleUrl': null,
+          'error': null,
+          'held': false,
+          'asOfMs': 1700000000000,
+          'probedByNodeId': 'node-desktop',
+          'probedByDeviceName': 'Workstation',
+        },
+      ];
+
+  /// Returns deterministic token, quota, and Space snapshots through the generated bridge codec.
   @override
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     switch (request.methodName) {
@@ -606,7 +939,90 @@ class _UsageStatisticsBridge extends OperitRuntimeBridge {
         ]);
       case 'resetTokenStatistics':
         resetCount++;
+        lastResetScope = 'LOCAL_ONLY';
         return encodeCoreLink(<Object?>[0, null]);
+      case 'clearUsageStatistics':
+      case 'resetUsageStatistics':
+        resetCount++;
+        final args = request.args == null
+            ? const <String, Object?>{}
+            : Map<String, Object?>.from(request.args! as Map);
+        lastResetScope = args['scope'] as String?;
+        return encodeCoreLink(<Object?>[0, null]);
+      case 'getQuotaCenterState':
+        return encodeCoreLink(<Object?>[
+          0,
+          <String, Object?>{
+            'snapshots': _mockSnapshots,
+            'budgets': _savedBudgets.values.toList(),
+            'probeConfigs': _savedConfigs.values.toList(),
+          },
+        ]);
+      case 'probeProviderQuota':
+      case 'probeProviderQuotaOnNode':
+        probeCount++;
+        return encodeCoreLink(<Object?>[0, _mockSnapshots.first]);
+      case 'probeAllProviders':
+        probeAllCount++;
+        return encodeCoreLink(<Object?>[0, _mockSnapshots]);
+      case 'saveProviderLocalBudget':
+        final args = Map<String, Object?>.from(request.args! as Map);
+        final budget = Map<String, Object?>.from(args['budget']! as Map);
+        _savedBudgets[budget['providerId'] as String] = budget;
+        return encodeCoreLink(<Object?>[0, budget]);
+      case 'deleteProviderLocalBudget':
+        final args = Map<String, Object?>.from(request.args! as Map);
+        _savedBudgets.remove(args['providerId']);
+        return encodeCoreLink(<Object?>[0, null]);
+      case 'saveProviderProbeConfig':
+        final args = Map<String, Object?>.from(request.args! as Map);
+        final config = Map<String, Object?>.from(args['config']! as Map);
+        _savedConfigs[config['providerId'] as String] = config;
+        return encodeCoreLink(<Object?>[0, config]);
+      case 'deviceSpaceSnapshot':
+        return encodeCoreLink(<Object?>[
+          0,
+          <String, Object?>{
+            'space': <String, Object?>{
+              'spaceId': 'space-1',
+              'spaceName': 'My Space',
+              'spaceRevision': 1,
+              'members': <String>['node-desktop', 'node-phone'],
+            },
+            'topology': <String, Object?>{
+              'currentDeviceId': 'node-desktop',
+              'devices': <Object?>[
+                <String, Object?>{
+                  'deviceId': 'node-desktop',
+                  'userName': 'User',
+                  'deviceName': 'Workstation',
+                  'platform': 'windows',
+                  'model': 'PC',
+                  'coreVersion': '2.0.0',
+                  'protocolVersion': 1,
+                  'online': true,
+                  'relayHops': null,
+                  'relayPath': const <String>[],
+                  'currentIdentity': null,
+                },
+                <String, Object?>{
+                  'deviceId': 'node-phone',
+                  'userName': 'User',
+                  'deviceName': 'Pixel Phone',
+                  'platform': 'android',
+                  'model': 'Pixel',
+                  'coreVersion': '2.0.0',
+                  'protocolVersion': 1,
+                  'online': true,
+                  'relayHops': null,
+                  'relayPath': const <String>[],
+                  'currentIdentity': null,
+                },
+              ],
+              'connections': const <Object?>[],
+            },
+          },
+        ]);
       case 'getAllModelSummaries':
         return encodeCoreLink(<Object?>[0, <Object?>[]]);
       case 'getAllTokenStatsModels':

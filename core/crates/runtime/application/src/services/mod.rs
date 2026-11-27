@@ -15,6 +15,8 @@ pub mod GitHubOAuthBrokerService;
 pub mod LocalModelService;
 #[path = "LocalProviderService.rs"]
 pub mod LocalProviderService;
+#[path = "ProviderQuotaService.rs"]
+pub mod ProviderQuotaService;
 #[path = "ProviderRuntimeSupportService.rs"]
 pub mod ProviderRuntimeSupportService;
 #[path = "RuntimeBrowserService.rs"]

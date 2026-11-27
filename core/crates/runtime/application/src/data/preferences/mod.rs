@@ -78,5 +78,7 @@ pub use WakeWordPreferences::*;
 
 #[path = "SidebarDockPreferences.rs"]
 pub(crate) mod SidebarDockPreferences;
+#[path = "ProviderQuotaPreferences.rs"]
+pub mod ProviderQuotaPreferences;
 #[path = "OnboardingPreferences.rs"]
 pub(crate) mod OnboardingPreferences;

@@ -53,6 +53,7 @@ pub struct GeminiProvider {
 struct GeminiProviderState {
     inputTokenCount: i64,
     cachedInputTokenCount: i64,
+    reasoningTokenCount: i64,
     outputTokenCount: i64,
     cancelled: bool,
 }
@@ -1102,6 +1103,16 @@ impl GeminiProvider {
             .and_then(Value::as_i64)
             .unwrap_or(0)
             .max(0) as i64;
+        let thoughts = usage
+            .get("thoughtsTokenCount")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            .max(0) as i64;
+        if thoughts > 0 {
+            if let Ok(mut state) = self.state.lock() {
+                state.reasoningTokenCount = thoughts;
+            }
+        }
         if prompt > 0 || cached > 0 || candidates > 0 {
             self.set_token_counts(TokenCounts {
                 input: (prompt - cached).max(0),
@@ -1133,6 +1144,12 @@ impl AIService for GeminiProvider {
             .expect("GeminiProvider state mutex poisoned")
             .outputTokenCount
     }
+    fn reasoning_token_count(&self) -> i64 {
+        self.state
+            .lock()
+            .expect("GeminiProvider state mutex poisoned")
+            .reasoningTokenCount
+    }
     fn provider_model(&self) -> String {
         format!("{}:{}", self.provider_type, self.model_name)
     }
@@ -1143,6 +1160,9 @@ impl AIService for GeminiProvider {
             cached_input: 0,
             output: 0,
         });
+        if let Ok(mut state) = self.state.lock() {
+            state.reasoningTokenCount = 0;
+        }
         self.isInThinkingMode = false;
     }
 

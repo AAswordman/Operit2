@@ -2,6 +2,7 @@ use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::protocol::LinkDeviceInfo;
 use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CoreValue, CORE_INTERNAL_TARGET};
+use operit_model::ProviderQuota::ProviderQuotaSnapshot;
 use operit_store::CoreNodeBindingStore::CoreNodeBindingStore;
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceConnection, CoreSpaceDeviceProfile, CoreSpaceRoutePlan, CoreSpaceStore};
 use operit_store::NetworkControlStore::{
@@ -1236,6 +1237,60 @@ impl RuntimeRemoteLinkService {
     }
     pub fn stopSpaceSync(&self) -> Result<(), String> {
         self.persistenceSyncService().stop()
+    }
+
+    /// Probes one configured provider's balance or quota either on this device or an online Space peer.
+    #[allow(non_snake_case)]
+    pub async fn probeProviderQuotaOnNode(
+        &self,
+        providerId: String,
+        targetNodeId: Option<String>,
+    ) -> Result<ProviderQuotaSnapshot, String> {
+        let local_node_id = self.nodeRouter.localNodeId();
+        let target = targetNodeId
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty());
+        let application_target = self
+            .nodeRouter
+            .targetForSchema("application")
+            .ok_or_else(|| "Core application target is unavailable".to_string())?;
+        if target.is_none() || target == Some(local_node_id.as_str()) {
+            let response = self
+                .localRuntime
+                .callApplication(CoreCallRequest::new(
+                    operit_link::nextCoreRouteRequestId("quota-probe-local"),
+                    application_target,
+                    "probeProviderQuota",
+                    toCoreValue(serde_json::json!({ "providerId": providerId }))
+                        .map_err(|error| error.to_string())?,
+                ))
+                .await;
+            let value = response.result.map_err(|error| error.to_string())?;
+            return fromCoreValue(value).map_err(|error| error.to_string());
+        }
+        let target_node = target.unwrap().to_string();
+        let request = PeerSyncMethod::ProbeProviderQuota.request(
+            operit_link::nextCoreRouteRequestId("quota-probe-remote"),
+            toCoreValue(providerId).map_err(|error| error.to_string())?,
+        );
+        let response = self.nodeRouter.callNode(target_node, request).await;
+        let value = response.result.map_err(|error| error.to_string())?;
+        let snapshot: ProviderQuotaSnapshot =
+            fromCoreValue(value).map_err(|error| error.to_string())?;
+        let save_response = self
+            .localRuntime
+            .callApplication(CoreCallRequest::new(
+                operit_link::nextCoreRouteRequestId("quota-probe-save"),
+                application_target,
+                "saveSyncedQuotaSnapshot",
+                toCoreValue(serde_json::json!({ "snapshot": &snapshot }))
+                    .map_err(|error| error.to_string())?,
+            ))
+            .await;
+        let save_value = save_response.result.map_err(|error| error.to_string())?;
+        let _: () = fromCoreValue(save_value).map_err(|error| error.to_string())?;
+        Ok(snapshot)
     }
 
     /// Builds the persistent synchronization service owned by this runtime facade.

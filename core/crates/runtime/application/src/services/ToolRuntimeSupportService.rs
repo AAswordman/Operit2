@@ -1042,6 +1042,8 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                 let provider = aiService.lock().await;
                 provider.provider_model()
             };
+            let startedAtMs = operit_host_api::TimeUtils::currentTimeMillis();
+            let mut firstOutputAtMs = None::<i64>;
             let mut response = {
                 let mut provider = aiService.lock().await;
                 provider
@@ -1070,18 +1072,28 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                     })?
             };
             let mut output = String::new();
-            response.collect(&mut |chunk| output.push_str(&chunk)).await;
+            response
+                .collect(&mut |chunk| {
+                    if !chunk.is_empty() && firstOutputAtMs.is_none() {
+                        firstOutputAtMs = Some(operit_host_api::TimeUtils::currentTimeMillis());
+                    }
+                    output.push_str(&chunk);
+                })
+                .await;
             ensure_response_completed(response.as_ref()).map_err(|error| {
                 let message = error.to_string();
                 modelErrors.set_value(Some(message.clone()));
                 message
             })?;
+            let completedAtMs = operit_host_api::TimeUtils::currentTimeMillis();
             if request.recordTokenUsage {
-                let (inputTokens, cachedInputTokens, outputTokens) = {
+                let (inputTokens, cachedInputTokens, cacheWriteTokens, reasoningTokens, outputTokens) = {
                     let provider = aiService.lock().await;
                     (
                         provider.input_token_count(),
                         provider.cached_input_token_count(),
+                        provider.cache_write_input_token_count(),
+                        provider.reasoning_token_count(),
                         provider.output_token_count(),
                     )
                 };
@@ -1095,15 +1107,57 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                         cachedInputTokens,
                     )
                     .map_err(|error| error.to_string())?;
+                let totalDurationMs = (completedAtMs - startedAtMs).max(0);
+                let waitDurationMs = firstOutputAtMs
+                    .map(|first| (first - startedAtMs).max(0))
+                    .unwrap_or(totalDurationMs);
+                let outputDurationMs = firstOutputAtMs
+                    .map(|first| (completedAtMs - first).max(0))
+                    .unwrap_or(0);
+                let attribution = service
+                    .provider_runtime_context
+                    .support()
+                    .usageAttributionForProviderModel(&providerModel);
+                let (estimatedCost, currency) = match attribution.and_then(|a| a.modelPricing) {
+                    Some(pricing) => (
+                        operit_model::ProviderQuota::calculate_model_cost(
+                            &pricing,
+                            inputTokens,
+                            cachedInputTokens,
+                            cacheWriteTokens,
+                            outputTokens,
+                        ),
+                        operit_model::ProviderQuota::pricing_currency_code(&pricing.currency)
+                            .to_string(),
+                    ),
+                    None => (0.0, String::new()),
+                };
                 operit_store::repository::UsageStatisticsStore::UsageStatisticsStore::new()
-                    .recordProviderModelRequest(
-                        providerModel,
-                        request.functionType,
-                        operit_store::repository::UsageStatisticsStore::UsageRequestSource::CHAT_RESPONSE,
-                        None,
-                        inputTokens,
-                        outputTokens,
-                        cachedInputTokens,
+                    .recordProviderModelRequestDetailed(
+                        operit_store::repository::UsageStatisticsStore::UsageRequestCapture {
+                            providerModel,
+                            functionType: request.functionType,
+                            source: operit_store::repository::UsageStatisticsStore::UsageRequestSource::CHAT_RESPONSE,
+                            chatId: None,
+                            inputTokens,
+                            outputTokens,
+                            cachedInputTokens,
+                            cacheWriteTokens,
+                            reasoningTokens,
+                            waitDurationMs,
+                            outputDurationMs,
+                            totalDurationMs,
+                            status: operit_model::ProviderQuota::UsageRequestStatus::COMPLETED,
+                            originNodeId: String::new(),
+                            providerId: modelConfig.providerId.clone(),
+                            keyId: String::new(),
+                            keyFingerprint: operit_model::ProviderQuota::mask_api_key_fingerprint(
+                                &modelConfig.apiKey,
+                            ),
+                            estimatedCost,
+                            currency,
+                            stream: false,
+                        },
                     )
                     .map_err(|error| error.to_string())?;
             }

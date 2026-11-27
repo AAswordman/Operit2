@@ -6,7 +6,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
-import '../../../theme/OperitGlassSurface.dart';
+import 'UsageBentoComponents.dart';
+import 'UsageFormatters.dart';
 import 'UsagePricing.dart';
 import 'UsageTimelineCurve.dart';
 
@@ -19,6 +20,13 @@ class UsageTimelineRecord {
     required this.inputTokens,
     required this.outputTokens,
     required this.cachedInputTokens,
+    this.cacheWriteTokens = 0,
+    this.reasoningTokens = 0,
+    this.waitDurationMs = 0,
+    this.outputDurationMs = 0,
+    this.stream = false,
+    this.estimatedCostOverride,
+    this.currencyOverride,
     this.pricing,
   });
 
@@ -28,19 +36,49 @@ class UsageTimelineRecord {
   final int inputTokens;
   final int outputTokens;
   final int cachedInputTokens;
+  final int cacheWriteTokens;
+  final int reasoningTokens;
+  final int waitDurationMs;
+  final int outputDurationMs;
+  final bool stream;
+  final double? estimatedCostOverride;
+  final String? currencyOverride;
   final UsageModelPrice? pricing;
 
-  double? get estimatedCost => pricing?.estimate(
-    input: inputTokens,
-    cached: cachedInputTokens,
-    output: outputTokens,
-  );
+  double? get estimatedCost {
+    if (estimatedCostOverride != null &&
+        currencyOverride != null &&
+        currencyOverride!.trim().isNotEmpty) {
+      return estimatedCostOverride;
+    }
+    return pricing?.estimate(
+      input: inputTokens,
+      cached: cachedInputTokens,
+      cacheWrite: cacheWriteTokens,
+      output: outputTokens,
+    );
+  }
+
   double? get estimatedCacheSavings => pricing?.estimateCacheSavings(
     input: inputTokens,
     cached: cachedInputTokens,
     output: outputTokens,
   );
-  String? get currency => estimatedCost == null ? null : pricing?.currency;
+
+  String? get currency {
+    if (estimatedCostOverride != null &&
+        currencyOverride != null &&
+        currencyOverride!.trim().isNotEmpty) {
+      return currencyOverride!.trim().toUpperCase();
+    }
+    return estimatedCost == null ? null : pricing?.currency;
+  }
+
+  bool get hasSpeedSample =>
+      stream && outputDurationMs >= 100 && outputTokens > 0;
+
+  double? get tokensPerSecond =>
+      hasSpeedSample ? outputTokens / (outputDurationMs / 1000.0) : null;
 
   // Length-prefixed keys avoid merging equal model names from different providers.
   String get modelKey => '${provider.length}:$provider$model';
@@ -56,7 +94,8 @@ enum UsageTimelineMetric {
   spend,
   cacheRate,
   averageInput,
-  cacheSavings;
+  cacheSavings,
+  speed;
 
   bool get isMoney => this == spend || this == cacheSavings;
 }
@@ -140,7 +179,8 @@ class UsageTimelineData {
         model.modelKey: List<num?>.filled(
           count,
           metric == UsageTimelineMetric.cacheRate ||
-                  metric == UsageTimelineMetric.averageInput
+                  metric == UsageTimelineMetric.averageInput ||
+                  metric == UsageTimelineMetric.speed
               ? null
               : 0,
         ),
@@ -153,6 +193,14 @@ class UsageTimelineData {
     };
     final counts = <String, List<int>>{
       if (metric == UsageTimelineMetric.averageInput)
+        for (final model in ordered) model.modelKey: List.filled(count, 0),
+    };
+    final speedOutput = <String, List<int>>{
+      if (metric == UsageTimelineMetric.speed)
+        for (final model in ordered) model.modelKey: List.filled(count, 0),
+    };
+    final speedDurationMs = <String, List<int>>{
+      if (metric == UsageTimelineMetric.speed)
         for (final model in ordered) model.modelKey: List.filled(count, 0),
     };
     for (final record in inWindow) {
@@ -170,6 +218,21 @@ class UsageTimelineData {
         (value) => value + cached,
         ifAbsent: () => cached,
       );
+      if (record.hasSpeedSample) {
+        speedOutputByModel.update(
+          record.modelKey,
+          (value) => value + record.outputTokens,
+          ifAbsent: () => record.outputTokens,
+        );
+        speedDurationMsByModel.update(
+          record.modelKey,
+          (value) => value + record.outputDurationMs,
+          ifAbsent: () => record.outputDurationMs,
+        );
+      }
+      if (record.waitDurationMs > 0) {
+        _waitSamplesMs.add(record.waitDurationMs);
+      }
       if (metric.isMoney) {
         final cost = metric == UsageTimelineMetric.cacheSavings
             ? record.estimatedCacheSavings
@@ -195,6 +258,11 @@ class UsageTimelineData {
           0,
           record.inputTokens,
         );
+      } else if (metric == UsageTimelineMetric.speed) {
+        if (record.hasSpeedSample) {
+          speedOutput[record.modelKey]![index] += record.outputTokens;
+          speedDurationMs[record.modelKey]![index] += record.outputDurationMs;
+        }
       } else {
         row[index] =
             row[index]! +
@@ -229,10 +297,21 @@ class UsageTimelineData {
           }
         }
       }
+      if (metric == UsageTimelineMetric.speed) {
+        for (var index = 0; index < count; index++) {
+          final out = speedOutput[model.modelKey]![index];
+          final dur = speedDurationMs[model.modelKey]![index];
+          if (dur >= 100 && out > 0) {
+            values[model.modelKey]![index] = out / (dur / 1000.0);
+          }
+        }
+      }
     }
     series = [
       for (final model in ordered)
-        if (!metric.isMoney || amountByModel.containsKey(model.modelKey))
+        if ((!metric.isMoney || amountByModel.containsKey(model.modelKey)) &&
+            (metric != UsageTimelineMetric.speed ||
+                (speedDurationMsByModel[model.modelKey] ?? 0) >= 100))
           UsageTimelineSeries(
             key: model.modelKey,
             label: model.label,
@@ -248,6 +327,9 @@ class UsageTimelineData {
   final inputByModel = <String, int>{};
   final cachedByModel = <String, int>{};
   final amountByModel = <String, double>{};
+  final speedOutputByModel = <String, int>{};
+  final speedDurationMsByModel = <String, int>{};
+  final _waitSamplesMs = <int>[];
   int unpricedRequests = 0;
   double amount = 0;
 
@@ -260,6 +342,19 @@ class UsageTimelineData {
     }
     return input == 0 ? null : cached / input * 100;
   }
+
+  double? speedFor(Iterable<String> keys) {
+    var output = 0;
+    var durationMs = 0;
+    for (final key in keys) {
+      output += speedOutputByModel[key] ?? 0;
+      durationMs += speedDurationMsByModel[key] ?? 0;
+    }
+    if (durationMs < 100 || output <= 0) return null;
+    return output / (durationMs / 1000.0);
+  }
+
+  int? get medianWaitMs => medianLatencyMs(_waitSamplesMs);
 
   int get bucketMinutes => bucketMs ~/ _minuteMs;
   late final int bucketStart;
@@ -313,6 +408,7 @@ class _UsageTimelineState extends State<UsageTimeline> {
   UsageTimelineData? _cachedRate;
   UsageTimelineData? _cachedAverageInput;
   UsageTimelineData? _cachedSavings;
+  UsageTimelineData? _cachedSpeed;
   String? _currency;
   int _targetBucketCount = 120;
   List<UsageTimelineRecord>? _insightRecords;
@@ -348,6 +444,7 @@ class _UsageTimelineState extends State<UsageTimeline> {
     _cachedRate = null;
     _cachedAverageInput = null;
     _cachedSavings = null;
+    _cachedSpeed = null;
     _insightRecords = null;
     _insightCurrencies = null;
     if (oldWidget.dateRange != widget.dateRange) {
@@ -389,6 +486,7 @@ class _UsageTimelineState extends State<UsageTimeline> {
     _cachedRate = null;
     _cachedAverageInput = null;
     _cachedSavings = null;
+    _cachedSpeed = null;
     _insightRecords = null;
     _insightCurrencies = null;
   }
@@ -408,6 +506,7 @@ class _UsageTimelineState extends State<UsageTimeline> {
     _cachedRate = null;
     _cachedAverageInput = null;
     _cachedSavings = null;
+    _cachedSpeed = null;
     _insightRecords = null;
     _insightCurrencies = null;
   }
@@ -490,49 +589,75 @@ class _UsageTimelineState extends State<UsageTimeline> {
       targetBucketCount: _targetBucketCount,
       minimumBucketDuration: const Duration(seconds: 5),
     );
+    final speedData = _cachedSpeed ??= UsageTimelineData(
+      records: inWindow,
+      start: _start,
+      end: _end,
+      metric: UsageTimelineMetric.speed,
+      targetBucketCount: _targetBucketCount,
+      minimumBucketDuration: const Duration(seconds: 5),
+    );
     final keys = rate.series.map((series) => series.key);
     final hitRate = rate.cacheRateFor(keys);
+    final speedKeys = speedData.series.map((series) => series.key);
+    final avgSpeed = speedData.speedFor(speedKeys);
+    final medianWait = speedData.medianWaitMs;
     Widget chart({
       required String title,
       required String summary,
       required String hint,
       required UsageTimelineData data,
+      required Color accent,
       Widget? trailing,
     }) {
-      return Container(
+      return BentoSurfaceCard(
         key: ValueKey('usage-timeline-${data.metric.name}-card'),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: colors.outlineVariant.withValues(alpha: 0.4),
-          ),
-          borderRadius: BorderRadius.circular(12),
-        ),
+        padding: const EdgeInsets.all(14),
+        radius: 16,
+        accent: accent,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Wrap(
-              spacing: 12,
-              runSpacing: 4,
-              crossAxisAlignment: WrapCrossAlignment.center,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: Theme.of(context).textTheme.titleSmall),
-                Text(
-                  summary,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: colors.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        summary,
+                        style: tabularTextStyle(
+                          Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.3,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 ?trailing,
               ],
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             Text(
               hint,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+              style: tabularTextStyle(
+                Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+              ),
             ),
+            const SizedBox(height: 8),
             _buildPlot(
               context,
               data,
@@ -540,21 +665,79 @@ class _UsageTimelineState extends State<UsageTimeline> {
               height: 220,
               plotKey: 'usage-timeline-${data.metric.name}-plot',
             ),
-            if (_selected != null &&
-                _selectedPlot == 'usage-timeline-${data.metric.name}-plot') ...[
-              Text(
-                '${_dateTime(math.max(_start, data.bucketStart + _selected! * data.bucketMs), seconds: data.bucketMs < _minuteMs)} — ${_dateTime(math.min(_end, data.bucketStart + (_selected! + 1) * data.bucketMs), seconds: data.bucketMs < _minuteMs)}',
-                key: ValueKey('usage-timeline-${data.metric.name}-detail'),
-                style: Theme.of(context).textTheme.labelSmall,
-              ),
-              for (final series in data.series)
-                Text(
-                  '${series.label}  ${_measure(series.values[_selected!], data.metric, data.currency)}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _colorFor(series, colors),
-                  ),
-                ),
-            ],
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 160),
+              child: (_selected != null &&
+                      _selectedPlot == 'usage-timeline-${data.metric.name}-plot')
+                  ? Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colors.surfaceContainerHighest.withValues(
+                          alpha: 0.45,
+                        ),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: colors.outlineVariant.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${_dateTime(math.max(_start, data.bucketStart + _selected! * data.bucketMs), seconds: data.bucketMs < _minuteMs)} — ${_dateTime(math.min(_end, data.bucketStart + (_selected! + 1) * data.bucketMs), seconds: data.bucketMs < _minuteMs)}',
+                            key: ValueKey(
+                              'usage-timeline-${data.metric.name}-detail',
+                            ),
+                            style: tabularTextStyle(
+                              Theme.of(context).textTheme.labelSmall?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 4,
+                            children: [
+                              for (final series in data.series)
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      width: 7,
+                                      height: 7,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: _colorFor(series, colors),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 5),
+                                    Text(
+                                      '${series.label}  ${_measure(series.values[_selected!], data.metric, data.currency)}',
+                                      style: tabularTextStyle(
+                                        Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: _colorFor(series, colors),
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
           ],
         ),
       );
@@ -569,20 +752,34 @@ class _UsageTimelineState extends State<UsageTimeline> {
           ? l10n.settingsDataTimelinePricesFailed
           : '${l10n.settingsDataTimelineSpendHint}${spend.unpricedRequests > 0 ? ' · ${l10n.settingsDataTimelineUnpriced(spend.unpricedRequests)}' : ''}',
       data: spend,
+      accent: colors.primary,
       trailing: currencies.length < 2
           ? null
-          : DropdownButton<String>(
-              key: const ValueKey('usage-timeline-currency'),
-              value: currency,
-              items: [
-                for (final code in currencies)
-                  DropdownMenuItem(value: code, child: Text(code)),
-              ],
-              onChanged: (value) => setState(() {
-                _currency = value;
-                _cachedSpend = null;
-                _cachedSavings = null;
-              }),
+          : Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+              decoration: BoxDecoration(
+                color: colors.surfaceContainerHighest.withValues(alpha: 0.45),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: colors.outlineVariant.withValues(alpha: 0.32),
+                ),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  key: const ValueKey('usage-timeline-currency'),
+                  value: currency,
+                  isDense: true,
+                  items: [
+                    for (final code in currencies)
+                      DropdownMenuItem(value: code, child: Text(code)),
+                  ],
+                  onChanged: (value) => setState(() {
+                    _currency = value;
+                    _cachedSpend = null;
+                    _cachedSavings = null;
+                  }),
+                ),
+              ),
             ),
     );
     final caching = chart(
@@ -590,6 +787,7 @@ class _UsageTimelineState extends State<UsageTimeline> {
       summary: hitRate == null ? '—' : '${hitRate.toStringAsFixed(1)}%',
       hint: l10n.settingsDataTimelineCacheRateHint,
       data: rate,
+      accent: colors.tertiary,
     );
     final requestSize = chart(
       title: l10n.settingsDataTimelineAverageInput,
@@ -606,6 +804,7 @@ class _UsageTimelineState extends State<UsageTimeline> {
             ),
       hint: l10n.settingsDataTimelineAverageInputHint,
       data: averageInput,
+      accent: colors.secondary,
     );
     final cacheSavings = chart(
       title: l10n.settingsDataTimelineCacheSavings,
@@ -616,6 +815,19 @@ class _UsageTimelineState extends State<UsageTimeline> {
           ? l10n.settingsDataTimelinePricesFailed
           : '${l10n.settingsDataTimelineCacheSavingsHint}${savings.unpricedRequests > 0 ? ' · ${l10n.settingsDataTimelineUnknownSavings(savings.unpricedRequests)}' : ''}',
       data: savings,
+      accent: const Color(0xFF10B981),
+    );
+    final speedCard = chart(
+      title: l10n.settingsUsageTimelineSpeedTitle,
+      summary: avgSpeed == null ? '—' : '${avgSpeed.toStringAsFixed(1)} tok/s',
+      hint: avgSpeed == null && medianWait == null
+          ? l10n.settingsUsageTimelineNoSpeedData
+          : l10n.settingsUsageTimelineSpeedDetail(
+              avgSpeed == null ? '—' : '${avgSpeed.toStringAsFixed(1)} tok/s',
+              formatLatencyDuration(medianWait),
+            ),
+      data: speedData,
+      accent: const Color(0xFF38BDF8),
     );
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -631,6 +843,7 @@ class _UsageTimelineState extends State<UsageTimeline> {
             SizedBox(width: width, child: caching),
             SizedBox(width: width, child: requestSize),
             SizedBox(width: width, child: cacheSavings),
+            SizedBox(width: constraints.maxWidth, child: speedCard),
           ],
         );
       },
@@ -719,8 +932,9 @@ class _UsageTimelineState extends State<UsageTimeline> {
                 child: SizedBox(
                   height: height,
                   width: double.infinity,
-                  child: CustomPaint(
-                    painter: _TimelinePainter(
+                  child: RepaintBoundary(
+                    child: CustomPaint(
+                      painter: _TimelinePainter(
                       data: data,
                       visible: visible,
                       colors: colors,
@@ -735,21 +949,53 @@ class _UsageTimelineState extends State<UsageTimeline> {
                     child: data.requestCount == 0 || visible.isEmpty
                         ? Center(
                             child: Container(
-                              padding: const EdgeInsets.all(12),
-                              color: colors.surface.withValues(alpha: 0.9),
-                              child: Text(
-                                data.requestCount == 0
-                                    ? l10n.settingsDataDetailedStatsNoDataInRange
-                                    : visible.isEmpty &&
-                                          data.metric ==
-                                              UsageTimelineMetric.spend &&
-                                          data.unpricedRequests > 0
-                                    ? l10n.settingsDataTimelineNoPrices
-                                    : l10n.settingsDataTimelineSelectModel,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 9,
+                              ),
+                              decoration: BoxDecoration(
+                                color: colors.surfaceContainerHigh.withValues(
+                                  alpha: 0.9,
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: colors.outlineVariant.withValues(
+                                    alpha: 0.35,
+                                  ),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.show_chart_rounded,
+                                    size: 16,
+                                    color: colors.onSurfaceVariant,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Text(
+                                      data.requestCount == 0
+                                          ? l10n
+                                                .settingsDataDetailedStatsNoDataInRange
+                                          : visible.isEmpty &&
+                                                data.metric ==
+                                                    UsageTimelineMetric.spend &&
+                                                data.unpricedRequests > 0
+                                          ? l10n.settingsDataTimelineNoPrices
+                                          : l10n
+                                                .settingsDataTimelineSelectModel,
+                                      style: text.bodySmall?.copyWith(
+                                        color: colors.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           )
                         : null,
+                    ),
                   ),
                 ),
               ),
@@ -792,229 +1038,374 @@ class _UsageTimelineState extends State<UsageTimeline> {
         .toList();
     final total = visible.fold<num>(0, (sum, series) => sum + series.total);
     final bucketLabel = _bucketLabel(l10n, data);
-    return OperitGlassSurface(
-      color: colors.surfaceContainerHighest.withValues(alpha: 0.32),
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: colors.outlineVariant.withValues(alpha: 0.16)),
-      material: true,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              l10n.settingsDataTimelineTitle,
-              style: text.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              l10n.settingsDataTimelineHint,
-              style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
-            ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (final minutes in _presets)
-                  ChoiceChip(
-                    label: Text(
-                      minutes == 0
-                          ? l10n.settingsDataDetailedStatsRangeAll
-                          : minutes == 10080
-                          ? l10n.settingsDataDetailedStatsRangeLast7Days
-                          : l10n.settingsDataTimelineHours(minutes ~/ 60),
-                    ),
-                    selected: _preset == minutes,
-                    onSelected: (_) => setState(() {
-                      _preset = minutes;
-                      _resetWindow();
-                    }),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 12,
-              runSpacing: 4,
-              children: [
-                DropdownButton<UsageTimelineMetric>(
-                  key: const ValueKey('usage-timeline-metric'),
-                  value: _metric,
-                  underline: const SizedBox.shrink(),
-                  items: [
-                    for (final metric in UsageTimelineMetric.values.where(
-                      (metric) =>
-                          !metric.isMoney &&
-                          metric != UsageTimelineMetric.averageInput &&
-                          metric != UsageTimelineMetric.cacheRate,
-                    ))
-                      DropdownMenuItem(
-                        value: metric,
-                        child: Text(_metricLabel(l10n, metric)),
-                      ),
-                  ],
-                  onChanged: (metric) {
-                    if (metric == null) return;
-                    setState(() {
-                      _metric = metric;
-                      _cachedData = null;
-                      _cachedSpend = null;
-                      _cachedRate = null;
-                      _cachedAverageInput = null;
-                      _cachedSavings = null;
-                      _insightRecords = null;
-                      _insightCurrencies = null;
-                    });
-                  },
-                ),
-                Text(
-                  '${_number(total)} · $bucketLabel',
-                  style: text.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-            Text(
-              '${_dateTime(_start, seconds: data.bucketMs < _minuteMs)} — ${_dateTime(_end, seconds: data.bucketMs < _minuteMs)}',
-              style: text.bodySmall,
-            ),
-            const SizedBox(height: 12),
-            _buildPlot(context, data, visible),
-            IconButtonTheme(
-              data: const IconButtonThemeData(
-                style: ButtonStyle(visualDensity: VisualDensity.compact),
-              ),
-              child: Wrap(
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 2,
+    final presetControl = BentoSegmentedControl<int?>(
+      compact: true,
+      selected: _preset,
+      onSelected: (minutes) {
+        if (minutes == null) return;
+        setState(() {
+          _preset = minutes;
+          _resetWindow();
+        });
+      },
+      options: [
+        for (final minutes in _presets)
+          BentoSegmentedOption<int?>(
+            value: minutes,
+            itemKey: ValueKey('usage-timeline-preset-$minutes'),
+            label: minutes == 0
+                ? l10n.settingsDataDetailedStatsRangeAll
+                : minutes == 10080
+                ? l10n.settingsDataDetailedStatsRangeLast7Days
+                : l10n.settingsDataTimelineHours(minutes ~/ 60),
+          ),
+      ],
+    );
+
+    return BentoSurfaceCard(
+      padding: const EdgeInsets.all(18),
+      radius: 18,
+      accent: colors.primary,
+      hoverable: false,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final wideHeader = constraints.maxWidth >= 760;
+              final titleBlock = Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  IconButton(
-                    tooltip: l10n.settingsDataTimelineEarlier,
-                    onPressed: _start <= _lower ? null : () => _pan(-1),
-                    icon: const Icon(Icons.chevron_left),
+                  Text(
+                    l10n.settingsDataTimelineTitle,
+                    style: text.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                  IconButton(
-                    tooltip: l10n.zoomIn,
-                    onPressed: _end - _start <= 5 * _minuteMs
-                        ? null
-                        : () => _zoom(0.5),
-                    icon: const Icon(Icons.zoom_in),
-                  ),
-                  IconButton(
-                    tooltip: l10n.zoomOut,
-                    onPressed: _end - _start >= _upper - _lower
-                        ? null
-                        : () => _zoom(2),
-                    icon: const Icon(Icons.zoom_out),
-                  ),
-                  IconButton(
-                    tooltip: l10n.settingsDataTimelineLater,
-                    onPressed: _end >= _upper ? null : () => _pan(1),
-                    icon: const Icon(Icons.chevron_right),
-                  ),
-                  TextButton.icon(
-                    onPressed: () => setState(() {
-                      _preset = 180;
-                      _resetWindow();
-                    }),
-                    icon: const Icon(Icons.update, size: 18),
-                    label: Text(l10n.settingsDataTimelineRecent),
+                  const SizedBox(height: 4),
+                  Text(
+                    l10n.settingsDataTimelineHint,
+                    style: text.bodySmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
                   ),
                 ],
-              ),
-            ),
-            Semantics(
-              label: l10n.settingsDataTimelineRange,
-              child: RangeSlider(
-                values: RangeValues(
-                  ((_start - _lower) / (_upper - _lower)).clamp(0, 1),
-                  ((_end - _lower) / (_upper - _lower)).clamp(0, 1),
-                ),
-                labels: RangeLabels(
-                  _dateTime(_start, seconds: data.bucketMs < _minuteMs),
-                  _dateTime(_end, seconds: data.bucketMs < _minuteMs),
-                ),
-                onChanged: (values) {
-                  final lower = _lower;
-                  final span = _upper - lower;
-                  setState(
-                    () => _setWindow(
-                      lower + (values.start * span).round(),
-                      lower + (values.end * span).round(),
-                    ),
-                  );
-                },
-              ),
-            ),
-            if (_selected != null &&
-                _selectedPlot == 'usage-timeline-plot') ...[
-              Container(
-                key: const ValueKey('usage-timeline-detail'),
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: colors.surfaceContainerHigh,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Column(
+              );
+              if (wideHeader) {
+                return Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      '${_dateTime(math.max(_start, data.bucketStart + _selected! * data.bucketMs), seconds: data.bucketMs < _minuteMs)} — ${_dateTime(math.min(_end, data.bucketStart + (_selected! + 1) * data.bucketMs), seconds: data.bucketMs < _minuteMs)}',
-                      style: text.labelMedium,
-                    ),
-                    const SizedBox(height: 6),
-                    for (final series in visible)
-                      Text(
-                        '${series.label}  ${_measure(series.values[_selected!], data.metric, data.currency)}',
-                        style: text.bodySmall?.copyWith(
-                          color: _colorFor(series, colors),
-                        ),
-                      ),
+                    Expanded(child: titleBlock),
+                    const SizedBox(width: 12),
+                    presetControl,
                   ],
+                );
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  titleBlock,
+                  const SizedBox(height: 12),
+                  presetControl,
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 2,
+                ),
+                decoration: BoxDecoration(
+                  color: colors.surfaceContainerHighest.withValues(alpha: 0.45),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: colors.outlineVariant.withValues(alpha: 0.32),
+                  ),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<UsageTimelineMetric>(
+                    key: const ValueKey('usage-timeline-metric'),
+                    value: _metric,
+                    isDense: true,
+                    items: [
+                      for (final metric in UsageTimelineMetric.values.where(
+                        (metric) =>
+                            !metric.isMoney &&
+                            metric != UsageTimelineMetric.averageInput &&
+                            metric != UsageTimelineMetric.cacheRate &&
+                            metric != UsageTimelineMetric.speed,
+                      ))
+                        DropdownMenuItem(
+                          value: metric,
+                          child: Text(_metricLabel(l10n, metric)),
+                        ),
+                    ],
+                    onChanged: (metric) {
+                      if (metric == null) return;
+                      setState(() {
+                        _metric = metric;
+                        _cachedData = null;
+                        _cachedSpend = null;
+                        _cachedRate = null;
+                        _cachedAverageInput = null;
+                        _cachedSavings = null;
+                        _cachedSpeed = null;
+                        _insightRecords = null;
+                        _insightCurrencies = null;
+                      });
+                    },
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: colors.primary.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: colors.primary.withValues(alpha: 0.24),
+                  ),
+                ),
+                child: Text(
+                  '${_number(total)} · $bucketLabel',
+                  style: tabularTextStyle(
+                    text.labelMedium?.copyWith(
+                      color: colors.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+              Text(
+                '${_dateTime(_start, seconds: data.bucketMs < _minuteMs)} — ${_dateTime(_end, seconds: data.bucketMs < _minuteMs)}',
+                style: tabularTextStyle(
+                  text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
                 ),
               ),
             ],
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (var index = 0; index < data.series.length; index++)
-                  FilterChip(
-                    label: Text(
-                      '${data.series[index].label} · ${_number(data.series[index].total)}',
-                    ),
-                    avatar: CircleAvatar(
-                      backgroundColor: _colorFor(data.series[index], colors),
-                      radius: 5,
-                    ),
-                    selected: !_hidden.contains(data.series[index].key),
-                    onSelected: (selected) => setState(() {
-                      _cachedSpend = null;
-                      _cachedRate = null;
-                      _cachedAverageInput = null;
-                      _cachedSavings = null;
-                      _insightRecords = null;
-                      _insightCurrencies = null;
-                      final key = data.series[index].key;
-                      if (selected) {
-                        _hidden.remove(key);
-                      } else {
-                        _hidden.add(key);
-                      }
-                    }),
+          ),
+          const SizedBox(height: 12),
+          _buildPlot(context, data, visible),
+          const SizedBox(height: 4),
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                decoration: BoxDecoration(
+                  color: colors.surfaceContainerHighest.withValues(alpha: 0.36),
+                  borderRadius: BorderRadius.circular(11),
+                  border: Border.all(
+                    color: colors.outlineVariant.withValues(alpha: 0.25),
                   ),
-              ],
+                ),
+                child: IconButtonTheme(
+                  data: const IconButtonThemeData(
+                    style: ButtonStyle(visualDensity: VisualDensity.compact),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: l10n.settingsDataTimelineEarlier,
+                        onPressed: _start <= _lower ? null : () => _pan(-1),
+                        icon: const Icon(Icons.chevron_left, size: 18),
+                      ),
+                      IconButton(
+                        tooltip: l10n.zoomIn,
+                        onPressed: _end - _start <= 5 * _minuteMs
+                            ? null
+                            : () => _zoom(0.5),
+                        icon: const Icon(Icons.zoom_in, size: 18),
+                      ),
+                      IconButton(
+                        tooltip: l10n.zoomOut,
+                        onPressed: _end - _start >= _upper - _lower
+                            ? null
+                            : () => _zoom(2),
+                        icon: const Icon(Icons.zoom_out, size: 18),
+                      ),
+                      IconButton(
+                        tooltip: l10n.settingsDataTimelineLater,
+                        onPressed: _end >= _upper ? null : () => _pan(1),
+                        icon: const Icon(Icons.chevron_right, size: 18),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              BentoInteractivePill(
+                icon: Icons.update,
+                label: l10n.settingsDataTimelineRecent,
+                onTap: () => setState(() {
+                  _preset = 180;
+                  _resetWindow();
+                }),
+              ),
+            ],
+          ),
+          Semantics(
+            label: l10n.settingsDataTimelineRange,
+            child: RangeSlider(
+              values: RangeValues(
+                ((_start - _lower) / (_upper - _lower)).clamp(0, 1),
+                ((_end - _lower) / (_upper - _lower)).clamp(0, 1),
+              ),
+              labels: RangeLabels(
+                _dateTime(_start, seconds: data.bucketMs < _minuteMs),
+                _dateTime(_end, seconds: data.bucketMs < _minuteMs),
+              ),
+              onChanged: (values) {
+                final lower = _lower;
+                final span = _upper - lower;
+                setState(
+                  () => _setWindow(
+                    lower + (values.start * span).round(),
+                    lower + (values.end * span).round(),
+                  ),
+                );
+              },
             ),
-            const SizedBox(height: 20),
-            _buildInsights(context),
-          ],
+          ),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 160),
+            child: (_selected != null && _selectedPlot == 'usage-timeline-plot')
+                ? Container(
+                    key: const ValueKey('usage-timeline-detail'),
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: colors.surfaceContainerHigh.withValues(alpha: 0.72),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: colors.outlineVariant.withValues(alpha: 0.35),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${_dateTime(math.max(_start, data.bucketStart + _selected! * data.bucketMs), seconds: data.bucketMs < _minuteMs)} — ${_dateTime(math.min(_end, data.bucketStart + (_selected! + 1) * data.bucketMs), seconds: data.bucketMs < _minuteMs)}',
+                          style: tabularTextStyle(
+                            text.labelMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 14,
+                          runSpacing: 4,
+                          children: [
+                            for (final series in visible)
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 7,
+                                    height: 7,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: _colorFor(series, colors),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '${series.label}  ${_measure(series.values[_selected!], data.metric, data.currency)}',
+                                    style: tabularTextStyle(
+                                      text.bodySmall?.copyWith(
+                                        color: _colorFor(series, colors),
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (var index = 0; index < data.series.length; index++)
+                _buildSeriesTogglePill(context, data.series[index], colors),
+            ],
+          ),
+          const SizedBox(height: 20),
+          _buildInsights(context),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSeriesTogglePill(
+    BuildContext context,
+    UsageTimelineSeries series,
+    ColorScheme colors,
+  ) {
+    final text = Theme.of(context).textTheme;
+    final selected = !_hidden.contains(series.key);
+    final color = _colorFor(series, colors);
+    return FilterChip(
+      avatar: Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: selected ? color : colors.onSurfaceVariant.withValues(alpha: 0.45),
         ),
       ),
+      label: Text(
+        '${series.label} · ${_number(series.total)}',
+        style: tabularTextStyle(
+          text.labelMedium?.copyWith(
+            color: selected ? colors.onSurface : colors.onSurfaceVariant,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+          ),
+        ),
+      ),
+      showCheckmark: false,
+      selected: selected,
+      selectedColor: color.withValues(alpha: 0.14),
+      backgroundColor: colors.surfaceContainerHighest.withValues(alpha: 0.35),
+      side: BorderSide(
+        color: selected
+            ? color.withValues(alpha: 0.42)
+            : colors.outlineVariant.withValues(alpha: 0.25),
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      onSelected: (next) => setState(() {
+        _cachedSpend = null;
+        _cachedRate = null;
+        _cachedAverageInput = null;
+        _cachedSavings = null;
+        _cachedSpeed = null;
+        _insightRecords = null;
+        _insightCurrencies = null;
+        if (next) {
+          _hidden.remove(series.key);
+        } else {
+          _hidden.add(series.key);
+        }
+      }),
     );
   }
 }
@@ -1078,12 +1469,18 @@ class _TimelinePainter extends CustomPainter {
     double yAt(num value) =>
         plot.bottom - (value - minY) / (maxY - minY) * plot.height;
     final grid = Paint()
-      ..color = colors.outlineVariant.withValues(alpha: 0.35)
-      ..strokeWidth = 0.7;
-    final style = labelStyle;
+      ..color = colors.outlineVariant.withValues(alpha: 0.28)
+      ..strokeWidth = 0.8;
+    final style = labelStyle.copyWith(
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
     for (var i = 0; i <= gridSteps; i++) {
       final y = plot.bottom - plot.height * i / gridSteps;
-      canvas.drawLine(Offset(plot.left, y), Offset(plot.right, y), grid);
+      if (i == 0) {
+        canvas.drawLine(Offset(plot.left, y), Offset(plot.right, y), grid);
+      } else {
+        _drawDashedHorizontalLine(canvas, plot.left, plot.right, y, grid);
+      }
       _text(
         canvas,
         rate
@@ -1137,6 +1534,7 @@ class _TimelinePainter extends CustomPainter {
 
     canvas.save();
     canvas.clipRect(plot.inflate(1));
+    final isDark = colors.brightness == Brightness.dark;
     for (final series in visible) {
       final points = [
         for (var index = 0; index < series.values.length; index++)
@@ -1145,12 +1543,40 @@ class _TimelinePainter extends CustomPainter {
               : Offset(xAt(index), yAt(series.values[index]!)),
       ];
       final color = colorFor(series);
+      var segStart = -1;
+      for (var index = 0; index <= points.length; index++) {
+        final hasPoint = index < points.length && points[index] != null;
+        if (hasPoint && segStart == -1) {
+          segStart = index;
+        } else if (!hasPoint && segStart != -1) {
+          if (index - segStart >= 2) {
+            final segment = points.sublist(segStart, index);
+            final fillPath = buildUsageTimelineCurve(segment)
+              ..lineTo(segment.last!.dx, plot.bottom)
+              ..lineTo(segment.first!.dx, plot.bottom)
+              ..close();
+            canvas.drawPath(
+              fillPath,
+              Paint()
+                ..shader = LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    color.withValues(alpha: isDark ? 0.22 : 0.16),
+                    color.withValues(alpha: 0.0),
+                  ],
+                ).createShader(plot),
+            );
+          }
+          segStart = -1;
+        }
+      }
       canvas.drawPath(
         buildUsageTimelineCurve(points),
         Paint()
           ..color = color
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 2
+          ..strokeWidth = 2.2
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round,
       );
@@ -1163,27 +1589,76 @@ class _TimelinePainter extends CustomPainter {
             (index == points.length - 1 || points[index + 1] == null);
         if (isolated ||
             (spacing >= 18 && (series.values[index] != 0 || rate))) {
-          canvas.drawCircle(point, 1.8, Paint()..color = color);
+          canvas.drawCircle(
+            point,
+            3.5,
+            Paint()..color = color.withValues(alpha: 0.2),
+          );
+          canvas.drawCircle(point, 2.0, Paint()..color = color);
         }
       }
     }
     if (selected != null) {
       final x = xAt(selected!).clamp(plot.left, plot.right);
-      canvas.drawLine(
-        Offset(x, plot.top),
-        Offset(x, plot.bottom),
+      _drawDashedVerticalLine(
+        canvas,
+        x,
+        plot.top,
+        plot.bottom,
         Paint()
-          ..color = colors.onSurface.withValues(alpha: 0.5)
-          ..strokeWidth = 1,
+          ..color = colors.primary.withValues(alpha: 0.55)
+          ..strokeWidth = 1.1,
       );
       for (final series in visible) {
         if (series.values[selected!] == null) continue;
+        final color = colorFor(series);
         final point = Offset(x, yAt(series.values[selected!]!));
-        canvas.drawCircle(point, 4, Paint()..color = colors.surface);
-        canvas.drawCircle(point, 3, Paint()..color = colorFor(series));
+        canvas.drawCircle(
+          point,
+          8,
+          Paint()..color = color.withValues(alpha: 0.22),
+        );
+        canvas.drawCircle(point, 4.6, Paint()..color = colors.surface);
+        canvas.drawCircle(point, 3.2, Paint()..color = color);
       }
     }
     canvas.restore();
+  }
+
+  void _drawDashedHorizontalLine(
+    Canvas canvas,
+    double startX,
+    double endX,
+    double y,
+    Paint paint,
+  ) {
+    const dash = 4.0;
+    const gap = 4.0;
+    for (var x = startX; x < endX; x += dash + gap) {
+      canvas.drawLine(
+        Offset(x, y),
+        Offset(math.min(x + dash, endX), y),
+        paint,
+      );
+    }
+  }
+
+  void _drawDashedVerticalLine(
+    Canvas canvas,
+    double x,
+    double startY,
+    double endY,
+    Paint paint,
+  ) {
+    const dash = 4.0;
+    const gap = 3.0;
+    for (var y = startY; y < endY; y += dash + gap) {
+      canvas.drawLine(
+        Offset(x, y),
+        Offset(x, math.min(y + dash, endY)),
+        paint,
+      );
+    }
   }
 
   void _text(
@@ -1229,6 +1704,7 @@ String _metricLabel(AppLocalizations l10n, UsageTimelineMetric metric) =>
       UsageTimelineMetric.cacheRate => l10n.settingsDataTimelineCacheRate,
       UsageTimelineMetric.averageInput => l10n.settingsDataTimelineAverageInput,
       UsageTimelineMetric.cacheSavings => l10n.settingsDataTimelineCacheSavings,
+      UsageTimelineMetric.speed => l10n.settingsUsageTimelineSpeedTitle,
     };
 
 String _bucketLabel(AppLocalizations l10n, UsageTimelineData data) =>
@@ -1265,6 +1741,9 @@ String _measure(num? value, UsageTimelineMetric metric, String? currency) {
   }
   if (metric == UsageTimelineMetric.averageInput) {
     return value.toStringAsFixed(1);
+  }
+  if (metric == UsageTimelineMetric.speed) {
+    return '${value.toStringAsFixed(1)} tok/s';
   }
   return _number(value);
 }

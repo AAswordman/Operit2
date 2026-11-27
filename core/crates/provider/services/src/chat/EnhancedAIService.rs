@@ -42,6 +42,7 @@ use operit_model::ModelParameter::ModelParameter;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
+use operit_model::ProviderQuota::{mask_api_key_fingerprint, UsageRequestStatus};
 use operit_store::repository::UsageStatisticsStore::UsageRequestSource;
 pub use super::TurnTokenUsage::TurnTokenSnapshot;
 use super::TurnTokenUsage::{RequestTokenUsage, TurnTokenUsage};
@@ -2190,6 +2191,12 @@ impl EnhancedAIService {
                 &execContext, serviceForFunction.clone(), functionType.clone(),
                 UsageRequestSource::CHAT_RESPONSE, chatId.clone(),
             )?;
+            tokenRequest.setAttribution(
+                stream,
+                runtime.modelConfig.providerId.clone(),
+                String::new(),
+                mask_api_key_fingerprint(&runtime.modelConfig.apiKey),
+            );
             service
                 .send_message(SendMessageRequest {
                     chat_history: requestHistory.clone(),
@@ -2211,6 +2218,11 @@ impl EnhancedAIService {
         let mut provider_stream = match providerResult {
             Ok(stream) => stream,
             Err(error) => {
+                tokenRequest.markStatus(if matches!(error, AiServiceError::RequestCancelled) {
+                    UsageRequestStatus::CANCELLED
+                } else {
+                    UsageRequestStatus::FAILED
+                });
                 turnUsage.finishRequest(&tokenRequest, runtimeSupport.as_ref()).await?;
                 self.invalidateExecutionContext(
                     &mut execContext,
@@ -2267,6 +2279,9 @@ impl EnhancedAIService {
                             )),
                         );
                     }
+                    if !content.is_empty() {
+                        tokenRequest.markFirstOutput();
+                    }
                     let _ = responseRevisions.append(&content);
                     chunkCount += 1;
                     totalChars += content.len() as i32;
@@ -2310,6 +2325,11 @@ impl EnhancedAIService {
                 }
             })
             .await;
+        if !self.isExecutionContextActive(&execContext) {
+            tokenRequest.markStatus(UsageRequestStatus::CANCELLED);
+        } else if provider_stream.terminal_failure().is_some() {
+            tokenRequest.markStatus(UsageRequestStatus::FAILED);
+        }
         let tokens = turnUsage.finishRequest(&tokenRequest, runtimeSupport.as_ref()).await?;
         if !self.isExecutionContextActive(&execContext) {
             self.unregisterExecutionContext(&execContext);
@@ -2728,6 +2748,12 @@ impl EnhancedAIService {
                 context, runtime.aiService.clone(), functionType.clone(),
                 UsageRequestSource::TOOL_RESULT_RESPONSE, chatId.clone(),
             )?;
+            tokenRequest.setAttribution(
+                stream,
+                runtime.modelConfig.providerId.clone(),
+                String::new(),
+                mask_api_key_fingerprint(&runtime.modelConfig.apiKey),
+            );
             service
                 .send_message(SendMessageRequest {
                     chat_history: currentChatHistory,
@@ -2749,6 +2775,11 @@ impl EnhancedAIService {
         let mut response = match responseResult {
             Ok(response) => response,
             Err(error) => {
+                tokenRequest.markStatus(if matches!(error, AiServiceError::RequestCancelled) {
+                    UsageRequestStatus::CANCELLED
+                } else {
+                    UsageRequestStatus::FAILED
+                });
                 turnUsage.finishRequest(&tokenRequest, self.provider_runtime_context.support()).await?;
                 return Err(error);
             }
@@ -2760,6 +2791,7 @@ impl EnhancedAIService {
         });
 
         if !self.isExecutionContextActive(context) {
+            tokenRequest.markStatus(UsageRequestStatus::CANCELLED);
             turnUsage.finishRequest(&tokenRequest, self.provider_runtime_context.support()).await?;
             return Ok(false);
         }
@@ -2771,6 +2803,7 @@ impl EnhancedAIService {
         }
 
         if !self.isExecutionContextActive(context) {
+            tokenRequest.markStatus(UsageRequestStatus::CANCELLED);
             turnUsage.finishRequest(&tokenRequest, self.provider_runtime_context.support()).await?;
             return Ok(false);
         }
@@ -2785,6 +2818,9 @@ impl EnhancedAIService {
                     if !Self::isExecutionContextActiveInSharedState(&activeExecutionState, context)
                     {
                         return;
+                    }
+                    if !content.is_empty() {
+                        tokenRequest.markFirstOutput();
                     }
                     let _ = responseRevisions.append(&content);
                     chunkCount += 1;
@@ -2821,6 +2857,11 @@ impl EnhancedAIService {
                 }
             })
             .await;
+        if !self.isExecutionContextActive(context) {
+            tokenRequest.markStatus(UsageRequestStatus::CANCELLED);
+        } else if response.terminal_failure().is_some() {
+            tokenRequest.markStatus(UsageRequestStatus::FAILED);
+        }
         let tokens = turnUsage.finishRequest(&tokenRequest, self.provider_runtime_context.support()).await?;
         if !self.isExecutionContextActive(context) {
             return Ok(false);

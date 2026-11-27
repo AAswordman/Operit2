@@ -11,7 +11,8 @@ use super::OpenAIProvider::OpenAIProvider;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use super::ThinkingDialect::ThinkingDialect;
 use crate::chat::llmprovider::AIService::{
-    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
+    response_stream_from_chunks, AIService, AiServiceError, ExtendedTokenCounts,
+    SendMessageRequest, TokenCounts, parse_extended_usage_counts,
 };
 use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::ModelConfigData::{BuiltinToolRequestFormat, ModelBuiltinTool};
@@ -50,6 +51,8 @@ pub struct OpenAIResponsesProvider {
 struct OpenAIResponsesProviderState {
     inputTokenCount: i64,
     cachedInputTokenCount: i64,
+    cacheWriteInputTokenCount: i64,
+    reasoningTokenCount: i64,
     outputTokenCount: i64,
     cancelled: bool,
     activeParent: Option<OpenAIProvider>,
@@ -131,6 +134,17 @@ impl OpenAIResponsesProvider {
         }
     }
 
+    fn apply_extended_usage_counts(&self, extended: &ExtendedTokenCounts) {
+        if let Ok(mut state) = self.state.lock() {
+            if extended.cache_write_input > 0 {
+                state.cacheWriteInputTokenCount = extended.cache_write_input;
+            }
+            if extended.reasoning > 0 {
+                state.reasoningTokenCount = extended.reasoning;
+            }
+        }
+    }
+
     /// Reads the active transport's live counters until its final usage is committed locally.
     fn currentTokenCounts(&self) -> TokenCounts {
         let state = self.state.lock().expect("OpenAIResponsesProvider state mutex poisoned");
@@ -144,6 +158,20 @@ impl OpenAIResponsesProvider {
                 input: state.inputTokenCount,
                 cached_input: state.cachedInputTokenCount,
                 output: state.outputTokenCount,
+            },
+        }
+    }
+
+    fn currentExtendedCounts(&self) -> ExtendedTokenCounts {
+        let state = self.state.lock().expect("OpenAIResponsesProvider state mutex poisoned");
+        match state.activeParent.as_ref() {
+            Some(parent) => ExtendedTokenCounts {
+                cache_write_input: parent.cache_write_input_token_count(),
+                reasoning: parent.reasoning_token_count(),
+            },
+            None => ExtendedTokenCounts {
+                cache_write_input: state.cacheWriteInputTokenCount,
+                reasoning: state.reasoningTokenCount,
             },
         }
     }
@@ -175,6 +203,15 @@ impl OpenAIResponsesProvider {
             state.inputTokenCount = usage.actualInputTokens;
             state.cachedInputTokenCount = usage.cachedInputTokens;
             state.outputTokenCount = usage.outputTokens;
+            if let Some((cw, r)) = state.activeParent.as_ref().map(|parent| {
+                (
+                    parent.cache_write_input_token_count(),
+                    parent.reasoning_token_count(),
+                )
+            }) {
+                state.cacheWriteInputTokenCount = cw;
+                state.reasoningTokenCount = r;
+            }
             state.activeParent = None;
         }
     }
@@ -1262,6 +1299,14 @@ impl AIService for OpenAIResponsesProvider {
         self.currentTokenCounts().output
     }
 
+    fn cache_write_input_token_count(&self) -> i64 {
+        self.currentExtendedCounts().cache_write_input
+    }
+
+    fn reasoning_token_count(&self) -> i64 {
+        self.currentExtendedCounts().reasoning
+    }
+
     fn provider_model(&self) -> String {
         let provider = match self.gatewayBinding {
             Some(_) => "LOCAL_GATEWAY",
@@ -1276,6 +1321,8 @@ impl AIService for OpenAIResponsesProvider {
             state.activeParent = None;
             state.inputTokenCount = 0;
             state.cachedInputTokenCount = 0;
+            state.cacheWriteInputTokenCount = 0;
+            state.reasoningTokenCount = 0;
             state.outputTokenCount = 0;
         }
     }
@@ -1402,6 +1449,9 @@ impl AIService for OpenAIResponsesProvider {
         let parsed = OpenAIResponsesPayloadAdapter::parse_non_streaming_response(&jsonResponse);
         if let Some(usage) = parsed.usage {
             self.apply_usage_counts(&usage);
+        }
+        if let Some(usageValue) = jsonResponse.get("usage") {
+            self.apply_extended_usage_counts(&parse_extended_usage_counts(usageValue));
         }
 
         let mut chunks = Vec::new();

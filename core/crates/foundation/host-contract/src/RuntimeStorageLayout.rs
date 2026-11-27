@@ -435,6 +435,8 @@ pub const REMOTE_ANNOUNCEMENT_PREFERENCES_PATH: &str =
     "runtime/config/preferences/remote_announcement_preferences";
 pub const SIDEBAR_DOCK_PREFERENCES_PATH: &str =
     "runtime/config/preferences/sidebar_dock.preferences.json";
+pub const PROVIDER_QUOTA_PREFERENCES_PATH: &str =
+    "runtime/config/preferences/provider_quota.preferences.json";
 pub const API_PREFERENCES_PATH: &str = "runtime/config/preferences/api_settings.json";
 /// Identifies the retired node-global environment file used only by the one-time package import.
 pub const LEGACY_ENV_PREFERENCES_PATH: &str =

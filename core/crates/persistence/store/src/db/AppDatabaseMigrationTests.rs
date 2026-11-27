@@ -159,7 +159,41 @@ fn opening_version27_atomically_upgrades_records_and_reopens_current_version() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
     let (paths, old) = version27Database("database-v27-v28");
     let before = tableRows(&old.store);
-    let expected = expectedVersion28Rows(&before);
+    let mut expected = expectedVersion28Rows(&before);
+    if let Some(usageRows) = expected.get_mut("usage_request_records") {
+        for row in usageRows {
+            row.columns.extend([
+                "cacheWriteTokens".to_string(),
+                "reasoningTokens".to_string(),
+                "waitDurationMs".to_string(),
+                "outputDurationMs".to_string(),
+                "totalDurationMs".to_string(),
+                "status".to_string(),
+                "originNodeId".to_string(),
+                "providerId".to_string(),
+                "keyId".to_string(),
+                "keyFingerprint".to_string(),
+                "estimatedCost".to_string(),
+                "currency".to_string(),
+                "stream".to_string(),
+            ]);
+            row.values.extend([
+                SqliteValue::Integer(0),
+                SqliteValue::Integer(0),
+                SqliteValue::Integer(0),
+                SqliteValue::Integer(0),
+                SqliteValue::Integer(0),
+                SqliteValue::Text("COMPLETED".to_string()),
+                SqliteValue::Text(String::new()),
+                SqliteValue::Text(String::new()),
+                SqliteValue::Text(String::new()),
+                SqliteValue::Text(String::new()),
+                SqliteValue::Real(0.0),
+                SqliteValue::Text(String::new()),
+                SqliteValue::Integer(0),
+            ]);
+        }
+    }
     let indexes = old
         .store
         .queryRows(
@@ -183,7 +217,7 @@ fn opening_version27_atomically_upgrades_records_and_reopens_current_version() {
         database
             .store
             .queryRows(
-                "SELECT name,tbl_name,sql FROM sqlite_master WHERE type='index' AND name<>'index_sync_sql_deletions_chat_lifecycle' ORDER BY name",
+                "SELECT name,tbl_name,sql FROM sqlite_master WHERE type='index' AND name NOT IN ('index_sync_sql_deletions_chat_lifecycle','index_usage_request_records_originNodeId','index_usage_request_records_providerId') ORDER BY name",
                 Vec::new()
             )
             .unwrap(),
@@ -433,4 +467,40 @@ fn version29_group_migration_rolls_back_when_second_table_is_missing() {
     assert!(MIGRATION_29_30(&database).is_err());
     assert_eq!(database.store.getUserVersion().unwrap(), 29);
     assert_eq!(tableRows(&database.store), before);
+}
+
+#[test]
+fn version30_usage_metrics_migration_preserves_rows_and_adds_columns() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_, database) = version27Database("database-v30-usage-upgrade");
+    MIGRATION_27_28(&database).unwrap();
+    MIGRATION_28_29(&database).unwrap();
+    MIGRATION_29_30(&database).unwrap();
+    MIGRATION_30_31(&database).unwrap();
+    assert_eq!(database.store.getUserVersion().unwrap(), 31);
+    let columns = database
+        .store
+        .queryRows("PRAGMA table_info(\"usage_request_records\")", Vec::new())
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get::<_, String>("name").unwrap())
+        .collect::<Vec<_>>();
+    for expected in [
+        "cacheWriteTokens",
+        "reasoningTokens",
+        "waitDurationMs",
+        "outputDurationMs",
+        "totalDurationMs",
+        "status",
+        "originNodeId",
+        "providerId",
+        "keyId",
+        "keyFingerprint",
+        "estimatedCost",
+        "currency",
+        "stream",
+    ] {
+        assert!(columns.iter().any(|column| column == expected), "missing {expected}");
+    }
+    assert!(database.store.queryRows("PRAGMA foreign_key_check", Vec::new()).unwrap().is_empty());
 }
