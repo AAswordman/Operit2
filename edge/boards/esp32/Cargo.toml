@@ -23,11 +23,11 @@ operit-board-esp32 = { path = "board" }
 operit-host-api = { path = "../../../core/crates/foundation/host-api" }
 operit-link = { path = "../../../core/crates/foundation/link", features = ["compact-codec"] }
 operit-util = { path = "../../../core/crates/foundation/util", default-features = false, features = ["no-app-logging", "compact-json"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", default-features = false, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 
 [target.'cfg(target_os = "espidf")'.dependencies]
-serde = { version = "1", features = ["derive"] }
 esp-idf-hal = "0.46.2"
 esp-idf-svc = "0.52.1"
 esp-idf-sys = "0.37.2"

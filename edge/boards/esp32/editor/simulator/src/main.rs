@@ -374,7 +374,7 @@ struct SimulatorState<'a> {
     speech: serde_json::Value,
     playback: Vec<serde_json::Value>,
     coreAccess: serde_json::Value,
-    deviceSpace: serde_json::Value,
+    deviceSpace: device_space_ui::DeviceSpaceSnapshot,
     memory: serde_json::Value,
     storage: serde_json::Value,
     deviceId: &'a str,
@@ -387,7 +387,7 @@ struct SimulatorState<'a> {
     spaceJoinAssignmentVersion: u64,
     error: String,
     lastAction: String,
-    chat: serde_json::Value,
+    chat: edge_chat::ChatSnapshot,
     chatPreview: String,
     chatScreen: String,
     chatTask: String,
@@ -505,7 +505,7 @@ impl Simulator {
             );
         }
         let chat_state = edge_chat::snapshot();
-        let chat_screen = edge_chat::screenTextFromSnapshot(&chat_state);
+        let chat_screen = edge_chat::screenTextFromSnapshot(&chat_state).to_owned();
         let chat_preview = "Operit".to_string();
         sendReceipt.capture(edge_chat::takeSendResult());
         let pairing_code = services

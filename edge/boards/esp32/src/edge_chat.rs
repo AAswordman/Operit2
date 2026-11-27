@@ -92,6 +92,25 @@ async fn nextUiEvent(
     }
 }
 
+#[derive(Clone, Default, serde::Serialize)]
+pub struct ChatMessage {
+    pub sender: String,
+    pub text: String,
+    #[serde(skip)]
+    streamId: String,
+}
+
+#[derive(Default, serde::Serialize)]
+pub struct ChatSnapshot {
+    pub connected: bool,
+    pub chatId: String,
+    pub initializing: bool,
+    pub sending: bool,
+    pub generating: bool,
+    pub messages: Vec<ChatMessage>,
+    pub error: Option<String>,
+}
+
 struct ChatSession {
     client: Arc<dyn CoreLinkSharedClient + Send + Sync>,
     services: NodeServices,
@@ -100,7 +119,7 @@ struct ChatSession {
     ready: AtomicBool,
     retired: AtomicBool,
     needsReconnect: AtomicBool,
-    messages: Mutex<serde_json::Value>,
+    messages: Mutex<Vec<ChatMessage>>,
     error: Mutex<Option<String>>,
     executionError: Mutex<Option<String>>,
     generating: AtomicBool,
@@ -547,7 +566,7 @@ fn installSession(
         retired: AtomicBool::new(false),
         needsReconnect: AtomicBool::new(false),
         tasks: Mutex::new(Vec::new()),
-        messages: Mutex::new(serde_json::Value::Null),
+        messages: Mutex::new(Vec::new()),
         error: Mutex::new(None),
         executionError: Mutex::new(None),
         generating: AtomicBool::new(false),
@@ -614,9 +633,9 @@ fn startSubscriptions(session: Arc<ChatSession>) {
                     let mut item = item.clone();
                     boundCoreValue(&mut item, 0);
                     collectMessageStreams(&item, &mut descriptors);
-                    if let serde_json::Value::Array(mut projected) = projectMessages(&CoreValue::List(vec![item])) { rows.append(&mut projected); }
+                    rows.extend(projectMessages(&CoreValue::List(vec![item])));
                 }
-                *session.messages.lock().unwrap() = serde_json::Value::Array(rows);
+                *session.messages.lock().unwrap() = rows;
                 openMessageStreams(&session, descriptors);
                 *session.error.lock().unwrap() = None;
                 Ok(())
@@ -736,7 +755,7 @@ pub fn clear() {
     }
 }
 
-pub fn snapshot() -> serde_json::Value {
+pub fn snapshot() -> ChatSnapshot {
     let session = currentChat();
     match session {
         Some(session) => {
@@ -746,17 +765,14 @@ pub fn snapshot() -> serde_json::Value {
             let messages = renderMessages(rows, &session.streams.lock().unwrap());
             let error = session.error.lock().unwrap().clone()
                 .or_else(|| session.executionError.lock().unwrap().clone());
-            serde_json::json!({
-                "connected": session.services.peers().spaceConnection().is_some(), "chatId": session.chatId,
-                "initializing": !session.ready.load(Ordering::Acquire),
-                "sending": session.sending.load(Ordering::Acquire),
-                "generating": session.generating.load(Ordering::Acquire),
-                "messages": messages, "error": error,
-            })
+            ChatSnapshot {
+                connected: session.services.peers().spaceConnection().is_some(), chatId: session.chatId.clone(),
+                initializing: !session.ready.load(Ordering::Acquire),
+                sending: session.sending.load(Ordering::Acquire),
+                generating: session.generating.load(Ordering::Acquire), messages, error,
+            }
         }
-        None => {
-            serde_json::json!({"connected": false, "messages": [], "error": "等待同一 Space 的 Core 建立聊天连接"})
-        }
+        None => ChatSnapshot { error: Some("等待同一 Space 的 Core 建立聊天连接".into()), ..ChatSnapshot::default() },
     }
 }
 
@@ -831,34 +847,23 @@ pub fn taskStatus() -> String {
 }
 
 /// Reads empty and error display text from the already materialized chat snapshot.
-pub fn screenTextFromSnapshot(value: &serde_json::Value) -> String {
-    if let Some(error) = value["error"].as_str() {
-        return error.to_string();
-    }
-    if value["messages"]
-        .as_array()
-        .is_some_and(|items| !items.is_empty())
-    {
-        return String::new();
-    }
-    if isConnected() {
-        "输入消息开始对话".into()
-    } else {
-        "已离线，等待重新连接".into()
-    }
+pub fn screenTextFromSnapshot(value: &ChatSnapshot) -> &str {
+    if let Some(error) = value.error.as_deref() { return error; }
+    if !value.messages.is_empty() { return ""; }
+    if isConnected() { "输入消息开始对话" } else { "已离线，等待重新连接" }
 }
 
 #[cfg(test)]
-fn displayMessages(value: &CoreValue, streams: &BTreeMap<String, StreamText>) -> serde_json::Value {
+fn displayMessages(value: &CoreValue, streams: &BTreeMap<String, StreamText>) -> Vec<ChatMessage> {
     renderMessages(projectMessages(value), streams)
 }
 
 // Cache only display rows for the UI thread. It must not decode a second full
 // message tree concurrently with the UART reader on this small device.
 /// Copies presentation rows without parsing message markup or tool metadata.
-fn projectMessages(value: &CoreValue) -> serde_json::Value {
+fn projectMessages(value: &CoreValue) -> Vec<ChatMessage> {
     let CoreValue::List(items) = value else {
-        return serde_json::json!([]);
+        return Vec::new();
     };
     let start = items.len().saturating_sub(MAX_CHAT_MESSAGES);
     let mut result = Vec::with_capacity(items.len() - start);
@@ -878,45 +883,38 @@ fn projectMessages(value: &CoreValue) -> serde_json::Value {
         if text.trim().is_empty() && streamId.is_empty() {
             continue;
         }
-        result.push(serde_json::json!({
-            "sender": mapString(fields, "sender"),
-            "text": text,
-            "streamId": streamId,
-        }));
+        result.push(ChatMessage { sender: mapString(fields, "sender").into(), text, streamId: streamId.into() });
     }
-    serde_json::Value::Array(result)
+    result
 }
 
 /// Combines the latest snapshot and stream tail within one shared display budget.
-fn renderMessages(mut rows: serde_json::Value, streams: &BTreeMap<String, StreamText>) -> serde_json::Value {
-    let Some(items) = rows.as_array_mut() else { return serde_json::json!([]); };
-    for row in items.iter_mut() {
-        if let Some(stream) = row["streamId"].as_str().and_then(|id| streams.get(id)) {
+fn renderMessages(mut rows: Vec<ChatMessage>, streams: &BTreeMap<String, StreamText>) -> Vec<ChatMessage> {
+    for row in &mut rows {
+        if let Some(stream) = streams.get(&row.streamId) {
             if !stream.completed && !stream.text.is_empty() {
-                let text = boundedText(&stream.text);
-                row["text"] = serde_json::Value::String(text);
+                row.text = boundedText(&stream.text);
             }
         }
-        if let Some(fields) = row.as_object_mut() { fields.remove("streamId"); }
     }
-    items.retain(|row| !row["text"].as_str().unwrap_or("").trim().is_empty());
+    rows.retain(|row| !row.text.trim().is_empty());
     // A live tail replaces its snapshot text, so reapply the total window
     // budget across all rows rather than allowing each stream another window.
     let (mut bytes, mut lines) = (MAX_CHAT_STRING_BYTES, MAX_CHAT_LINES);
-    let mut first = items.len();
-    for index in (0..items.len()).rev() {
+    let mut first = rows.len();
+    for index in (0..rows.len()).rev() {
         if bytes == 0 || lines == 0 { break; }
-        let text = items[index]["text"].as_str().unwrap_or("");
+        let text = &rows[index].text;
         let lineStart = text.match_indices('\n').rev().nth(lines - 1).map(|(at, _)| at + 1).unwrap_or(0);
         let mut start = text.len().saturating_sub(bytes).max(lineStart);
         while !text.is_char_boundary(start) { start += 1; }
         let tail = &text[start..];
         bytes = bytes.saturating_sub(tail.len());
         lines = lines.saturating_sub(1 + tail.matches('\n').count());
-        if start > 0 { items[index]["text"] = tail.to_owned().into(); }
+        if start > 0 { rows[index].text.drain(..start); }
         first = index;
     }
-    items.drain(..first);
+    rows.drain(..first);
     rows
 }
 
@@ -1070,29 +1068,28 @@ mod tests {
             ]))),
         ]))]);
         let projected = projectMessages(&messages);
-        assert!(renderMessages(projected.clone(), &BTreeMap::new()).as_array().unwrap().is_empty());
+        assert!(renderMessages(projected.clone(), &BTreeMap::new()).is_empty());
         let streams = BTreeMap::from([("live".into(), StreamText {
             text: "live reply".into(), ..StreamText::default()
         })]);
         let rows = renderMessages(projected, &streams);
-        assert_eq!(rows[0]["text"], "live reply");
-        assert!(rows[0].get("streamId").is_none(), "private projection metadata must not leak to UI API");
+        assert_eq!(rows[0].text, "live reply");
+        assert!(serde_json::to_value(&rows[0]).unwrap().get("streamId").is_none(), "private projection metadata must not leak to UI API");
     }
 
     #[test]
     fn live_stream_and_snapshot_share_one_total_display_budget() {
-        let rows = serde_json::json!([
-            {"sender":"user", "text":"旧历史\n".repeat(120), "images":[], "streamId":""},
-            {"sender":"ai", "text":"", "images":[], "streamId":"live"},
-        ]);
+        let rows = vec![
+            ChatMessage { sender: "user".into(), text: "旧历史\n".repeat(120), ..ChatMessage::default() },
+            ChatMessage { sender: "ai".into(), streamId: "live".into(), ..ChatMessage::default() },
+        ];
         let mut stream = StreamText::default();
         stream.applyValue(&serde_json::json!({"type":"chunk", "value":"新的回复\n".repeat(120)+"最新终点"}));
         let rows = renderMessages(rows, &BTreeMap::from([("live".into(), stream)]));
-        let rows = rows.as_array().unwrap();
-        let bytes: usize = rows.iter().map(|r| r["text"].as_str().unwrap().len()).sum();
-        let lines: usize = rows.iter().map(|r| 1+r["text"].as_str().unwrap().matches('\n').count()).sum();
+        let bytes: usize = rows.iter().map(|r| r.text.len()).sum();
+        let lines: usize = rows.iter().map(|r| 1+r.text.matches('\n').count()).sum();
         assert!(bytes <= MAX_CHAT_STRING_BYTES); assert!(lines <= MAX_CHAT_LINES);
-        assert!(rows.last().unwrap()["text"].as_str().unwrap().ends_with("最新终点"));
+        assert!(rows.last().unwrap().text.ends_with("最新终点"));
     }
 
     #[tokio::test]
@@ -1167,9 +1164,11 @@ mod tests {
             "isLoading": false, "inputProcessingState": {"Error": {"message": "401 Unauthorized"}}
         })).unwrap();
         assert_eq!(executionStatus(&failure), (false, Some("401 Unauthorized".into())));
-        assert_eq!(screenTextFromSnapshot(&serde_json::json!({
-            "error": executionStatus(&failure).1, "messages": [{"text":"sent"}]
-        })), "401 Unauthorized");
+        assert_eq!(screenTextFromSnapshot(&ChatSnapshot {
+            error: executionStatus(&failure).1,
+            messages: vec![ChatMessage { text: "sent".into(), ..ChatMessage::default() }],
+            ..ChatSnapshot::default()
+        }), "401 Unauthorized");
         let loading = operit_link::toCoreValue(serde_json::json!({
             "isLoading": true, "inputProcessingState": {"Connecting": {"message":"connecting"}}
         })).unwrap();
@@ -1200,7 +1199,7 @@ mod tests {
         }]))
         .unwrap();
         let displayed = displayMessages(&messages, &BTreeMap::from([("s".into(), text)]));
-        assert_eq!(displayed[0]["text"], "你好，世界");
+        assert_eq!(displayed[0].text, "你好，世界");
     }
 }
 

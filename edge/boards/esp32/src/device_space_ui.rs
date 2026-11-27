@@ -59,6 +59,15 @@ fn transport(address: &str) -> PeerTransport {
     }
 }
 
+#[derive(serde::Serialize)]
+pub struct DeviceSpaceSnapshot {
+    pub phase: u8,
+    pub status: String,
+    pub pendingJoin: bool,
+    pub candidateIds: Vec<String>,
+    pub candidates: Vec<String>,
+}
+
 pub struct DeviceSpaceUi {
     services: NodeServices,
     space: Arc<NodeSpaceService>,
@@ -493,11 +502,11 @@ impl DeviceSpaceUi {
         };
         self.nextPoll = Instant::now();
     }
-    pub fn snapshot(&self) -> serde_json::Value {
+    pub fn snapshot(&self) -> DeviceSpaceSnapshot {
         let state = self.state.lock().unwrap();
-        serde_json::json!({"phase": state.phase, "status": state.status,
-            "pendingJoin": state.request.as_ref().is_some_and(active),
-            "candidateIds": state.candidates.iter().map(|peer| &peer.nodeId).collect::<Vec<_>>(),
-            "candidates": state.candidates.iter().map(|peer| peer.displayName.chars().take(36).collect::<String>()).collect::<Vec<_>>()})
+        DeviceSpaceSnapshot { phase: state.phase, status: state.status.clone(),
+            pendingJoin: state.request.as_ref().is_some_and(active),
+            candidateIds: state.candidates.iter().map(|peer| peer.nodeId.clone()).collect(),
+            candidates: state.candidates.iter().map(|peer| peer.displayName.chars().take(36).collect()).collect() }
     }
 }

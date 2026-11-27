@@ -704,6 +704,7 @@ ${JSON.stringify(fixtureMetadata)}
     await startCore();
     const restarted = await startEdge(); assert.equal(Object.hasOwn(restarted, 'token'), false);
     await update(); await openReview(); assert.equal(screen().page, 'Space', 'approval prompt survives process restart');
+    await waitDevice('authenticated carrier after both restarts', device => device.activePeers.length > 0);
     assert.equal((await core.command(['space', 'cancel', pending.spaceName])).status, 'cancelled');
     await waitDevice('cancelled persisted review disappears', device => device.spaceJoinPrompt === '');
     await update(); assert.equal(screen().nodes.some(node => node.id === 'edge_space_approve'), false);

@@ -103,9 +103,9 @@ container. Normal firmware updates preserve NVS and the reserved layout partitio
 Keep the matching ELF for crash address resolution.
 
 Measured on 2026-11-27, the complete Core text/audio application is
-2,596,784 bytes (2.48 MiB), down 94,224 bytes from the previous
-2,691,008-byte image. The unchanged application partition has 1,400,912 bytes
-free. The 1 MiB target remains unmet by 1,548,208 bytes. The fixed 4 MiB flash
+2,556,128 bytes (2.44 MiB), down 40,656 bytes from the previous
+2,596,784-byte image. The unchanged application partition has 1,441,568 bytes
+free. The 1 MiB target remains unmet by 1,507,552 bytes. The fixed 4 MiB flash
 container is not the application size.
 
 Node-local preferences reject transaction commit records and omit the replica
@@ -115,12 +115,19 @@ edit and timeout paths share their implementations across callers. Link values
 use the existing MessagePack scanner with a bounded container stack; successful
 Call payloads move through metadata validation without rebuilding their trees.
 The native simulator's TCP buffer is heap-owned instead of occupying its task stack.
+Typed Link visitors decode only their requested data shapes; ignored fields
+already validated by the frame parser need no second traversal. Chat and device
+Space views use typed presentation records, avoiding JSON field lookup and
+temporary arrays in the local UI. Private stream identifiers stay off the UI API.
+Startup connects directly to the configured SSID, without an extra full scan
+whose results served only disabled logs. Unused device log calls, logger setup
+and UI metric queries have been removed; UI errors and USB health remain.
 
 Verification: final Xtensa release, ELF ABI, partition and C/Wasm packaging
 passed. Link: 62 passed; runtime without HTTP directories: 150 passed; persistence:
-373 passed, 3 ignored; editor: 109 passed; TypeScript checks passed. Existing
-firmware-module simulation and Core/Edge protocol fixtures previously passed
-55 and 46 tests respectively.
+editor: 109 passed; firmware-module simulation: 55 passed; TypeScript checks
+passed. Persistence's 373 passes (3 ignored) and the Core/Edge protocol fixture's
+46 passes are from the preceding revision.
 
 The Linux simulator passed a targeted real-TCP transport workflow against Core:
 pairing and approval, storage-full/interrupted-write recovery, 65-second PCM byte
@@ -128,10 +135,13 @@ volume, long recognition text, repeated audio rounds, playback backpressure,
 text streaming, long UTF-8 input, reconnect, restart and offline cancellation.
 The deterministic model and speech providers do not validate recognition quality.
 The workflow kept the 256 KiB heap and 16/24/20 KiB guarded task stacks; sampled
-peak heap was 230,256 bytes with zero allocation failures. One preceding run
-timed out waiting for the simulated leave action; the repeat completed. Two bundled-plugin
-blocks were excluded only in that targeted run; their assertions remain in the
-full suite. The full workflow still fails when a Core market package reports a
+peak heap was 227,664 bytes with zero allocation failures. Earlier runs exhausted
+the heap while expanding the editor IPC JSON output beside audio state. Output
+now grows fallibly in small blocks and serializes each reply once; the fixed
+heap and stack limits remain unchanged. The restart fixture waits for the
+re-established authenticated carrier before cancelling a persisted request.
+Two bundled-plugin blocks were excluded only in the targeted run; their
+assertions remain in the full suite. The full workflow still fails when a Core market package reports a
 successful import but is absent from the loaded-plugin list. The separate Windows
 workflow still exits with 0xC0000005; a debugger locates its failure inside the
 Windows BCrypt initialization path on a bounded stack. Neither full workflow is

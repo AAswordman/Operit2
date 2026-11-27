@@ -21,8 +21,6 @@ type FlushCallback = unsafe extern "C" fn(*const UiArea, *const u8, usize, *mut 
 type ActionCallback = unsafe extern "C" fn(*const c_char, *mut c_void);
 
 unsafe extern "C" {
-    fn operit_mini_static_bytes() -> usize;
-    fn operit_mini_draw_bytes() -> usize;
     fn operit_ui_init(
         width: u16,
         height: u16,
@@ -98,10 +96,6 @@ impl Esp32Ui {
         if !initialized {
             return Err(HostError::new("the self-drawn UI initialization failed"));
         }
-        unsafe {
-            log::info!("operit-esp32 UI renderer=mini static_bytes={} draw_bytes={} ui_heap=0",
-                operit_mini_static_bytes(), operit_mini_draw_bytes());
-        }
         Ok(runtime)
     }
 
@@ -150,10 +144,7 @@ impl Esp32Ui {
 
     /// Updates the face app's expression label.
     pub fn setExpression(&mut self, expression: &str) {
-        let mut bytes = expression.as_bytes().to_vec();
-        bytes.retain(|byte| *byte != 0);
-        bytes.push(0);
-        unsafe { operit_ui_set_expression(bytes.as_ptr() as *const c_char) };
+        setText(expression, operit_ui_set_expression);
     }
 
     pub fn setPairingCode(&mut self, code: &str) {
@@ -163,15 +154,13 @@ impl Esp32Ui {
         let text = CString::new(text.replace('\0', "")).unwrap();
         unsafe { operit_ui_set_space_join_prompt(text.as_ptr(), busy); }
     }
-    pub fn setDeviceSpaceState(&mut self, state: &serde_json::Value) {
+    pub fn setDeviceSpaceState(&mut self, state: &crate::device_space_ui::DeviceSpaceSnapshot) {
         let string = |value: &str| CString::new(value.replace('\0', "")).unwrap();
-        let status = string(state["status"].as_str().unwrap_or(""));
-        let candidates = state["candidates"].as_array();
-        let first = string(candidates.and_then(|v| v.get(0)).and_then(|v| v.as_str()).unwrap_or(""));
-        let second = string(candidates.and_then(|v| v.get(1)).and_then(|v| v.as_str()).unwrap_or(""));
-        let third = string(candidates.and_then(|v| v.get(2)).and_then(|v| v.as_str()).unwrap_or(""));
-        unsafe { operit_ui_set_device_space_state(state["phase"].as_u64().unwrap_or(0) as u32,
-            status.as_ptr(), first.as_ptr(), second.as_ptr(), third.as_ptr(), state["pendingJoin"].as_bool().unwrap_or(false)); }
+        let status = string(&state.status);
+        let candidate = |index| string(state.candidates.get(index).map(String::as_str).unwrap_or(""));
+        let (first, second, third) = (candidate(0), candidate(1), candidate(2));
+        unsafe { operit_ui_set_device_space_state(state.phase as u32,
+            status.as_ptr(), first.as_ptr(), second.as_ptr(), third.as_ptr(), state.pendingJoin); }
     }
     pub fn setSpaceState(&mut self, state: &str) {
         setText(state, operit_ui_set_space_state);
@@ -187,35 +176,14 @@ impl Esp32Ui {
 
     pub fn setChatDraft(&mut self, text: &str) { setText(text, operit_ui_set_chat_draft); }
 
-    pub fn setChatState(&mut self, state: &serde_json::Value) {
+    pub fn setChatState(&mut self, state: &crate::edge_chat::ChatSnapshot) {
         let string = |value: &str| CString::new(value.replace('\0', "")).unwrap();
-        let id = state["chatId"].as_str().unwrap_or("");
-        unsafe {
-            operit_ui_set_chat_identity(string(id).as_ptr(), string("Operit").as_ptr());
-        }
-        let rows = state["messages"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|row| {
-                row["text"]
-                    .as_str()
-                    .is_some_and(|text| !text.trim().is_empty())
-            })
-            .collect::<Vec<_>>();
-        let rows = &rows[rows.len().saturating_sub(12)..];
+        unsafe { operit_ui_set_chat_identity(string(&state.chatId).as_ptr(), b"Operit\0".as_ptr().cast()); }
+        let rows = &state.messages[state.messages.len().saturating_sub(12)..];
         for (index, row) in rows.iter().enumerate() {
-            unsafe {
-                operit_ui_set_message(
-                    index as u32,
-                    row["sender"] == "user",
-                    string(row["text"].as_str().unwrap_or("")).as_ptr(),
-                );
-            }
+            unsafe { operit_ui_set_message(index as u32, row.sender == "user", string(&row.text).as_ptr()); }
         }
-        unsafe {
-            operit_ui_finish_messages(rows.len() as u32);
-        }
+        unsafe { operit_ui_finish_messages(rows.len() as u32); }
     }
 
     pub fn setChatTask(&mut self, text: &str) {
@@ -343,9 +311,7 @@ unsafe extern "C" fn flushCallback(
     };
     let pixels = std::slice::from_raw_parts(pixels, length);
     let board = &*context.board;
-    if let Err(error) = board.flushUi(rect, pixels) {
-        log::error!("operit-esp32 the self-drawn UI flush: {}", error.message);
-    }
+    let _ = board.flushUi(rect, pixels);
 }
 
 unsafe extern "C" fn actionCallback(action: *const c_char, userData: *mut c_void) {

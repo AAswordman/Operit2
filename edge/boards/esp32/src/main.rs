@@ -109,12 +109,6 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
 
     esp_idf_svc::sys::link_patches();
     initializeAllocationDiagnostic();
-    esp_idf_svc::log::EspLogger::initialize_default();
-    operit_util::AppLogger::AppLogger::set_retain_entries(false);
-    log::info!(
-        "operit-esp32 stability diagnostics v1; reset_reason={}",
-        unsafe { esp_idf_svc::sys::esp_reset_reason() }
-    );
 
     // Mio/Tokio wake their device executors through eventfd. ESP-IDF returns
     // EACCES until its EventFD VFS is registered; keep the mount alive for the
@@ -228,7 +222,6 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
                 pin: LED_GREEN_PIN,
                 level: true,
             })?;
-            log::info!("operit-esp32 online at http://{ip}/");
             None
         }
         crate::wifi::Esp32WifiMode::SetupAccessPoint => {
@@ -239,7 +232,6 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
                 pin: LED_RED_PIN,
                 level: true,
             })?;
-            log::info!("operit-esp32 setup AP ready: Operit-ESP32-Setup / http://192.168.4.1/");
             Some(Esp32SetupServer::start(
                 Arc::clone(&status),
                 Arc::clone(&settingsStore),
@@ -255,12 +247,9 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     hostManager.serviceDiscoveryHost = Some(discovery);
     // AP/offline boots have no wall clock: previous-boot uptime deadlines cannot
     // expire safely. Invalidate only unfinished pairings, not identities/peers.
-    let discardedPairings = PeerStateStore::new(runtimeStorage.clone())
+    PeerStateStore::new(runtimeStorage.clone())
         .discardPendingPairingsForUnsynchronizedClock(currentTimeMillis())
         .map_err(HostError::new)?;
-    if discardedPairings > 0 {
-        log::info!("operit-esp32 discarded {discardedPairings} unfinished pairings after unsynchronized clock reset");
-    }
     let edgeRouter = EdgePeerRouter::new(identity.nodeId.clone());
     let peerService = runtime_profile::create_peer_service(
         Arc::new(hostManager.clone()), &edgeRouter, deviceInfo.clone(),
@@ -351,7 +340,6 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     // initialization, which looks like the board disappears during discovery.
     // After boot UART0 belongs to framed Link/debug traffic. Console writers
     // do not share its frame lock; diagnostics use explicit health/UI requests.
-    operit_util::AppLogger::AppLogger::set_enable_console_logging(false);
     log::set_max_level(log::LevelFilter::Off);
     unsafe { esp_idf_hal::sys::esp_log_level_set(b"*\0".as_ptr().cast(), esp_idf_hal::sys::esp_log_level_t_ESP_LOG_NONE); }
     let listenService = peerService.clone();
@@ -361,15 +349,7 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
             "peer-listen-start",
             Box::new(move || {
                 Box::pin(async move {
-                    match listenService
-                        .startListening(&initialTransports)
-                        .await
-                    {
-                        Ok(()) => log::info!(
-                            "operit-esp32 configured shared Link listeners ready"
-                        ),
-                        Err(error) => log::error!("operit-esp32 peer listener: {}", error),
-                    }
+                    let _ = listenService.startListening(&initialTransports).await;
                 })
             }),
         )
@@ -403,13 +383,7 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
             status.setWifiConnected(wifiMode == crate::wifi::Esp32WifiMode::Station && _wifi.stationConnected());
             nextWifiPoll = std::time::Instant::now() + std::time::Duration::from_secs(1);
         }
-        let point = match board.pollTouch() {
-            Ok(point) => point,
-            Err(error) => {
-                log::warn!("operit-esp32 touch: {}", error.message);
-                None
-            }
-        };
+        let point = board.pollTouch().unwrap_or(None);
         // The shared UI runtime receives the sampled touch directly.
         ui.setTouch(point.map(|sample| (sample.x, sample.y)));
         ui.pump(20);
@@ -501,11 +475,10 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
                 "edge_send" => {
                     let draft = ui.chatDraft();
                     if let Err(error) = crate::edge_chat::send(draft) {
-                        log::warn!("operit-esp32 chat send: {error}");
                         ui.chatSendResult(Err(error));
                     }
                 }
-                _ => log::debug!("operit-esp32 UI action: {action}"),
+                _ => {}
             }
         }
 
@@ -572,8 +545,7 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
                     status.setPairingCode(codes);
                     paired
                 }
-                Err(error) => {
-                    log::warn!("operit-esp32 pairing status: {error}");
+                Err(_) => {
                     status.setPairingCode("");
                     lastPaired
                 }
@@ -598,7 +570,7 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
             if chatRevision != lastChatRevision || chatConnected != lastChatConnected {
                 let chatState = crate::edge_chat::snapshot();
                 ui.setChatState(&chatState);
-                ui.setChatScreen(&crate::edge_chat::screenTextFromSnapshot(&chatState));
+                ui.setChatScreen(crate::edge_chat::screenTextFromSnapshot(&chatState));
                 ui.setChatTask(&crate::edge_chat::taskStatus());
                 lastChatRevision = chatRevision;
                 lastChatConnected = chatConnected;

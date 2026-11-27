@@ -112,8 +112,7 @@ impl Esp32SetupServer {
                         .write_all(b"SSID is required")?;
                     return Ok::<(), esp_idf_svc::io::EspIOError>(());
                 }
-                if let Err(error) = savedStore.save(&settings) {
-                    log::error!("operit-esp32 setup save: {}", error.message);
+                if savedStore.save(&settings).is_err() {
                     request
                         .into_response(500, Some("Internal Error"), &[])?
                         .write_all(b"Saving settings failed")?;
@@ -125,8 +124,7 @@ impl Esp32SetupServer {
                     .spawn(move || {
                         FreeRtos::delay_ms(700);
                         esp_idf_svc::hal::reset::restart();
-                    })
-                    .map_err(|error| log::error!("operit-esp32 setup restart: {error}"));
+                    });
                 request
                     .into_ok_response()?
                     .write_all(renderSavedPage(&settings.wifiSsid).as_bytes())?;
