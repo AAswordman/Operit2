@@ -877,6 +877,9 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
 
   /// Probes a draft credential using the current endpoint, headers, and first model.
   Future<core_proxy.ApiKeyInfo> _testPoolEntry(core_proxy.ApiKeyInfo entry) {
+    if (!_validateProviderForm()) {
+      return Future.error(FormatException(AppLocalizations.of(context)!.settingsAdvanced));
+    }
     final provider = widget.provider!;
     return widget.clients.application.testProviderApiKey(
       provider: core_proxy.ProviderProfile(
@@ -893,18 +896,16 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
         currentKeyIndex: provider.currentKeyIndex,
         keyRotationMode: provider.keyRotationMode,
         customHeaders: _customHeadersController.text,
-        requestLimitPerMinute:
-            int.tryParse(_requestLimitController.text.trim()) ?? 0,
-        maxConcurrentRequests:
-            int.tryParse(_maxConcurrentController.text.trim()) ?? 0,
+        requestLimitPerMinute: int.parse(_requestLimitController.text.trim()),
+        maxConcurrentRequests: int.parse(_maxConcurrentController.text.trim()),
         models: provider.models,
       ),
       keyId: entry.id,
     );
   }
 
-  /// Saves provider settings from the dialog form.
-  void _save() {
+  /// Validates provider fields and reveals invalid advanced settings.
+  bool _validateProviderForm() {
     final invalidFields = _formKey.currentState!.validateGranularly();
     if (invalidFields.any(
       (field) =>
@@ -915,7 +916,12 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
     )) {
       _advancedController.expand();
     }
-    if (invalidFields.isNotEmpty || _selectedProviderTypeId == null) {
+    return invalidFields.isEmpty && _selectedProviderTypeId != null;
+  }
+
+  /// Saves provider settings from the dialog form.
+  void _save() {
+    if (!_validateProviderForm()) {
       return;
     }
     Navigator.of(context).pop(
@@ -930,10 +936,8 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
             !_isCodexProvider && !_isLocalProvider && _useKeyPool,
         apiKeyPool: _keyPool,
         customHeaders: _customHeadersController.text,
-        requestLimitPerMinute:
-            int.tryParse(_requestLimitController.text.trim()) ?? 0,
-        maxConcurrentRequests:
-            int.tryParse(_maxConcurrentController.text.trim()) ?? 0,
+        requestLimitPerMinute: int.parse(_requestLimitController.text.trim()),
+        maxConcurrentRequests: int.parse(_maxConcurrentController.text.trim()),
       ),
     );
   }
@@ -7938,7 +7942,6 @@ class _DialogTextField extends StatelessWidget {
             keyboardType ??
             (numberOnly ? TextInputType.number : TextInputType.text),
         inputFormatters: [
-          if (numberOnly) FilteringTextInputFormatter.digitsOnly,
           ...?inputFormatters,
         ],
         decoration: InputDecoration(labelText: label, suffixIcon: suffixIcon),

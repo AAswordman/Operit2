@@ -76,6 +76,17 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(bridge.savedProvider, isNull);
     expect(dialog, findsOneWidget);
+    expect(tester.widget<TextFormField>(concurrentField).controller!.text, '1.5');
+
+    final testButton = find.descendant(
+      of: dialog,
+      matching: find.text(l10n.settingsModelPoolTest),
+    );
+    await tester.ensureVisible(testButton);
+    await tester.tap(testButton);
+    await tester.pump();
+    expect(bridge.keyTestCalls, 0);
+    await tester.pump(const Duration(seconds: 5));
 
     // Valid integers still save normally.
     await tester.enterText(limitField, '12');
@@ -92,6 +103,7 @@ void main() {
 
 class _ProviderLimitBridge extends OperitRuntimeBridge {
   core.ProviderProfile? savedProvider;
+  int keyTestCalls = 0;
 
   static const binding = core.FunctionModelBinding(
     providerId: 'test-provider',
@@ -104,7 +116,7 @@ class _ProviderLimitBridge extends OperitRuntimeBridge {
     directVideo: false,
     toolCall: true,
   );
-  static const contextSpec = core.ModelContextSpec(maxContextLength: 200);
+  static const contextSpec = core.ModelContextSpec(maxContextTokens: 200000);
   static const summarySettings = core.ModelSummarySettings(
     enableSummary: true,
     summaryTokenThreshold: 0.7,
@@ -158,8 +170,12 @@ class _ProviderLimitBridge extends OperitRuntimeBridge {
     providerType: core.ApiProviderType.openai,
     endpoint: 'https://example.com/v1',
     apiKey: '',
-    useMultipleApiKeys: false,
-    apiKeyPool: const [],
+    useMultipleApiKeys: true,
+    apiKeyPool: const [core.ApiKeyInfo(
+      id: 'key-1', key: 'fake-key', name: 'test', isEnabled: true,
+      availabilityStatus: core.ApiKeyAvailabilityStatus.untested,
+      usageCount: 0, lastUsed: 0, errorCount: 0,
+    )],
     currentKeyIndex: 0,
     keyRotationMode: 'ROUND_ROBIN',
     customHeaders: '{}',
@@ -204,6 +220,9 @@ class _ProviderLimitBridge extends OperitRuntimeBridge {
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     final Object? result;
     switch (request.methodName) {
+      case 'testProviderApiKey':
+        keyTestCalls++;
+        throw StateError('Invalid limits must not trigger a key test');
       case 'getModelBindingForFunction':
         result = binding.toJson();
       case 'getProviderProfiles':
