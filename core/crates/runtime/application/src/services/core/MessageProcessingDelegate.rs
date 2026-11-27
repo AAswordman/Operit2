@@ -20,7 +20,9 @@ use crate::services::core::MessageCoordinationDelegate::{MessageCoordinationDele
 use crate::services::RuntimeHostInteractionService::{
     publishOwnerAppNotification, RuntimeHostInteractionAppNotificationPayload,
 };
-use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
+use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
+    WorkspaceBackupManager, WorkspaceToolHookDropGuard,
+};
 use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
@@ -2013,9 +2015,8 @@ impl MessageProcessingDelegate {
         ).await.map_err(operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed)?;
         finalMessageContent = userMessage.displayText();
         }
-        let mut workspaceToolHookSession = None;
         let mut workspaceToolHookHandler = request.enhancedAiService.tool_handler.clone();
-        if let Some(workspacePath) = request
+        let workspaceToolHookSession = if let Some(workspacePath) = request
             .workspacePath
             .clone()
             .filter(|path| !path.trim().is_empty())
@@ -2028,8 +2029,18 @@ impl MessageProcessingDelegate {
                         Some(chatId.clone()),
                     );
             workspaceToolHookHandler.addToolHook(session.clone());
-            workspaceToolHookSession = Some(session);
-        }
+            Some(session)
+        } else {
+            None
+        };
+        let workerWorkspaceToolHookSession = Arc::new(Mutex::new(workspaceToolHookSession));
+        let workerWorkspaceToolHookHandler = Arc::new(Mutex::new(workspaceToolHookHandler.clone()));
+        // Covers every synchronous early return below; ownership moves to the
+        // worker future's own drop guard once the task is scheduled.
+        let mut workspaceToolHookCleanupGuard = WorkspaceToolHookDropGuard::new(
+            workerWorkspaceToolHookSession.clone(),
+            workerWorkspaceToolHookHandler.clone(),
+        );
         if shouldAddUserMessageToChat {
             ChainLogger::verbose(
                 MESSAGE_STORE_CHAIN,
@@ -2161,7 +2172,11 @@ impl MessageProcessingDelegate {
                     "receive.stream.create.error",
                     &[("chatId", chatId.clone()), ("error", error.to_string())],
                 );
-                if let Some(session) = workspaceToolHookSession.as_ref() {
+                if let Some(session) = workerWorkspaceToolHookSession
+                    .lock()
+                    .expect("workspace tool hook session mutex poisoned")
+                    .take()
+                {
                     workspaceToolHookHandler.removeToolHook(session.hookId());
                     session.close();
                 }
@@ -2289,8 +2304,6 @@ impl MessageProcessingDelegate {
             .withRuntime(Some(chatId.clone()), |runtime| {
                 (runtime.requestSentAt, runtime.requestStartElapsed)
             });
-        let workerWorkspaceToolHookSession = Arc::new(Mutex::new(workspaceToolHookSession.clone()));
-        let workerWorkspaceToolHookHandler = Arc::new(Mutex::new(workspaceToolHookHandler.clone()));
         if userMessageAdded {
             userMessage.sentAt = workerRequestSentAt;
             request
@@ -2373,6 +2386,13 @@ impl MessageProcessingDelegate {
                 "message-response-collection",
                 Box::new(move || {
                     Box::pin(async move {
+                        // Fires when this future is dropped mid-stream (user
+                        // cancel, plugin engine revoke); a no-op once the
+                        // completion path below has taken the session.
+                        let _workspaceToolHookDropGuard = WorkspaceToolHookDropGuard::new(
+                            completionWorkspaceToolHookSession.clone(),
+                            completionWorkspaceToolHookHandler.clone(),
+                        );
                         responseItems
                             .collect_ordered(&mut move |item| {
                                 let chunk = match item {
@@ -2913,6 +2933,7 @@ impl MessageProcessingDelegate {
                     error.to_string(),
                 )
             })?;
+        workspaceToolHookCleanupGuard.handoff();
         executionGuard.handoff();
         workGuard.handoff();
         Ok(SendUserMessageProcessingResult {
