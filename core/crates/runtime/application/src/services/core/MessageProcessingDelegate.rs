@@ -459,12 +459,10 @@ fn collectToolPkgChatRuntimeStatistics(
     let currentSessionToolCount = activeChatIds
         .iter()
         .map(|activeChatId| {
-            // Cancellation clears a chat's count before its loading flag, so a
-            // concurrently dispatched hook can observe a loading chat without one.
             currentTurnToolInvocationCounts
                 .get(activeChatId)
                 .copied()
-                .unwrap_or(0)
+                .expect("active chat tool invocation count must be initialized before dispatching a chat runtime hook")
         })
         .sum();
     ToolPkgChatRuntimeStatistics {
@@ -1072,8 +1070,8 @@ impl MessageProcessingDelegate {
     /// Clears one turn's runtime state without touching a newer turn for the chat.
     #[allow(non_snake_case)]
     fn cleanupRuntimeAfterTurn(&mut self, chatId: String, turnId: u64) -> bool {
-        let cleaned = self
-            .withExistingRuntime(Some(chatId.clone()), |runtime| {
+        self
+            .withExistingRuntime(Some(chatId), |runtime| {
                 if runtime.activeTurnId != turnId || runtime.isCancelling {
                     return false;
                 }
@@ -1091,11 +1089,7 @@ impl MessageProcessingDelegate {
                 runtime.activeStreamingAiMessage = None;
                 true
             })
-            .unwrap_or(false);
-        if cleaned {
-            self.clearCurrentTurnToolInvocationCount(chatId);
-        }
-        cleaned
+            .unwrap_or(false)
     }
 
     /// Publishes terminal state only while the originating turn remains current.
@@ -1150,7 +1144,7 @@ impl MessageProcessingDelegate {
             .flatten()
     }
 
-    /// Initializes tool invocation accounting for a chat state that is about to be published.
+    /// Initializes accounting before publishing chat state; entries live as long as that state.
     #[allow(non_snake_case)]
     fn initializeCurrentTurnToolInvocationCount(&mut self, chatId: &str) {
         self.currentTurnToolInvocationCountByChatIdFlow
@@ -1671,7 +1665,6 @@ impl MessageProcessingDelegate {
             };
             let Some((cancelledTurnId, cancellationTurnId, responseStream, service)) = reservation? else { return Ok(None); };
             if expectedTurnId.is_some() { delegate.cancelSummaryTasks(Some(&chatId)); }
-            delegate.clearCurrentTurnToolInvocationCount(chatId.clone());
             // The turn owns cancellation even before a send registers or after its stream closes.
             let usageResult = match service {
                 Some(mut service) => service.cancelConversation().await,
@@ -1843,39 +1836,23 @@ impl MessageProcessingDelegate {
         self.speakMessageHandler = Some(handler);
     }
 
-    /// Resets current-turn tool invocation count for one chat.
+    /// Starts a fresh turn's accounting without removing another chat's retained count.
     #[allow(non_snake_case)]
     pub fn resetCurrentTurnToolInvocationCount(&mut self, chatId: String) {
-        let mut counts = self.currentTurnToolInvocationCountByChatIdFlow.value();
-        counts.insert(chatId, 0);
-        self.currentTurnToolInvocationCountByChatId = counts.clone();
         self.currentTurnToolInvocationCountByChatIdFlow
-            .set_value(counts);
+            .update(|counts| { counts.insert(chatId.clone(), 0); });
+        self.currentTurnToolInvocationCountByChatId = self.currentTurnToolInvocationCountByChatIdFlow.value();
     }
 
     /// Increments current-turn tool invocation count for one chat.
     #[allow(non_snake_case)]
     pub fn incrementCurrentTurnToolInvocationCount(&mut self, chatId: String) {
-        let mut counts = self.currentTurnToolInvocationCountByChatIdFlow.value();
-        let value = counts
-            .get(&chatId)
-            .copied()
-            .expect("tool invocation count must be initialized before incrementing")
-            + 1;
-        counts.insert(chatId, value);
-        self.currentTurnToolInvocationCountByChatId = counts.clone();
         self.currentTurnToolInvocationCountByChatIdFlow
-            .set_value(counts);
-    }
-
-    /// Clears current-turn tool invocation count for one chat.
-    #[allow(non_snake_case)]
-    pub fn clearCurrentTurnToolInvocationCount(&mut self, chatId: String) {
-        let mut counts = self.currentTurnToolInvocationCountByChatIdFlow.value();
-        counts.remove(&chatId);
-        self.currentTurnToolInvocationCountByChatId = counts.clone();
-        self.currentTurnToolInvocationCountByChatIdFlow
-            .set_value(counts);
+            .update(|counts| {
+                *counts.get_mut(&chatId)
+                    .expect("tool invocation count must be initialized before incrementing") += 1;
+            });
+        self.currentTurnToolInvocationCountByChatId = self.currentTurnToolInvocationCountByChatIdFlow.value();
     }
 
     /// Sends a user message, streams the AI response, persists history, and updates UI state.
@@ -3828,22 +3805,6 @@ mod tests {
         assert_eq!(statistics.activeChatIds.len(), 2);
         assert!(statistics.activeChatIds.contains(&"chat-a".to_string()));
         assert!(statistics.activeChatIds.contains(&"chat-b".to_string()));
-    }
-
-    /// Tolerates a chat whose count was already cleared by cancellation while it is still loading.
-    #[test]
-    fn toolpkg_chat_runtime_statistics_tolerate_cancelling_chat_without_count() {
-        let executionStates = HashMap::from([
-            ("chat-a".to_string(), activeExecutionState()),
-            ("chat-b".to_string(), activeExecutionState()),
-        ]);
-        let counts = HashMap::from([("chat-a".to_string(), 2)]);
-
-        let statistics = collectToolPkgChatRuntimeStatistics("chat-a", &executionStates, &counts);
-
-        assert_eq!(statistics.currentTurnToolInvocationCount, 2);
-        assert_eq!(statistics.activeConversationCount, 2);
-        assert_eq!(statistics.currentSessionToolCount, 2);
     }
 }
 

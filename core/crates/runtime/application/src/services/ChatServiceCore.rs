@@ -3997,12 +3997,17 @@ mod chat_deletion_tests {
                 isLoading: true,
                 inputProcessingState: InputProcessingState::Processing { message: "processing".into() },
             });
-            let processing = core.messageProcessingDelegate.clone_for_core();
+            core.messageProcessingDelegate.resetCurrentTurnToolInvocationCount("route-chat".into());
+            core.messageProcessingDelegate.incrementCurrentTurnToolInvocationCount("route-chat".into());
+            let mut processing = core.messageProcessingDelegate.clone_for_core();
             let cancellationDatabase = database.clone();
             let settled = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let observedSettlement = settled.clone();
             let pending = core.messageProcessingDelegate.cancelMessage("route-chat".into(), move |result| {
                 assert!(processing.isChatProcessing("route-chat"));
+                // Dispatch another chat's hook before cancellation publishes its terminal state.
+                assert_eq!(processing.currentTurnToolInvocationCountByChatIdFlow().value()["route-chat"], 1);
+                processing.setChatExecutionStateForTest("observer-chat".into(), ChatExecutionState::idle());
                 assert!(cancellationDatabase.store().beginChatExecution("route-chat").is_err());
                 assert!(!response.upstream.try_emit("late output".into()));
                 observedSettlement.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -4022,6 +4027,7 @@ mod chat_deletion_tests {
             assert_eq!(pending.await.is_err(), failSettlement);
             assert!(settled.load(std::sync::atomic::Ordering::SeqCst));
             assert!(!core.messageProcessingDelegate.isChatProcessing("route-chat"));
+            assert_eq!(core.messageProcessingDelegate.currentTurnToolInvocationCountByChatIdFlow().value()["route-chat"], 1);
             let next = database.store().beginChatExecution("route-chat").unwrap();
             next.release().unwrap();
         }
@@ -4058,6 +4064,23 @@ mod chat_deletion_tests {
         assert!(!core.messageProcessingDelegate.isChatProcessing("route-chat"));
         let next = database.store().beginChatExecution("route-chat").unwrap();
         next.release().unwrap();
+
+        // Independent chat updates must not replace another chat's accounting snapshot.
+        let mut first = core.messageProcessingDelegate.clone_for_core();
+        let mut second = core.messageProcessingDelegate.clone_for_core();
+        first.resetCurrentTurnToolInvocationCount("route-chat".into());
+        second.resetCurrentTurnToolInvocationCount("observer-chat".into());
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for _ in 0..1000 { first.incrementCurrentTurnToolInvocationCount("route-chat".into()); }
+            });
+            scope.spawn(|| {
+                for _ in 0..1000 { second.incrementCurrentTurnToolInvocationCount("observer-chat".into()); }
+            });
+        });
+        let counts = core.messageProcessingDelegate.currentTurnToolInvocationCountByChatIdFlow().value();
+        assert_eq!(counts["route-chat"], 1000);
+        assert_eq!(counts["observer-chat"], 1000);
     }
 }
 
