@@ -102,6 +102,7 @@ pub enum NetworkControlCommand {
     AdmitMember {
         nodeId: String,
     },
+    #[serde(deserialize_with = "deserializeSpaceAdmission")]
     AdmitSpace {
         sourceSpaceId: String,
         /// Each admitted device's initial identity in the target Space.
@@ -134,66 +135,33 @@ pub struct NetworkControlCommandRecord {
     pub commandId: String,
     pub spaceId: String,
     pub issuerNodeId: String,
-    #[serde(deserialize_with = "deserializeControlCommand")]
     pub command: NetworkControlCommand,
 }
 
-/// Normalize the published nodeIds format at the read boundary; stored operations stay immutable.
+/// Normalize only historical admissions; all other commands use the shared enum.
 #[allow(non_snake_case)]
-fn deserializeControlCommand<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<NetworkControlCommand, D::Error> {
-    // Decode fields directly. Building an intermediate JSON tree here duplicates
-    // policy payloads on every authorization check on constrained devices.
+fn deserializeSpaceAdmission<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<(String, BTreeMap<String, String>), D::Error> {
     fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(deserializer: D) -> Result<Option<T>, D::Error> {
         T::deserialize(deserializer).map(Some)
     }
     #[derive(Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    enum WireCommand {
-        Bootstrap { initialAdminNodeId: String },
-        DefineRole { role: NetworkControlRole },
-        UpdateRole { role: NetworkControlRole },
-        RemoveRole { roleId: String },
-        GrantRole { grant: NetworkControlIdentityAssignment },
-        RevokeRole { nodeId: String },
-        AdmitMember { nodeId: String },
-        AdmitSpace {
-            sourceSpaceId: String,
-            #[serde(default, deserialize_with = "present")] identities: Option<BTreeMap<String, String>>,
-            #[serde(default, deserialize_with = "present")] nodeIds: Option<BTreeSet<String>>,
-        },
-        RemoveMember { nodeId: String, #[serde(default)] revokedIncarnation: Option<String> },
-        LeaveSpace,
-        DisconnectNode { nodeId: String },
-        PolicyUpdate { policyId: String, value: String },
+    struct Admission {
+        sourceSpaceId: String,
+        #[serde(default, deserialize_with = "present")] identities: Option<BTreeMap<String, String>>,
+        #[serde(default, deserialize_with = "present")] nodeIds: Option<BTreeSet<String>>,
     }
-    Ok(match WireCommand::deserialize(deserializer)? {
-        WireCommand::Bootstrap { initialAdminNodeId } => NetworkControlCommand::Bootstrap { initialAdminNodeId },
-        WireCommand::DefineRole { role } => NetworkControlCommand::DefineRole { role },
-        WireCommand::UpdateRole { role } => NetworkControlCommand::UpdateRole { role },
-        WireCommand::RemoveRole { roleId } => NetworkControlCommand::RemoveRole { roleId },
-        WireCommand::GrantRole { grant } => NetworkControlCommand::GrantRole { grant },
-        WireCommand::RevokeRole { nodeId } => NetworkControlCommand::RevokeRole { nodeId },
-        WireCommand::AdmitMember { nodeId } => NetworkControlCommand::AdmitMember { nodeId },
-        WireCommand::AdmitSpace { sourceSpaceId, identities, nodeIds } => {
-            let identities = match (identities, nodeIds) {
-                (Some(identities), None) => identities,
-                (None, Some(nodes)) => {
-                    // Insert directly: bulk collection adds a temporary sorting
-                    // buffer and a separate sort implementation on small devices.
-                    let mut identities = BTreeMap::new();
-                    for node in nodes { identities.insert(node, "user".into()); }
-                    identities
-                },
-                (Some(_), Some(_)) => return Err(serde::de::Error::custom("Space admission cannot contain both nodeIds and identities")),
-                (None, None) => return Err(serde::de::Error::custom("Space admission requires identities")),
-            };
-            NetworkControlCommand::AdmitSpace { sourceSpaceId, identities }
+    let Admission { sourceSpaceId, identities, nodeIds } = Admission::deserialize(deserializer)?;
+    let identities = match (identities, nodeIds) {
+        (Some(identities), None) => identities,
+        (None, Some(nodes)) => {
+            let mut identities = BTreeMap::new();
+            for node in nodes { identities.insert(node, "user".into()); }
+            identities
         },
-        WireCommand::RemoveMember { nodeId, revokedIncarnation } => NetworkControlCommand::RemoveMember { nodeId, revokedIncarnation },
-        WireCommand::LeaveSpace => NetworkControlCommand::LeaveSpace,
-        WireCommand::DisconnectNode { nodeId } => NetworkControlCommand::DisconnectNode { nodeId },
-        WireCommand::PolicyUpdate { policyId, value } => NetworkControlCommand::PolicyUpdate { policyId, value },
-    })
+        (Some(_), Some(_)) => return Err(serde::de::Error::custom("Space admission cannot contain both nodeIds and identities")),
+        (None, None) => return Err(serde::de::Error::custom("Space admission requires identities")),
+    };
+    Ok((sourceSpaceId, identities))
 }
 
 /// Only decoded historical admissions retain the original join-only authorization.

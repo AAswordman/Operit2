@@ -221,7 +221,7 @@ impl Esp32Ui {
                 "screen" | "tree" => {
                     let text = if action == "screen" { operit_ui_debug_snapshot() } else { operit_ui_debug_tree() };
                     if text.is_null() { return Err("UI unavailable".into()); }
-                    serde_json::from_str(&CStr::from_ptr(text).to_string_lossy()).map_err(|e| e.to_string())
+                    serde_json::from_slice(CStr::from_ptr(text).to_bytes()).map_err(|e| e.to_string())
                 }
                 "draft" => { operit_ui_set_chat_draft(value.as_ptr()); Ok(serde_json::json!({"ok": true})) }
                 "tap" | "swipe" => {

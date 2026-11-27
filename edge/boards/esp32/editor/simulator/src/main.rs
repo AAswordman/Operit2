@@ -1,6 +1,8 @@
 #![allow(non_snake_case)]
 // Compile the actual firmware modules, including the same stream renderer.
 mod core_access;
+#[path = "../../../board/src/tcp.rs"]
+mod tcp;
 #[path = "../../../src/device_preferences.rs"]
 mod device_preferences;
 #[path = "../../../src/device_space_ui.rs"]
@@ -159,7 +161,7 @@ fn initialize(
     let discoveryEnabled = std::env::var("OPERIT_SIM_DISCOVERY")
         .map_or(true, |value| value != "false" && value != "0");
     let mut hostManager = operit_host_api::HostManager::HostManager::default()
-        .withTcpHost(Arc::new(operit_host_native_common::NativeTcpHost))
+        .withTcpHost(Arc::new(tcp::Esp32TcpHost))
         .withRuntimeStorageHost(storage.clone())
         .withHostRuntimeTaskSchedulerHost(scheduler.clone());
     if discoveryEnabled {

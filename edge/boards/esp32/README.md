@@ -103,9 +103,9 @@ container. Normal firmware updates preserve NVS and the reserved layout partitio
 Keep the matching ELF for crash address resolution.
 
 Measured on 2026-11-27, the complete Core text/audio application is
-2,556,128 bytes (2.44 MiB), down 40,656 bytes from the previous
-2,596,784-byte image. The unchanged application partition has 1,441,568 bytes
-free. The 1 MiB target remains unmet by 1,507,552 bytes. The fixed 4 MiB flash
+2,555,136 bytes (2.44 MiB), down 992 bytes from the previous
+2,556,128-byte image. The unchanged application partition has 1,442,560 bytes
+free. The 1 MiB target remains unmet by 1,506,560 bytes. The fixed 4 MiB flash
 container is not the application size.
 
 Node-local preferences reject transaction commit records and omit the replica
@@ -114,7 +114,8 @@ Ordered preference maps eliminate sorting copies before encoding. The storage
 edit and timeout paths share their implementations across callers. Link values
 use the existing MessagePack scanner with a bounded container stack; successful
 Call payloads move through metadata validation without rebuilding their trees.
-The native simulator's TCP buffer is heap-owned instead of occupying its task stack.
+The simulator reuses the board TCP adapter and its fallible 512-byte read buffer,
+including cancellation and close behavior, instead of a desktop 16 KiB buffer.
 Typed Link visitors decode only their requested data shapes; ignored fields
 already validated by the frame parser need no second traversal. Chat and device
 Space views use typed presentation records, avoiding JSON field lookup and
@@ -122,12 +123,16 @@ temporary arrays in the local UI. Private stream identifiers stay off the UI API
 Startup connects directly to the configured SSID, without an extra full scan
 whose results served only disabled logs. Unused device log calls, logger setup
 and UI metric queries have been removed; UI errors and USB health remain.
+Timeouts share one poll routine without boxing the operation or erasing its Send
+property across await; full Core HTTP directory builds remain supported. Historical
+Space admission decoding belongs to its enum variant, removing the duplicate
+command enum. Status JSON serializes the existing record directly; UI diagnostics
+parse C bytes without an intermediate string.
 
 Verification: final Xtensa release, ELF ABI, partition and C/Wasm packaging
-passed. Link: 62 passed; runtime without HTTP directories: 150 passed; persistence:
-editor: 109 passed; firmware-module simulation: 55 passed; TypeScript checks
-passed. Persistence's 373 passes (3 ignored) and the Core/Edge protocol fixture's
-46 passes are from the preceding revision.
+passed. Runtime without HTTP directories: 151 passed; Core/Edge admission: 46 passed;
+persistence: 373 passed (3 ignored); editor: 109 passed; firmware-module simulation:
+58 passed; TypeScript checks passed. Link's 62 passes are from the preceding revision.
 
 The Linux simulator passed a targeted real-TCP transport workflow against Core:
 pairing and approval, storage-full/interrupted-write recovery, 65-second PCM byte
@@ -135,10 +140,12 @@ volume, long recognition text, repeated audio rounds, playback backpressure,
 text streaming, long UTF-8 input, reconnect, restart and offline cancellation.
 The deterministic model and speech providers do not validate recognition quality.
 The workflow kept the 256 KiB heap and 16/24/20 KiB guarded task stacks; sampled
-peak heap was 227,664 bytes with zero allocation failures. Earlier runs exhausted
+peak heap was 203,360 bytes with zero allocation failures. Earlier runs exhausted
 the heap while expanding the editor IPC JSON output beside audio state. Output
-now grows fallibly in small blocks and serializes each reply once; the fixed
-heap and stack limits remain unchanged. The restart fixture waits for the
+now grows fallibly in small blocks and serializes each reply once. A later run
+exhausted the heap in the desktop TCP adapter's infallible 16 KiB allocation;
+reusing the board TCP adapter passed the same workflow with the fixed heap and
+stack limits unchanged. The restart fixture waits for the
 re-established authenticated carrier before cancelling a persisted request.
 Two bundled-plugin blocks were excluded only in the targeted run; their
 assertions remain in the full suite. The full workflow still fails when a Core market package reports a

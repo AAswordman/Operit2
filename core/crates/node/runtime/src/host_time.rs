@@ -1,6 +1,6 @@
 //! Peer operations use Host timers on both native executors and browser workers.
 use operit_host_api::{HostError, HostResult, HostRuntimeTurnFuture};
-use std::{future::Future, time::Duration};
+use std::{future::Future, pin::Pin, task::{Context, Poll}, time::Duration};
 
 pub(crate) async fn timeout<F: Future>(duration: Duration, operation: F) -> HostResult<F::Output> {
     let scheduler = operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost();
@@ -18,7 +18,6 @@ pub(crate) async fn withScheduler<F: Future>(
             .try_into()
             .map_err(|_| HostError::new("Peer timeout exceeds u64 milliseconds"))?,
     );
-    let operation: std::pin::Pin<Box<dyn Future<Output = F::Output> + '_>> = Box::pin(operation);
     timeoutWithDelay(operation, delay).await
 }
 
@@ -27,22 +26,36 @@ async fn timeoutWithDelay<F: Future>(
     mut delay: HostRuntimeTurnFuture,
 ) -> HostResult<F::Output> {
     let mut operation = std::pin::pin!(operation);
-    std::future::poll_fn(|context| {
-        if let std::task::Poll::Ready(value) = operation.as_mut().poll(context) {
-            return std::task::Poll::Ready(Ok(value));
-        }
-        match delay.as_mut().poll(context) {
-            std::task::Poll::Ready(result) => std::task::Poll::Ready(
-                result.and_then(|()| Err(HostError::timeout("Peer operation timed out")))),
-            std::task::Poll::Pending => std::task::Poll::Pending,
-        }
-    }).await
+    std::future::poll_fn(|context| pollTimeout(operation.as_mut(), &mut delay, context)).await
+}
+
+// Erase only during a poll; storing a dyn Future across await loses F's Send.
+#[inline(never)]
+fn pollTimeout<T>(
+    mut operation: Pin<&mut dyn Future<Output = T>>,
+    delay: &mut HostRuntimeTurnFuture,
+    context: &mut Context<'_>,
+) -> Poll<HostResult<T>> {
+    if let Poll::Ready(value) = operation.as_mut().poll(context) {
+        return Poll::Ready(Ok(value));
+    }
+    match delay.as_mut().poll(context) {
+        Poll::Ready(result) => Poll::Ready(
+            result.and_then(|()| Err(HostError::timeout("Peer operation timed out")))),
+        Poll::Pending => Poll::Pending,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::future::{pending, ready};
+
+    #[test]
+    fn movable_operation_keeps_timeout_movable() {
+        fn assert_send(_: impl Send) {}
+        assert_send(timeout(Duration::ZERO, ready(42)));
+    }
 
     #[tokio::test]
     async fn completed_operation_wins_over_elapsed_deadline() {
