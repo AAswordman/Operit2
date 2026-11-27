@@ -26,6 +26,8 @@ class OperitAgent(BaseAgent):
         self.cli_env = {
             "OPERIT_CLI_CONFIG_DIR": "/opt/operit-state/config",
             "OPERIT_CLI_SECRET_STORE": "file",
+            "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/opt/operit-state/system-bus",
+            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/opt/operit-state/session-bus",
         }
 
     # Identify the adapter in Harbor results.
@@ -58,6 +60,14 @@ class OperitAgent(BaseAgent):
         result = await environment.exec(command="tar -xzf /opt/operit-bundle.tar.gz -C /opt/operit")
         if result.return_code:
             raise RuntimeError(result.stderr)
+        daemon = "/opt/operit/lib/ld-linux-x86-64.so.2 --library-path /opt/operit/lib /opt/operit/dbus-daemon"
+        for bus in ("system-bus", "session-bus"):
+            result = await environment.exec(
+                command=daemon + " --config-file=/opt/operit/dbus.conf --fork --nopidfile "
+                + "--address=unix:path=/opt/operit-state/" + bus,
+            )
+            if result.return_code:
+                raise RuntimeError(f"Private D-Bus startup failed: {result.stderr}")
         storage = {
             "runtimeRoot": "/opt/operit-state/runtime",
             "workspaceRoot": "/opt/operit-state/workspaces",
@@ -73,10 +83,8 @@ class OperitAgent(BaseAgent):
         if result.return_code:
             raise RuntimeError(result.stderr)
         await self.cli(environment, "approval", "full")
-        bindings = await self.cli(environment, "model", "function-list")
-        for binding in bindings["bindings"]:
-            await self.cli(environment, "model", "function-set", binding["functionType"],
-                           self.provider_id, self.model_name)
+        await self.cli(environment, "model", "function-set", "CHAT", self.provider_id, self.model_name)
+        await self.cli(environment, "model", "function-follow-chat")
         await self.cli(environment, "model", "thinking", self.provider_id, self.model_name, self.thinking)
         workspace = await self.cli(environment, "workspace", "create", "Harbor task", "--native", "/app")
         chat = await self.cli(environment, "chat", "new", "--workspace", workspace["workspaceId"])

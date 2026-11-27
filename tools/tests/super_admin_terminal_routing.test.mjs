@@ -272,6 +272,59 @@ test('a running command returns control and can be observed without submitting i
   assert.ok(f.calls.filter(call => call.operation === 'wait').every(call => call.waitMs === 1000));
 });
 
+/** Keeps SDK scripts and internal metadata out of every AI receipt, including waits and saved output. */
+test('terminal AI results project execution data instead of forwarding SDK receipts', async () => {
+  const command = `cat <<'SCRIPT'\n${'PRIVATE_SCRIPT_BODY\n'.repeat(2000)}SCRIPT`;
+  for (const output of ['ok\n', '雪🌍\n'.repeat(4000)]) {
+    for (const timedOut of [false, true]) {
+      const f = managedFixture({output, timedOut});
+      const run = f.context.Tools.System.terminal.run;
+      f.context.Tools.System.terminal.run = async function(request) {
+        const receipt = await run.call(this, request);
+        receipt.internalMetadata = {command: request.command};
+        return receipt;
+      };
+      const first = await f.tools.terminal({command});
+      const session = f.sessions.get(first.sessionId);
+      assert.equal(session.receipt.command, command, 'The SDK receipt must retain the original script');
+      const waiting = await f.tools.terminal_wait({sessionId:first.sessionId});
+      session.commandRunning = false;
+      const completed = await f.tools.terminal_wait({sessionId:first.sessionId});
+      for (const result of [first, waiting, completed]) {
+        assert.equal(Object.hasOwn(result, 'command'), false);
+        assert.equal(Object.hasOwn(result, 'internalMetadata'), false);
+        assert.equal(JSON.stringify(result).includes('PRIVATE_SCRIPT_BODY'), false);
+        assert.equal(result.sessionId, first.sessionId);
+        assert.equal(result.platform, session.platform);
+        assert.equal(result.terminal, session.terminal);
+        assert.equal(result.terminalType, session.terminalType);
+        if (output.length > 12000) {
+          assert.equal(result.output, '(saved_to_file)');
+          assert.equal(result.output_chars, output.length);
+          assert.equal(f.files.get(result.output_saved_to), output);
+        } else {
+          assert.equal(result.output, output);
+        }
+      }
+      assert.equal(first.status, timedOut ? 'running' : 'completed');
+      assert.equal(first.exitCode, timedOut ? null : 0);
+      assert.equal(completed.status, 'completed');
+      assert.equal(completed.exitCode, 0);
+      assert.equal(completed.timedOut, false);
+      assert.equal(f.calls.filter(call => call.operation === 'observe').length, 1);
+    }
+  }
+});
+
+/** Preserves real command output even when it intentionally prints the submitted script. */
+test('terminal projection does not strip script text from actual stdout', async () => {
+  const command = 'printf "SCRIPT_OUTPUT"';
+  const f = managedFixture({output:command});
+  const result = await f.tools.terminal({command});
+  assert.equal(result.output, command);
+  assert.equal(Object.hasOwn(result, 'command'), false);
+});
+
 /** A pending original command must not prevent another tool from sending the input it needs. */
 test('input and screen remain independent from a pending command result wait', async () => {
   const f = managedFixture();

@@ -17,21 +17,11 @@ type TerminalInputParams = TerminalSessionParams & {
 };
 
 type PersistedTerminalOutput = {
-    command: string;
     output: string;
-    exitCode: unknown;
-    sessionId: unknown;
-    timedOut: boolean;
-    context_preserved: boolean;
     output_saved_to: string;
     output_chars: number;
     operit_clean_on_exit_dir: string;
     hint: string;
-    platform: string;
-    terminal: string;
-    terminalType: string;
-    terminalEnvironment?: unknown;
-    timeoutMsUsed?: number;
 };
 
 /* METADATA
@@ -267,10 +257,7 @@ const superAdmin = (function () {
     /**
      * Saves oversized terminal output to a temporary file and returns its summary.
      */
-    async function persistTerminalOutputIfTooLong(command: string, result: any): Promise<PersistedTerminalOutput | null> {
-        const outputStr = typeof result?.output === "string"
-            ? result.output
-            : String(result?.output ?? "");
+    async function persistTerminalOutputIfTooLong(outputStr: string): Promise<PersistedTerminalOutput | null> {
         if (outputStr.length <= MAX_INLINE_TERMINAL_OUTPUT_CHARS) {
             return null;
         }
@@ -280,27 +267,26 @@ const superAdmin = (function () {
         const filePath = `${OPERIT_CLEAN_ON_EXIT_DIR}/terminal_output_${timestamp}_${rand}.log`;
         await Tools.Files.write(filePath, outputStr, false);
         return {
-            command,
             output: "(saved_to_file)",
-            exitCode: result?.exitCode,
-            sessionId: result?.sessionId,
-            platform: result.platform,
-            terminal: result.terminal,
-            terminalType: result.terminalType,
-            timedOut: result?.timedOut === true,
-            context_preserved: false,
             output_saved_to: filePath,
             output_chars: outputStr.length,
             operit_clean_on_exit_dir: OPERIT_CLEAN_ON_EXIT_DIR,
             hint: "Output is large and saved to file. Use read_file_part or grep_code to inspect it.",
         };
     }
-    /** Returns an execution snapshot without treating a foreground wait expiry as command failure. */
+    /** Projects SDK receipts into AI results without echoing submitted scripts or internal fields. */
     async function commandResult(result: Awaited<ReturnType<typeof Tools.System.terminal.run>>) {
         const running = result.timedOut;
-        const persisted = await persistTerminalOutputIfTooLong(result.command, result);
+        const persisted = await persistTerminalOutputIfTooLong(result.output);
         return {
-            ...(persisted || result), command: result.command, exitCode: running ? null : result.exitCode,
+            sessionId: result.sessionId,
+            platform: result.platform,
+            terminal: result.terminal,
+            terminalType: result.terminalType,
+            output: result.output,
+            ...persisted,
+            exitCode: running ? null : result.exitCode,
+            timedOut: running,
             background: running, commandRunning: running, started: true,
             status: running ? "running" : "completed", context_preserved: false,
             message: running ? "命令仍在运行，可读屏、输入或用 terminal_wait 获取结果。不要重复提交原命令。" : "命令已完成。"

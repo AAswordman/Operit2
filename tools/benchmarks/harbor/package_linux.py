@@ -22,7 +22,10 @@ def main():
     library_dir.mkdir()
     shutil.copy2(binary, package / "operit2.real")
     subprocess.run(["strip", "--strip-unneeded", str(package / "operit2.real")], check=True)
+    daemon = Path(shutil.which("dbus-daemon")).resolve(strict=True)
+    shutil.copy2(daemon, package / "dbus-daemon")
     linked = subprocess.check_output(["ldd", str(binary)], text=True)
+    linked += subprocess.check_output(["ldd", str(daemon)], text=True)
     libraries = re.findall(r"(?:=>\s+|^\s*)(/[^\s]+)\s+\(", linked, re.MULTILINE)
     if not libraries or "not found" in linked:
         raise RuntimeError(f"Unresolved executable dependencies: {linked}")
@@ -35,6 +38,17 @@ def main():
     wrapper = package / "operit2"
     wrapper.write_text('#!/bin/sh\nexec /opt/operit/lib/ld-linux-x86-64.so.2 --library-path /opt/operit/lib /opt/operit/operit2.real "$@"\n')
     wrapper.chmod(0o755)
+    (package / "dbus.conf").write_text('''<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/opt/operit-state</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow own="*"/>
+    <allow send_destination="*"/>
+    <allow receive_sender="*"/>
+  </policy>
+</busconfig>
+''')
     manifest = {"binary_source": str(binary), "libraries": [Path(p).name for p in libraries],
                 "purpose": "Local Harbor smoke evaluation; install at /opt/operit"}
     (package / "manifest.json").write_text(json.dumps(manifest, indent=2))

@@ -64,6 +64,16 @@ observes the same original process for another bounded wait without submitting
 input. Expiry neither cancels the process nor reserves its input or screen.
 Startup, privilege IPC and writing a large output file are outside that budget.
 
+Super Admin projects SDK command receipts into an explicit AI result contract
+shared by `terminal` and `terminal_wait`: session identity, platform/interpreter,
+output, exit code and execution state. SDK receipts retain the original command
+for programmatic consumers, but the AI result never forwards that `command` or
+unlisted SDK fields. The submitted script already belongs to the tool call;
+returning it again on each observation needlessly duplicates it in model history.
+Oversized output is saved separately and returns its file reference and character
+count through the same contract. Actual stdout is preserved, including commands
+that intentionally print their own source; no content-based stripping is applied.
+
 Running processes remain Host-owned after the tool returns. After completion,
 the plugin's minute clock hook can close a session following ten minutes without
 plugin activity. Screen, input and result waits refresh activity. A command first
