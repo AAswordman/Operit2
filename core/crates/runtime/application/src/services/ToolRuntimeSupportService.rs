@@ -1114,14 +1114,10 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                 let outputDurationMs = firstOutputAtMs
                     .map(|first| (completedAtMs - first).max(0))
                     .unwrap_or(0);
-                let attribution = service
-                    .provider_runtime_context
-                    .support()
-                    .usageAttributionForProviderModel(&providerModel);
-                let (estimatedCost, currency) = match attribution.and_then(|a| a.modelPricing) {
+                let (estimatedCost, currency) = match modelConfig.pricing.as_ref() {
                     Some(pricing) => (
                         operit_model::ProviderQuota::calculate_model_cost(
-                            &pricing,
+                            pricing,
                             inputTokens,
                             cachedInputTokens,
                             cacheWriteTokens,

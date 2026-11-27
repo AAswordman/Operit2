@@ -207,40 +207,16 @@ impl TurnTokenUsage {
                 .firstOutputAtMs
                 .map(|first| (completedAtMs - first).max(0))
                 .unwrap_or(0);
-            let attribution = runtime.usageAttributionForProviderModel(providerModel);
-            let (providerId, keyFingerprint, estimatedCost, currency) = match attribution {
-                Some(info) => {
-                    let resolvedProviderId = if telemetry.providerId.is_empty() {
-                        info.providerId
-                    } else {
-                        telemetry.providerId.clone()
-                    };
-                    let resolvedFingerprint = if telemetry.keyFingerprint.is_empty() {
-                        info.keyFingerprint
-                    } else {
-                        telemetry.keyFingerprint.clone()
-                    };
-                    let (cost, curr) = match info.modelPricing.as_ref() {
-                        Some(pricing) => (
-                            calculate_model_cost(
-                                pricing,
-                                tokens.input,
-                                tokens.cached_input,
-                                extended.cache_write_input,
-                                tokens.output,
-                            ),
-                            pricing_currency_code(&pricing.currency).to_string(),
-                        ),
-                        None => (0.0, String::new()),
-                    };
-                    (resolvedProviderId, resolvedFingerprint, cost, curr)
-                }
-                None => (
-                    telemetry.providerId.clone(),
-                    telemetry.keyFingerprint.clone(),
-                    0.0,
-                    String::new(),
+            let pricing = providerModel.split_once(':')
+                .and_then(|(_, modelId)| runtime.resolvedModelConfig(&telemetry.providerId, modelId).ok())
+                .and_then(|config| config.pricing);
+            let (estimatedCost, currency) = match pricing.as_ref() {
+                Some(pricing) => (
+                    calculate_model_cost(pricing, tokens.input, tokens.cached_input,
+                        extended.cache_write_input, tokens.output),
+                    pricing_currency_code(&pricing.currency).to_string(),
                 ),
+                None => (0.0, String::new()),
             };
             UsageStatisticsStore::new()
                 .recordProviderModelRequestDetailed(UsageRequestCapture {
@@ -258,9 +234,9 @@ impl TurnTokenUsage {
                     totalDurationMs,
                     status: telemetry.status,
                     originNodeId: String::new(),
-                    providerId,
+                    providerId: telemetry.providerId.clone(),
                     keyId: telemetry.keyId.clone(),
-                    keyFingerprint,
+                    keyFingerprint: telemetry.keyFingerprint.clone(),
                     estimatedCost,
                     currency,
                     stream: telemetry.stream,

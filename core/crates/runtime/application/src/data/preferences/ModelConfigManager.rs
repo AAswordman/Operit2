@@ -156,7 +156,6 @@ impl ModelConfigManager {
     pub fn default() -> Self {
         let storage = operit_store::RuntimeStorageHost::defaultRuntimeStorageHost();
         Self {
-            storage: storage.clone(),
             keyPoolState: keyPoolState(&storage),
             modelConfigDataStore: Self::preferenceStore(storage.clone(), operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH),
             connectionTestDataStore: CoreNodeStateStore::newWithStorage(storage.clone(), operit_util::RuntimeStorageLayout::RUNTIME_MODEL_CONNECTION_TESTS_PATH),

@@ -28,7 +28,6 @@ pub(crate) enum PeerSyncMethod {
     SyncBlobExists,
     SyncReadBlobChunk,
     SyncApplyImmediateBindingOperation,
-    ProbeProviderQuota,
 }
 
 impl PeerSyncMethod {
@@ -75,7 +74,6 @@ impl PeerSyncMethod {
         match method {
             Self::SyncReadSnapshot | Self::SyncReadCoverage => { let _: ReadSnapshot = operit_link::fromCoreValue(request.args.clone()).map_err(|e| CoreLinkError::new("PEER_SYNC_INVALID_SNAPSHOT", e.to_string()))?; },
             Self::SyncRepairSnapshot => { let _: RepairSnapshot = operit_link::fromCoreValue(request.args.clone()).map_err(|e| CoreLinkError::new("PEER_SYNC_INVALID_SNAPSHOT", e.to_string()))?; },
-            Self::ProbeProviderQuota => { let _: String = operit_link::fromCoreValue(request.args.clone()).map_err(|e| CoreLinkError::new("PEER_SYNC_INVALID_ARGS", e.to_string()))?; },
             _ => {},
         }
         Ok(method)
@@ -140,7 +138,6 @@ mod tests {
             PeerSyncMethod::SyncBlobExists,
             PeerSyncMethod::SyncReadBlobChunk,
             PeerSyncMethod::SyncApplyImmediateBindingOperation,
-            PeerSyncMethod::ProbeProviderQuota,
         ] {
             let request = method.request(
                 "test".into(),

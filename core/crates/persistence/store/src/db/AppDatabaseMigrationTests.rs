@@ -212,6 +212,7 @@ fn opening_version27_atomically_upgrades_records_and_reopens_current_version() {
     drop(old);
     let database = AppDatabase::getDatabase(paths.clone()).unwrap();
     assert_eq!(database.store.getUserVersion().unwrap(), DATABASE_VERSION);
+    expected.insert("usage_reset_watermark".into(), Vec::new());
     assert_eq!(tableRows(&database.store), expected);
     assert_eq!(
         database
@@ -503,4 +504,22 @@ fn version30_usage_metrics_migration_preserves_rows_and_adds_columns() {
         assert!(columns.iter().any(|column| column == expected), "missing {expected}");
     }
     assert!(database.store.queryRows("PRAGMA foreign_key_check", Vec::new()).unwrap().is_empty());
+}
+
+/// Preserves telemetry while adding the persistent reset boundary to a version-31 database.
+#[test]
+fn version31_usage_reset_migration_preserves_existing_rows() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_, database) = version27Database("database-v31-reset-upgrade");
+    MIGRATION_27_28(&database).unwrap();
+    MIGRATION_28_29(&database).unwrap();
+    MIGRATION_29_30(&database).unwrap();
+    MIGRATION_30_31(&database).unwrap();
+    let before = tableRows(&database.store);
+    MIGRATION_31_32(&database).unwrap();
+    assert_eq!(database.store.getUserVersion().unwrap(), 32);
+    let mut after = tableRows(&database.store);
+    assert!(after.remove("usage_reset_watermark").unwrap().is_empty());
+    assert_eq!(after, before);
+    assert!(database.store.queryRows("SELECT beforeMs FROM usage_reset_watermark", Vec::new()).unwrap().is_empty());
 }

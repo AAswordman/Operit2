@@ -216,14 +216,7 @@ impl UsageStatisticsStore {
             }
             UsageResetScope::ALL_DEVICES_IN_SPACE => {
                 let beforeMs = currentTimeMillis();
-                database
-                    .store()
-                    .execute("DELETE FROM usage_request_records", sqliteParams![])
-                    .map_err(|error| error.to_string())?;
-                database
-                    .store()
-                    .execute("DELETE FROM token_usage_records", sqliteParams![])
-                    .map_err(|error| error.to_string())?;
+                applyUsageReset(&database, beforeMs)?;
                 publishUsageResetOperation(&database, beforeMs)?;
             }
         }
@@ -494,38 +487,25 @@ impl UsageStatisticsStore {
             stream: capture.stream,
         };
         let database = AppDatabase::default().map_err(|error| error.to_string())?;
-        insertOrReplaceRequestRecord(&database, &record)?;
-        if record.status == UsageRequestStatus::COMPLETED
-            || record.inputTokens > 0
-            || record.outputTokens > 0
-        {
-            self.recordTokenUsage(
-                None,
-                Some(record.createdAtMs),
-                String::new(),
-                record.provider.clone(),
-                record.modelName.clone(),
-                1,
-                Some((record.inputTokens - record.cachedInputTokens).max(0)),
-                Some(record.cachedInputTokens),
-                Some(0),
-                Some(record.inputTokens),
-                Some(record.outputTokens),
-            )?;
-        }
+        insertOrReplaceRequestRecord(&database, &record, true)?;
         publishUsageUpsertOperation(&database, &record)?;
         Ok(record)
     }
 }
 
+/// Writes telemetry and its optional local ledger row under the same reset boundary.
 #[allow(non_snake_case)]
 fn insertOrReplaceRequestRecord(
     database: &AppDatabase,
     record: &UsageRequestRecord,
+    includeLedger: bool,
 ) -> Result<(), String> {
-    database
-        .store()
-        .execute(
+    database.store().transaction(|transaction| {
+        let watermark = transaction.queryOne("SELECT beforeMs FROM usage_reset_watermark WHERE id = 1", sqliteParams![])?;
+        if let Some(row) = watermark {
+            if record.createdAtMs <= row.get::<_, i64>("beforeMs")? { return Ok(()); }
+        }
+        transaction.execute(
             r#"
             INSERT OR REPLACE INTO usage_request_records (
                 id, createdAtMs, providerModel, provider, modelName,
@@ -570,9 +550,18 @@ fn insertOrReplaceRequestRecord(
                 record.currency.clone(),
                 if record.stream { 1i64 } else { 0i64 },
             ],
-        )
-        .map_err(|error| error.to_string())?;
-    Ok(())
+        )?;
+        if includeLedger && (record.status == UsageRequestStatus::COMPLETED
+            || record.inputTokens > 0 || record.outputTokens > 0) {
+            transaction.execute(
+                "INSERT INTO token_usage_records (occurredAtMs, configId, provider, model, requestCount, uncachedInputTokens, cachedInputTokens, cacheWriteTokens, totalInputTokens, outputTokens) VALUES (?1, '', ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8)",
+                sqliteParams![record.createdAtMs, record.provider.clone(), record.modelName.clone(),
+                    (record.inputTokens - record.cachedInputTokens).max(0), record.cachedInputTokens,
+                    record.cacheWriteTokens, record.inputTokens, record.outputTokens],
+            )?;
+        }
+        Ok(())
+    }).map_err(|error| error.to_string())
 }
 
 #[allow(non_snake_case)]
@@ -635,6 +624,16 @@ fn publishUsageResetOperation(database: &AppDatabase, beforeMs: i64) -> Result<(
     Ok(())
 }
 
+/// Advances the deletion boundary and removes its covered rows in one transaction.
+fn applyUsageReset(database: &AppDatabase, beforeMs: i64) -> Result<(), String> {
+    database.store().transaction(|transaction| {
+        transaction.execute("INSERT INTO usage_reset_watermark (id, beforeMs) VALUES (1, ?1) ON CONFLICT(id) DO UPDATE SET beforeMs = MAX(beforeMs, excluded.beforeMs)", sqliteParams![beforeMs])?;
+        transaction.execute("DELETE FROM usage_request_records WHERE createdAtMs <= (SELECT beforeMs FROM usage_reset_watermark WHERE id = 1)", sqliteParams![])?;
+        transaction.execute("DELETE FROM token_usage_records WHERE occurredAtMs <= (SELECT beforeMs FROM usage_reset_watermark WHERE id = 1)", sqliteParams![])?;
+        Ok(())
+    }).map_err(|error| error.to_string())
+}
+
 /// Applies one synchronized Space operation in the `usage` domain.
 #[allow(non_snake_case)]
 pub fn applySyncedUsageOperation(operation: &SyncOperation) -> Result<(), String> {
@@ -646,7 +645,7 @@ pub fn applySyncedUsageOperation(operation: &SyncOperation) -> Result<(), String
         (USAGE_SYNC_ENTITY_TYPE, "upsert") => {
             let record: UsageRequestRecord = serde_json::from_value(operation.payload.clone())
                 .map_err(|error| error.to_string())?;
-            insertOrReplaceRequestRecord(&database, &record)?;
+            insertOrReplaceRequestRecord(&database, &record, false)?;
             Ok(())
         }
         (USAGE_SYNC_ENTITY_TYPE, "delete") => {
@@ -665,20 +664,7 @@ pub fn applySyncedUsageOperation(operation: &SyncOperation) -> Result<(), String
                 .get("beforeMs")
                 .and_then(serde_json::Value::as_i64)
                 .ok_or_else(|| "usage reset_watermark missing beforeMs".to_string())?;
-            database
-                .store()
-                .execute(
-                    "DELETE FROM usage_request_records WHERE createdAtMs <= ?1",
-                    sqliteParams![beforeMs],
-                )
-                .map_err(|error| error.to_string())?;
-            database
-                .store()
-                .execute(
-                    "DELETE FROM token_usage_records WHERE occurredAtMs <= ?1",
-                    sqliteParams![beforeMs],
-                )
-                .map_err(|error| error.to_string())?;
+            applyUsageReset(&database, beforeMs)?;
             Ok(())
         }
         (entityType, opName) => Err(format!(
@@ -877,7 +863,7 @@ mod tests {
     #[test]
     fn detailed_usage_record_roundtrips_and_sync_watermark_clears() {
         let _guard = DATABASE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        let (_paths, _db, _sync) = openTestStore("usage-store");
+        let (_paths, db, _sync) = openTestStore("usage-store");
         let store = UsageStatisticsStore::new();
         let recorded = store
             .recordProviderModelRequestDetailed(UsageRequestCapture {
@@ -909,6 +895,7 @@ mod tests {
         assert_eq!(all[0].outputDurationMs, 2000);
         assert_eq!(all[0].originNodeId, "node-alpha");
         assert!(all[0].stream);
+        assert_eq!(store.getAllTokenUsageRecords().unwrap()[0].cacheWriteTokens, Some(40));
 
         let peerRecord = UsageRequestRecord {
             id: "peer-record-1".to_string(),
@@ -947,6 +934,25 @@ mod tests {
         })
         .unwrap();
         assert!(store.getAllRequestRecords().unwrap().is_empty());
+
+        // Replays of old records and older resets must not restore deleted telemetry.
+        insertOrReplaceRequestRecord(&db, &peerRecord, false).unwrap();
+        insertOrReplaceRequestRecord(&db, &recorded, true).unwrap();
+        applyUsageReset(&db, recorded.createdAtMs - 1).unwrap();
+        assert!(store.getAllRequestRecords().unwrap().is_empty());
+        assert!(store.getAllTokenUsageRecords().unwrap().is_empty());
+        let newer = UsageRequestRecord {
+            id: "after-reset".into(), createdAtMs: peerRecord.createdAtMs + 1,
+            ..peerRecord.clone()
+        };
+        insertOrReplaceRequestRecord(&db, &newer, true).unwrap();
+        assert_eq!(store.getAllRequestRecords().unwrap(), vec![newer]);
+        assert_eq!(store.getAllTokenUsageRecords().unwrap().len(), 1);
+        AppDatabase::closeDatabase();
+        let reopened = AppDatabase::default().unwrap();
+        insertOrReplaceRequestRecord(&reopened, &recorded, true).unwrap();
+        assert_eq!(store.getAllRequestRecords().unwrap().len(), 1);
+        assert_eq!(store.getAllTokenUsageRecords().unwrap().len(), 1);
 
         AppDatabase::closeDatabase();
     }

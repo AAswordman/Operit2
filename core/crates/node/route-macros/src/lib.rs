@@ -13,9 +13,10 @@ struct CoreRouteArguments {
 }
 
 impl Parse for CoreRouteArguments {
-    /// Parses the binding identifier owned by one routed method annotation.
+    /// Parses the address argument and permission owned by one routed method annotation.
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut binding = None;
+        let mut target = None;
         let mut permission = None;
         let mut sdk = false;
         let mut create_binding = None;
@@ -24,6 +25,9 @@ impl Parse for CoreRouteArguments {
             if name == "binding" {
                 input.parse::<Token![=]>()?;
                 binding = Some(input.parse::<Ident>()?);
+            } else if name == "target" {
+                input.parse::<Token![=]>()?;
+                target = Some(input.parse::<Ident>()?);
             } else if name == "permission" {
                 input.parse::<Token![=]>()?;
                 permission = Some(input.parse::<LitStr>()?);
@@ -35,14 +39,20 @@ impl Parse for CoreRouteArguments {
             } else {
                 return Err(Error::new(
                     name.span(),
-                    "expected `binding = argument`, `permission = \"scope:capability\"`, or `sdk`",
+                    "expected `binding = argument`, `target = argument`, `permission = \"scope:capability\"`, or `sdk`",
                 ));
             }
             if input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
             }
         }
-        let binding = binding.ok_or_else(|| input.error("missing `binding = argument`"))?;
+        if binding.is_some() && target.is_some() {
+            return Err(input.error("choose either `binding` or `target`"));
+        }
+        if target.is_some() && create_binding.is_some() {
+            return Err(input.error("node routes cannot create bindings"));
+        }
+        let binding = binding.or(target).ok_or_else(|| input.error("missing `binding = argument` or `target = argument`"))?;
         if let Some(permission) = &permission {
             validate_permission(permission)?;
         }

@@ -61,17 +61,10 @@ class _UsageQuotaCenterSectionState extends State<UsageQuotaCenterSection> {
     if (_probingIds.contains(providerId)) return;
     setState(() => _probingIds.add(providerId));
     try {
-      if (targetNodeId != null && targetNodeId.isNotEmpty) {
-        await widget.clients.serverRuntimeRemoteLinkService
-            .probeProviderQuotaOnNode(
-              providerId: providerId,
-              targetNodeId: targetNodeId,
-            );
-      } else {
-        await widget.clients.servicesProviderQuotaService.probeProviderQuota(
-          providerId: providerId,
-        );
-      }
+      await widget.clients.servicesProviderQuotaService.refreshProviderQuota(
+        providerId: providerId,
+        targetNodeId: targetNodeId,
+      );
       await widget.onStateUpdated();
     } catch (error) {
       if (mounted) _showSnack('$error');

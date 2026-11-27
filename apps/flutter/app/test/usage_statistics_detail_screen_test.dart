@@ -958,8 +958,7 @@ class _UsageStatisticsBridge extends OperitRuntimeBridge {
             'probeConfigs': _savedConfigs.values.toList(),
           },
         ]);
-      case 'probeProviderQuota':
-      case 'probeProviderQuotaOnNode':
+      case 'refreshProviderQuota':
         probeCount++;
         return encodeCoreLink(<Object?>[0, _mockSnapshots.first]);
       case 'probeAllProviders':

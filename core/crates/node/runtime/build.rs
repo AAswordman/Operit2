@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use syn::{Expr, ImplItem, Item, Lit, Meta, ReturnType, Type};
 
-type RouteDeclaration = (String, String, String, String, String, String, String, String, String, bool);
+type RouteDeclaration = (String, String, String, String, String, String, String, String, String, bool, bool);
 
 #[path = "build_support/peer_protocol.rs"]
 mod peer_protocol;
@@ -103,6 +103,9 @@ fn collect_routes(
                 Some(quote::quote!(#ty).to_string())
             }).unwrap_or_default();
             let routeKind = if reverseItem.is_empty() { route_kind(&function.sig.output) } else { "push".to_string() };
+            if route_is_node(&function.attrs) {
+                assert!(routeKind == "call" && owned_output.is_some(), "Node-addressed service routes must return an owned call future");
+            }
             let (permissionScope, permissionCapability) = route_permission(&function.attrs)
                 .unwrap_or_else(|| ("Caller".to_string(), String::new()));
             let lifecycle = route_lifecycle(&function.attrs);
@@ -117,6 +120,7 @@ fn collect_routes(
                 route_creation(&function.attrs),
                 reverseItem,
                 owned_output.is_some(),
+                route_is_node(&function.attrs),
             ));
         }
     }
@@ -125,7 +129,7 @@ fn collect_routes(
 /// Encodes sorted route data independently of generated dispatch source text.
 fn route_contract(declarations: &BTreeSet<RouteDeclaration>, signatures: &BTreeSet<String>) -> String {
     assert!(!declarations.is_empty(), "Protocol fingerprint must cover annotated routes");
-    let wire = declarations.iter().map(|(a,b,c,d,e,f,g,h,i,_)| (a,b,c,d,e,f,g,h,i)).collect::<BTreeSet<_>>();
+    let wire = declarations.iter().map(|(a,b,c,d,e,f,g,h,i,_,node)| (a,b,c,d,e,f,g,h,i,node)).collect::<BTreeSet<_>>();
     serde_json::to_string(&(wire, signatures)).expect("encode route contract")
 }
 
@@ -195,6 +199,13 @@ fn route_creation(attributes: &[syn::Attribute]) -> String {
     String::new()
 }
 
+/// Identifies explicitly node-addressed business routes without allocating bindings.
+fn route_is_node(attributes: &[syn::Attribute]) -> bool {
+    attributes.iter().filter(|a| a.path().segments.last().is_some_and(|s| s.ident == "operit_core_route"))
+        .any(|a| a.parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+            .is_ok_and(|args| args.iter().any(|arg| matches!(arg, Meta::NameValue(v) if v.path.is_ident("target")))))
+}
+
 /// Extracts the binding argument from one route annotation.
 fn route_binding(attributes: &[syn::Attribute]) -> Option<String> {
     let attribute = attributes.iter().find(|attribute| {
@@ -215,7 +226,7 @@ fn route_binding(attributes: &[syn::Attribute]) -> Option<String> {
     arguments.into_iter().find_map(|argument| {
         let Meta::NameValue(argument) = argument else { return None; };
         let argument_name = argument.path.segments.last()?.ident.to_string();
-        if argument_name != "binding" {
+        if argument_name != "binding" && argument_name != "target" {
             return None;
         }
         let Expr::Path(expression) = argument.value else {
@@ -326,37 +337,37 @@ fn render_route_catalog(
     output.push_str("/// Resolves one annotation-generated Space route by its wire route ID.\n");
     output.push_str("pub fn generated_space_route_for_id(routeId: &str, methodName: &str) -> Option<GeneratedSpaceRoute> {\n");
     output.push_str("    match (routeId, methodName) {\n");
-    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability, createBindingCapability, _reverseItem, _owned) in
+    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability, createBindingCapability, _reverseItem, _owned, _node) in
         declarations
     {
         let routeId = format!("space/{targetType}/{method}");
         output.push_str(&format!(
-            "        ({routeId:?}, {method:?}) => Some(GeneratedSpaceRoute {{ routeId: {routeId:?}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, permissionScope: GeneratedRoutePermissionSubject::{permissionScope}, permissionCapability: {permissionCapability:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle}, createBindingCapability: {createBindingCapability:?} }}),\n"
+            "        ({routeId:?}, {method:?}) => Some(GeneratedSpaceRoute {{ routeId: {routeId:?}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, permissionScope: GeneratedRoutePermissionSubject::{permissionScope}, permissionCapability: {permissionCapability:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle}, createBindingCapability: {createBindingCapability:?}, nodeAddressed: {_node} }}),\n"
         ));
     }
     output.push_str("        _ => None,\n    }\n}\n\n");
     output.push_str("/// Resolves one internal annotation route without a Proxy object address.\n");
     output.push_str("pub fn generated_space_route_for_method(methodName: &str) -> Option<GeneratedSpaceRoute> {\n");
     output.push_str("    match methodName {\n");
-    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability, createBindingCapability, _reverseItem, _owned) in
+    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability, createBindingCapability, _reverseItem, _owned, _node) in
         declarations
     {
         let routeId = format!("space/{targetType}/{method}");
         output.push_str(&format!(
-            "        {method:?} => Some(GeneratedSpaceRoute {{ routeId: {routeId:?}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, permissionScope: GeneratedRoutePermissionSubject::{permissionScope}, permissionCapability: {permissionCapability:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle}, createBindingCapability: {createBindingCapability:?} }}),\n"
+            "        {method:?} => Some(GeneratedSpaceRoute {{ routeId: {routeId:?}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, permissionScope: GeneratedRoutePermissionSubject::{permissionScope}, permissionCapability: {permissionCapability:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle}, createBindingCapability: {createBindingCapability:?}, nodeAddressed: {_node} }}),\n"
         ));
     }
     output.push_str("        _ => None,\n    }\n}\n\n");
     output.push_str("/// Resolves the generated Space route registered for one lifecycle hook.\n");
     output.push_str("pub fn generated_space_lifecycle_route(lifecycle: GeneratedRouteLifecycle) -> Option<GeneratedSpaceRoute> {\n");
     output.push_str("    match lifecycle {\n");
-    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability, createBindingCapability, _reverseItem, _owned) in
+    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability, createBindingCapability, _reverseItem, _owned, _node) in
         declarations
     {
         let routeId = format!("space/{targetType}/{method}");
         if lifecycle != "Normal" {
             output.push_str(&format!(
-                "        GeneratedRouteLifecycle::{lifecycle} => Some(GeneratedSpaceRoute {{ routeId: {routeId:?}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, permissionScope: GeneratedRoutePermissionSubject::{permissionScope}, permissionCapability: {permissionCapability:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle}, createBindingCapability: {createBindingCapability:?} }}),\n"
+                "        GeneratedRouteLifecycle::{lifecycle} => Some(GeneratedSpaceRoute {{ routeId: {routeId:?}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, permissionScope: GeneratedRoutePermissionSubject::{permissionScope}, permissionCapability: {permissionCapability:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle}, createBindingCapability: {createBindingCapability:?}, nodeAddressed: {_node} }}),\n"
             ));
         }
     }
@@ -373,24 +384,18 @@ fn render_route_catalog(
         "/// Resolves one annotation-generated Space route from a standard Link push request.\n",
     );
     output.push_str("pub fn generated_space_push_route(request: &operit_link::CorePushRequest) -> Option<GeneratedSpaceRoute> { let route = if request.target == operit_link::CORE_INTERNAL_TARGET { generated_space_route_for_method(&request.methodName) } else { generated_space_route_for_id(&request.target, &request.methodName) }?; match route.methodName {\n");
-    for (method, _, _, kind, _, _, _, _, _, _owned) in declarations {
+    for (method, _, _, kind, _, _, _, _, _, _owned, _node) in declarations {
         if kind == "push" { output.push_str(&format!("{method:?} => Some(route),\n")); }
     }
     output.push_str("_ => None, } }\n\n");
     output
         .push_str("/// Resolves one request using route declarations from runtime annotations.\n");
     output.push_str("fn generated_route_for_request(methodName: &str, args: &operit_link::CoreValue) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> {\n");
-    output.push_str("    let bindingArgument = match methodName {\n");
-    for (method, binding, _, _, _, _, _, _, _, _owned) in declarations {
-        output.push_str(&format!("        {method:?} => Some({binding:?}),\n"));
+    output.push_str("    match methodName {\n");
+    for (method, argument, _, _, _, _, _, _, _, _, node) in declarations {
+        output.push_str(&format!("        {method:?} => resolveRouteArgument(args, {argument:?}, {node}),\n"));
     }
-    output.push_str("        _ => None,\n    };\n");
-    output.push_str("    let Some(bindingArgument) = bindingArgument else { return Ok(GeneratedCoreRoute::Local); };\n");
-    output.push_str("    let operit_link::CoreValue::Map(arguments) = args else { return Err(operit_link::CoreLinkError::new(\"INVALID_ARGS\", \"Binding request arguments must be a map\")); };\n");
-    output.push_str("    let Some(value) = arguments.get(bindingArgument) else { return Err(operit_link::CoreLinkError::new(\"CORE_BINDING_KEY_REQUIRED\", \"Binding request does not include its required key\")); };\n");
-    output.push_str("    let key = match value {\n        operit_link::CoreValue::String(key) => key,\n        operit_link::CoreValue::Null => return Ok(GeneratedCoreRoute::Local),\n        _ => return Err(operit_link::CoreLinkError::new(\"CORE_BINDING_KEY_INVALID\", \"Binding key must be a string\")),\n    };\n");
-    output.push_str("    if key.trim().is_empty() { return Err(operit_link::CoreLinkError::new(\"CORE_BINDING_KEY_REQUIRED\", \"Binding requires a non-empty key\")); }\n");
-    output.push_str("    Ok(GeneratedCoreRoute::Binding { scope: 0, key: key.clone() })\n}\n\n");
+    output.push_str("        _ => Ok(GeneratedCoreRoute::Local),\n    }\n}\n\n");
     output.push_str(
         "/// Resolves one call request using route declarations from runtime annotations.\n",
     );
@@ -414,14 +419,17 @@ fn render_space_dispatch(
     let mut output = String::new();
     output.push_str("/// Identifies operations with an explicit owned future contract.\n");
     output.push_str("pub fn generated_space_call_is_owned(method: &str) -> bool { match method {\n");
-    for (method, _, _, kind, _, _, _, _, _, owned) in declarations {
+    for (method, _, _, kind, _, _, _, _, _, owned, node) in declarations {
         if kind == "call" && *owned { output.push_str(&format!("{method:?} => true,\n")); }
     }
     output.push_str("_ => false } }\n");
     output.push_str("/// Captures an operation without retaining the shared chat runtime.\n");
     output.push_str("pub fn generated_space_capture_call(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreCallRequest) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<operit_link::CoreValue, operit_link::CoreLinkError>> + 'static>> { match request.methodName.as_str() {\n");
-    for (method, _, _, kind, _, _, _, _, _, owned) in declarations {
-        if kind == "call" && *owned { output.push_str(&format!("{method:?} => Box::pin(core.__operit_core_route_call_{method}(request)),\n")); }
+    for (method, _, target, kind, _, _, _, _, _, owned, node) in declarations {
+        if kind == "call" && *owned {
+            let receiver = if *node { format!("{target}::getInstance()") } else { "core".into() };
+            output.push_str(&format!("{method:?} => Box::pin({receiver}.__operit_core_route_call_{method}(request)),\n"));
+        }
     }
     output.push_str("_ => Box::pin(async move { Err(operit_link::CoreLinkError::methodNotFound(&request.methodName)) }) } }\n");
     output.push_str(
@@ -429,16 +437,16 @@ fn render_space_dispatch(
     );
     output.push_str("pub async fn generated_space_call_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreCallRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {\n");
     output.push_str("    match request.methodName.as_str() {\n");
-    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem, _owned) in declarations {
-        if routeKind == "call" {
+    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem, _owned, _node) in declarations {
+        if routeKind == "call" && !*_node {
             output.push_str(&format!(
                 "        {method:?} => Box::pin(generated_space_call_on_chat_core_{method}(core, request)).await,\n"
             ));
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::methodNotFound(&request.registryKey())),\n    }\n}\n\n");
-    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem, _owned) in declarations {
-        if routeKind == "call" {
+    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem, _owned, _node) in declarations {
+        if routeKind == "call" && !*_node {
             output.push_str(&format!(
                 "/// Dispatches one generated Space call method on the runtime's main ChatServiceCore.\nasync fn generated_space_call_on_chat_core_{method}(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreCallRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {{\n    core.__operit_core_route_call_{method}(request).await\n}}\n\n"
             ));
@@ -449,13 +457,13 @@ fn render_space_dispatch(
     );
     output.push_str("pub async fn generated_space_watch_snapshot_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: &operit_link::CoreWatchRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {\n");
     output.push_str("    match request.propertyName.as_str() {\n");
-    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem, _owned) in declarations {
+    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem, _owned, _node) in declarations {
         if routeKind == "watch" {
             output.push_str(&format!("        {method:?} => Box::pin(generated_space_watch_snapshot_on_chat_core_{method}(core, request)).await,\n"));
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&request.registryKey())),\n    }\n}\n\n");
-    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem, _owned) in declarations {
+    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem, _owned, _node) in declarations {
         if routeKind == "watch" {
             output.push_str(&format!(
                 "/// Reads one generated Space watch snapshot method on the runtime's main ChatServiceCore.\nasync fn generated_space_watch_snapshot_on_chat_core_{method}(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: &operit_link::CoreWatchRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {{\n    core.__operit_core_route_watch_snapshot_{method}(request).await\n}}\n\n"
@@ -465,7 +473,7 @@ fn render_space_dispatch(
     output.push_str("/// Opens one generated Space watch on the runtime's main ChatServiceCore.\n");
     output.push_str("pub async fn generated_space_watch_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreWatchRequest, attachmentAdopter: std::sync::Arc<dyn Fn(Vec<operit_link::CoreStreamAttachment>) + Send + Sync>) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {\n");
     output.push_str("    match request.propertyName.as_str() {\n");
-    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem, _owned) in declarations {
+    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem, _owned, _node) in declarations {
         if routeKind == "watch" {
             output.push_str(&format!(
                 "        {method:?} => Box::pin(generated_space_watch_on_chat_core_{method}(core, request, attachmentAdopter)).await,\n"
@@ -473,7 +481,7 @@ fn render_space_dispatch(
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&request.registryKey())),\n    }\n}\n\n");
-    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem, _owned) in declarations {
+    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem, _owned, _node) in declarations {
         if routeKind == "watch" {
             output.push_str(&format!(
                 "/// Opens one generated Space watch method on the runtime's main ChatServiceCore.\nasync fn generated_space_watch_on_chat_core_{method}(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreWatchRequest, attachmentAdopter: std::sync::Arc<dyn Fn(Vec<operit_link::CoreStreamAttachment>) + Send + Sync>) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {{\n    core.__operit_core_route_watch_{method}(request, attachmentAdopter).await\n}}\n\n"
@@ -482,7 +490,7 @@ fn render_space_dispatch(
     }
     output.push_str("/// Opens an annotated, authorized Space input on the existing main chat runtime.\n");
     output.push_str("pub fn generated_space_push_on_chat_core(holder: std::sync::Arc<tokio::sync::Mutex<operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder>>, request: operit_link::CorePushRequest) -> Result<Box<dyn operit_link::CoreLinkPushSession>, operit_link::CoreLinkError> {\n    match request.methodName.as_str() {\n");
-    for (method, _, _, routeKind, _, _, _, _, item, owned) in declarations {
+    for (method, _, _, routeKind, _, _, _, _, item, owned, _node) in declarations {
         let consume = if *owned { format!("let pending = {{ let mut holder = holder.lock().await; holder.getCore(operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot::MAIN).__operit_core_route_push_{method}(request, input) }}; pending.await") } else { format!("let mut holder = holder.lock().await; holder.getCore(operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot::MAIN).__operit_core_route_push_{method}(request, input).await") };
         if routeKind != "push" { continue; }
         output.push_str(&format!(r#"        {method:?} => {{

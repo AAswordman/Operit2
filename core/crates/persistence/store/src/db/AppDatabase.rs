@@ -14,7 +14,7 @@ use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::MessagePartEntity::MessagePartEntity;
 
 /// Current SQLite schema version expected by the runtime.
-pub const DATABASE_VERSION: i32 = 31;
+pub const DATABASE_VERSION: i32 = 32;
 
 #[derive(Debug, Error)]
 /// Error surface for opening and migrating the application database.
@@ -148,6 +148,7 @@ impl AppDatabase {
             28 => MIGRATION_28_29(self)?,
             29 => MIGRATION_29_30(self)?,
             30 => MIGRATION_30_31(self)?,
+            31 => MIGRATION_31_32(self)?,
             version => {
                 return Err(AppDatabaseError::MissingMigration {
                     from: version,
@@ -172,6 +173,7 @@ impl AppDatabase {
             DROP TABLE IF EXISTS messages;
             DROP TABLE IF EXISTS chats;
             DROP TABLE IF EXISTS usage_request_records;
+            DROP TABLE IF EXISTS usage_reset_watermark;
             DROP TABLE IF EXISTS token_usage_records;
             DROP TABLE IF EXISTS token_stats_models;
             DROP TABLE IF EXISTS sync_sql_versions;
@@ -1085,6 +1087,7 @@ pub fn createAllTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
     )?;
     createUsageRequestRecordsTable(store)?;
     createTokenStatisticsTables(store)?;
+    createUsageResetTable(store)?;
     createSyncTables(store)
 }
 
@@ -1430,3 +1433,17 @@ fn MIGRATION_30_31(database: &AppDatabase) -> Result<(), SqliteStoreError> {
 #[cfg(test)]
 #[path = "AppDatabaseMigrationTests.rs"]
 mod migration_tests;
+
+/// Persists the Space-wide deletion boundary so late records cannot resurrect cleared usage.
+fn createUsageResetTable(store: &SqliteStore) -> Result<(), SqliteStoreError> {
+    store.executeBatch("CREATE TABLE IF NOT EXISTS usage_reset_watermark (id INTEGER PRIMARY KEY CHECK(id = 1), beforeMs INTEGER NOT NULL)")
+}
+
+/// Adds a durable reset boundary without rewriting existing telemetry.
+fn MIGRATION_31_32(database: &AppDatabase) -> Result<(), SqliteStoreError> {
+    database.store.transaction(|transaction| {
+        transaction.execute("CREATE TABLE IF NOT EXISTS usage_reset_watermark (id INTEGER PRIMARY KEY CHECK(id = 1), beforeMs INTEGER NOT NULL)", sqliteParams![])?;
+        transaction.execute("PRAGMA user_version = 32", sqliteParams![])?;
+        Ok(())
+    })
+}

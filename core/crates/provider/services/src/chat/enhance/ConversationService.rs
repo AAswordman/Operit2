@@ -644,6 +644,14 @@ impl ConversationService {
                 usage.cached_input,
             )
             .map_err(AiServiceError::RequestFailed)?;
+        let (estimatedCost, currency) = match summaryConfig.pricing.as_ref() {
+            Some(pricing) => (
+                calculate_model_cost(pricing, usage.input, usage.cached_input,
+                    cacheWriteTokens, usage.output),
+                pricing_currency_code(&pricing.currency).to_string(),
+            ),
+            None => (0.0, String::new()),
+        };
         UsageStatisticsStore::new()
             .recordProviderModelRequestDetailed(UsageRequestCapture {
                 providerModel,
@@ -664,11 +672,11 @@ impl ConversationService {
                 totalDurationMs: (completedAtMs - startedAtMs).max(0),
                 status: UsageRequestStatus::COMPLETED,
                 originNodeId: String::new(),
-                providerId: String::new(),
+                providerId: summaryConfig.providerId,
                 keyId: String::new(),
-                keyFingerprint: String::new(),
-                estimatedCost: 0.0,
-                currency: String::new(),
+                keyFingerprint: operit_model::ProviderQuota::mask_api_key_fingerprint(&summaryConfig.apiKey),
+                estimatedCost,
+                currency,
                 stream: true,
             })
             .map_err(AiServiceError::RequestFailed)?;
@@ -699,6 +707,8 @@ impl ConversationService {
                 ),
             ),
         ];
+        let titleConfig = multi_service_manager
+            .getModelConfigForFunction(FunctionType::TITLE_GENERATION)?;
         let model_parameters =
             multi_service_manager.getModelParametersForFunction(FunctionType::TITLE_GENERATION)?;
         let title_service =
@@ -759,28 +769,13 @@ impl ConversationService {
         let outputDurationMs = firstOutputAtMs
             .map(|first| (completedAtMs - first).max(0))
             .unwrap_or(0);
-        let attribution = self
-            .runtime_context
-            .support()
-            .usageAttributionForProviderModel(&provider_model);
-        let (providerId, keyFingerprint, estimatedCost, currency) = match attribution {
-            Some(info) => {
-                let (cost, curr) = match info.modelPricing.as_ref() {
-                    Some(pricing) => (
-                        calculate_model_cost(
-                            pricing,
-                            input_tokens,
-                            cached_input_tokens,
-                            cache_write_tokens,
-                            output_tokens,
-                        ),
-                        pricing_currency_code(&pricing.currency).to_string(),
-                    ),
-                    None => (0.0, String::new()),
-                };
-                (info.providerId, info.keyFingerprint, cost, curr)
-            }
-            None => (String::new(), String::new(), 0.0, String::new()),
+        let (estimatedCost, currency) = match titleConfig.pricing.as_ref() {
+            Some(pricing) => (
+                calculate_model_cost(pricing, input_tokens, cached_input_tokens,
+                    cache_write_tokens, output_tokens),
+                pricing_currency_code(&pricing.currency).to_string(),
+            ),
+            None => (0.0, String::new()),
         };
         UsageStatisticsStore::new()
             .recordProviderModelRequestDetailed(UsageRequestCapture {
@@ -798,9 +793,9 @@ impl ConversationService {
                 totalDurationMs,
                 status: UsageRequestStatus::COMPLETED,
                 originNodeId: String::new(),
-                providerId,
+                providerId: titleConfig.providerId,
                 keyId: String::new(),
-                keyFingerprint,
+                keyFingerprint: operit_model::ProviderQuota::mask_api_key_fingerprint(&titleConfig.apiKey),
                 estimatedCost,
                 currency,
                 stream: false,

@@ -10,7 +10,7 @@ use operit_providers::runtime_support::{
     ChatConfigurationDisplayResult, ChatConfigurationPurpose, ChatConfigurationRequest, ChatConfigurationResult,
     ChatDisplayIdentity, ChatDisplayParticipant, ChatParticipantProfile, ChatToolAccess, ProviderFunctionModelBinding,
     ProviderMessageTiming, ProviderPackageInfo, ProviderRuntimeContext, ProviderRuntimeSupport,
-    ProviderRuntimeSupportFuture, ProviderToolPkgAiProviderRegistration, ProviderUsageAttribution,
+    ProviderRuntimeSupportFuture, ProviderToolPkgAiProviderRegistration,
 };
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
@@ -510,28 +510,6 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
                 cachedInputTokens,
             )
             .map_err(|error| error.to_string())
-    }
-
-    fn usageAttributionForProviderModel(
-        &self,
-        providerModel: &str,
-    ) -> Option<ProviderUsageAttribution> {
-        let (providerTypeId, modelId) = providerModel.split_once(':')?;
-        let manager = crate::data::preferences::ModelConfigManager::ModelConfigManager::default();
-        let summaries = manager.getAllModelSummaries().ok()?;
-        let summary = summaries.into_iter().find(|item| {
-            item.providerTypeId == providerTypeId && item.modelId == modelId
-        })?;
-        let keyFingerprint = manager
-            .getProviderProfile(&summary.providerId)
-            .ok()
-            .map(|profile| operit_model::ProviderQuota::mask_api_key_fingerprint(&profile.apiKey))
-            .unwrap_or_default();
-        Some(ProviderUsageAttribution {
-            providerId: summary.providerId,
-            keyFingerprint,
-            modelPricing: summary.pricing,
-        })
     }
 
     /// Returns the application preference controlling profile-document prompt visibility.

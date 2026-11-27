@@ -89,7 +89,24 @@ impl ProviderQuotaService {
     }
 
     /// Probes one configured provider (and all enabled pool keys) on this device node.
-    pub async fn probeProviderQuota(&self, providerId: String) -> Result<ProviderQuotaSnapshot, String> {
+    #[operit_route_macros::operit_core_route(target = targetNodeId, permission = "target:runtime.execute")]
+    pub fn probeProviderQuota(&self, providerId: String, targetNodeId: Option<String>)
+        -> impl std::future::Future<Output = Result<ProviderQuotaSnapshot, String>> + 'static {
+        async move {
+            let _ = targetNodeId;
+            Self::getInstance().probeLocalProviderQuota(providerId).await
+        }
+    }
+
+    /// Refreshes the selected node and retains its returned snapshot for this UI.
+    pub async fn refreshProviderQuota(&self, providerId: String, targetNodeId: Option<String>) -> Result<ProviderQuotaSnapshot, String> {
+        let snapshot = self.probeProviderQuota(providerId, targetNodeId).await?;
+        ProviderQuotaPreferences::default().saveSnapshot(&snapshot)?;
+        Ok(snapshot)
+    }
+
+    /// Queries credentials owned by this node after route authorization.
+    async fn probeLocalProviderQuota(&self, providerId: String) -> Result<ProviderQuotaSnapshot, String> {
         let profile = ModelConfigManager::default()
             .getProviderProfile(&providerId)
             .map_err(|error| error.to_string())?;
@@ -248,7 +265,7 @@ impl ProviderQuotaService {
             .map_err(|error| error.to_string())?;
         let mut futures = Vec::with_capacity(profiles.len());
         for profile in profiles {
-            futures.push(self.probeProviderQuota(profile.id));
+            futures.push(self.probeLocalProviderQuota(profile.id));
         }
         let results = futures_util::future::join_all(futures).await;
         let mut snapshots = Vec::with_capacity(results.len());
@@ -296,12 +313,6 @@ impl ProviderQuotaService {
         }
         ProviderQuotaPreferences::default().saveProbeConfig(&config)?;
         Ok(config)
-    }
-
-    /// Persists a quota snapshot gathered remotely by another node in the Space.
-    #[operit_route_macros::operit_core_internal]
-    pub fn saveSyncedSnapshot(&self, snapshot: ProviderQuotaSnapshot) -> Result<(), String> {
-        ProviderQuotaPreferences::default().saveSnapshot(&snapshot)
     }
 
     /// Clears usage statistics either locally on this device or synchronized across the Space.

@@ -7,6 +7,7 @@ mod host_time;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GeneratedCoreRoute {
     Local,
+    Node { nodeId: String },
     Binding { scope: usize, key: String },
 }
 
@@ -30,6 +31,7 @@ pub enum GeneratedRouteLifecycle {
 pub struct GeneratedSpaceRoute {
     pub routeId: &'static str,
     pub methodName: &'static str,
+    pub nodeAddressed: bool,
     pub bindingArgument: &'static str,
     pub targetType: &'static str,
     pub permissionScope: GeneratedRoutePermissionSubject,
@@ -71,6 +73,23 @@ impl GeneratedSpaceRoute {
         }
         Ok(key.clone())
     }
+}
+
+/// Decodes one declared route address while preserving optional local invocation.
+fn resolveRouteArgument(args: &operit_link::CoreValue, name: &str, node: bool)
+    -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> {
+    use operit_link::{CoreValue, CoreLinkError};
+    let CoreValue::Map(args) = args else { return Err(CoreLinkError::new("INVALID_ARGS", "Route arguments must be a map")); };
+    let missing = if node { "CORE_NODE_ID_REQUIRED" } else { "CORE_BINDING_KEY_REQUIRED" };
+    let invalid = if node { "CORE_NODE_ID_INVALID" } else { "CORE_BINDING_KEY_INVALID" };
+    let value = args.get(name).ok_or_else(|| CoreLinkError::new(missing, "Required route address is missing"))?;
+    let key = match value {
+        CoreValue::Null => return Ok(GeneratedCoreRoute::Local),
+        CoreValue::String(key) if !key.trim().is_empty() => key.clone(),
+        CoreValue::String(_) => return Err(CoreLinkError::new(missing, "Route address must not be empty")),
+        _ => return Err(CoreLinkError::new(invalid, "Route address must be a string")),
+    };
+    Ok(if node { GeneratedCoreRoute::Node { nodeId: key } } else { GeneratedCoreRoute::Binding { scope: 0, key } })
 }
 
 #[cfg(feature = "route-catalog")]
@@ -138,6 +157,25 @@ mod tests {
         assert!(generated_space_route_for_id(route.routeId, "notAnExportedMethod").is_none());
         let request = operit_link::CoreCallRequest::new("space-test", route.routeId, route.methodName, operit_link::CoreValue::emptyMap());
         assert_eq!(generated_space_call_route(&request), Some(route));
+    }
+
+    /// Resolves an explicit node without creating or looking up a chat binding.
+    #[test]
+    fn node_addressed_routes_preserve_explicit_target_and_optional_local_call() {
+        use operit_link::{CoreCallRequest, CoreValue};
+        let route = generated_space_route_for_method("probeProviderQuota").unwrap();
+        assert!(route.nodeAddressed);
+        assert_eq!(route.bindingArgument, "targetNodeId");
+        assert_eq!(route.permissionCapability, "runtime.execute");
+        let request = |value| CoreCallRequest::new("quota-route", route.routeId,
+            route.methodName, CoreValue::Map(std::collections::BTreeMap::from([
+                ("targetNodeId".into(), value),
+            ])));
+        assert_eq!(generated_core_call_route(&request(CoreValue::String("phone".into()))).unwrap(),
+            GeneratedCoreRoute::Node { nodeId: "phone".into() });
+        assert_eq!(generated_core_call_route(&request(CoreValue::Null)).unwrap(), GeneratedCoreRoute::Local);
+        assert_eq!(generated_core_call_route(&request(CoreValue::String(String::new()))).unwrap_err().code,
+            "CORE_NODE_ID_REQUIRED");
     }
 
     #[test]
