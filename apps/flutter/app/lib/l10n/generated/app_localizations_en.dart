@@ -2155,6 +2155,43 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelAddModelShort => 'Add';
 
   @override
+  String get settingsModelSyncModels => 'Sync models';
+
+  @override
+  String get settingsModelSyncingModels => 'Syncing...';
+
+  @override
+  String get settingsModelSyncModelsTooltip =>
+      'Fetch the latest provider models and remove obsolete non-custom ones';
+
+  @override
+  String get settingsModelCustomBadge => 'Custom';
+
+  @override
+  String settingsModelSyncUpToDate(int total) {
+    return 'Model list is up to date ($total total)';
+  }
+
+  @override
+  String settingsModelSyncSummary(int added, int removed, int keptCustom) {
+    return 'Synced: +$added, -$removed, $keptCustom custom kept';
+  }
+
+  @override
+  String settingsModelSyncSwitchedBinding(
+    int added,
+    int removed,
+    String target,
+  ) {
+    return 'Synced (+$added, -$removed); removed binding switched to $target';
+  }
+
+  @override
+  String settingsModelSyncMissingBinding(int removed) {
+    return 'Synced (-$removed); bound model was removed and no models remain';
+  }
+
+  @override
   String get settingsModelAvailableFetchedOnly => 'Fetched only';
 
   @override

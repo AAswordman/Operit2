@@ -2078,6 +2078,42 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelAddModelShort => '添加';
 
   @override
+  String get settingsModelSyncModels => '同步模型';
+
+  @override
+  String get settingsModelSyncingModels => '同步中...';
+
+  @override
+  String get settingsModelSyncModelsTooltip => '拉取最新模型列表并自动清理已下线的非自定义模型';
+
+  @override
+  String get settingsModelCustomBadge => '自定义';
+
+  @override
+  String settingsModelSyncUpToDate(int total) {
+    return '模型列表已是最新（共 $total 个）';
+  }
+
+  @override
+  String settingsModelSyncSummary(int added, int removed, int keptCustom) {
+    return '同步完成：新增 $added 个，移除 $removed 个，保留 $keptCustom 个自定义模型';
+  }
+
+  @override
+  String settingsModelSyncSwitchedBinding(
+    int added,
+    int removed,
+    String target,
+  ) {
+    return '同步完成（+$added，-$removed），已下线的绑定模型已自动切换为 $target';
+  }
+
+  @override
+  String settingsModelSyncMissingBinding(int removed) {
+    return '同步完成（移除 $removed 个），原绑定模型已下线且当前无可用模型，请重新选择或添加';
+  }
+
+  @override
   String get settingsModelAvailableFetchedOnly => '仅拉取到的';
 
   @override

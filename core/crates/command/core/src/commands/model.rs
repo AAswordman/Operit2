@@ -372,6 +372,30 @@ pub async fn run_model_command(
                 "created": true
             }));
         }
+        "provider-model-sync" => {
+            let providerId = requiredArg(
+                args,
+                1,
+                "usage: operit2 model provider-model-sync <provider-id>",
+            )?;
+            let result = command
+                .modelManager()
+                .syncProviderModels(providerId)
+                .map_err(|error| error.to_string())?;
+            output.push_stdout_line(format!(
+                "Synced {providerId}: added {}, removed {}, kept custom {}, total {}",
+                result.addedCount, result.removedCount, result.keptCustomCount, result.totalCount
+            ));
+            for adjustment in &result.bindingAdjustments {
+                output.push_stdout_line(format!(
+                    "- Binding {:?}: {} -> {}",
+                    adjustment.functionType,
+                    adjustment.previousModelId,
+                    adjustment.newModelId.as_deref().unwrap_or("(none)")
+                ));
+            }
+            output.setJsonStdout(serde_json::to_value(&result).map_err(|error| error.to_string())?);
+        }
         "catalog-status" | "catalog-refresh" => {
             let manager = command.modelManager();
             let status = if args[0] == "catalog-refresh" {
@@ -1152,6 +1176,7 @@ fn print_model_usage(output: &mut CoreCommandOutput) {
         "operit2 model provider-model-available-list <provider-id> [fetched|all]",
         "operit2 model provider-model-add <provider-id> <provider-model-id>",
         "operit2 model provider-model-create <provider-id> <provider-model-id>",
+        "operit2 model provider-model-sync <provider-id>",
         "operit2 model catalog-status",
         "operit2 model catalog-refresh",
         "operit2 model list",

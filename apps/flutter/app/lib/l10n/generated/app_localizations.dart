@@ -3952,6 +3952,58 @@ abstract class AppLocalizations {
   /// **'Add'**
   String get settingsModelAddModelShort;
 
+  /// No description provided for @settingsModelSyncModels.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync models'**
+  String get settingsModelSyncModels;
+
+  /// No description provided for @settingsModelSyncingModels.
+  ///
+  /// In en, this message translates to:
+  /// **'Syncing...'**
+  String get settingsModelSyncingModels;
+
+  /// No description provided for @settingsModelSyncModelsTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Fetch the latest provider models and remove obsolete non-custom ones'**
+  String get settingsModelSyncModelsTooltip;
+
+  /// No description provided for @settingsModelCustomBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom'**
+  String get settingsModelCustomBadge;
+
+  /// No description provided for @settingsModelSyncUpToDate.
+  ///
+  /// In en, this message translates to:
+  /// **'Model list is up to date ({total} total)'**
+  String settingsModelSyncUpToDate(int total);
+
+  /// No description provided for @settingsModelSyncSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Synced: +{added}, -{removed}, {keptCustom} custom kept'**
+  String settingsModelSyncSummary(int added, int removed, int keptCustom);
+
+  /// No description provided for @settingsModelSyncSwitchedBinding.
+  ///
+  /// In en, this message translates to:
+  /// **'Synced (+{added}, -{removed}); removed binding switched to {target}'**
+  String settingsModelSyncSwitchedBinding(
+    int added,
+    int removed,
+    String target,
+  );
+
+  /// No description provided for @settingsModelSyncMissingBinding.
+  ///
+  /// In en, this message translates to:
+  /// **'Synced (-{removed}); bound model was removed and no models remain'**
+  String settingsModelSyncMissingBinding(int removed);
+
   /// No description provided for @settingsModelAvailableFetchedOnly.
   ///
   /// In en, this message translates to:

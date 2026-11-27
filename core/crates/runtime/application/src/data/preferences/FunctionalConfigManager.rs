@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -7,6 +7,7 @@ use thiserror::Error;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_model::FunctionType::FunctionType;
+use operit_model::ModelConfigData::ModelBindingAdjustment;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
@@ -83,6 +84,16 @@ impl FunctionalConfigManager {
         Self {
             functionalConfigDataStore: Self::preferenceStore(operit_store::RuntimeStorageHost::defaultRuntimeStorageHost(), operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH),
             modelConfigManager: ModelConfigManager::default(),
+        }
+    }
+
+    pub(crate) fn forModelConfig(modelConfigManager: ModelConfigManager) -> Self {
+        Self {
+            functionalConfigDataStore: Self::preferenceStore(
+                modelConfigManager.storage.clone(),
+                operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH,
+            ),
+            modelConfigManager,
         }
     }
     /// Observes persisted bindings after initializing missing functions and their default model.
@@ -362,6 +373,80 @@ impl FunctionalConfigManager {
     /// Restores every runtime function to the default provider and model map.
     pub fn resetAllFunctionConfigs(&self) -> Result<(), FunctionalConfigError> {
         self.saveFunctionModelBinding(Self::defaultBinding())
+    }
+
+    /// Reassigns bindings on `providerId` whose target model is absent from `remainingModelIds`.
+    pub(crate) fn reconcileRemovedProviderModels(
+        &self,
+        providerId: &str,
+        remainingModelIds: &[String],
+        preferredChatModelId: Option<&str>,
+        generalReplacementId: Option<&str>,
+    ) -> Result<Vec<ModelBindingAdjustment>, FunctionalConfigError> {
+        let remaining: HashSet<&str> = remainingModelIds.iter().map(String::as_str).collect();
+        self.functionalConfigDataStore.try_edit_result(
+            |preferences| -> Result<Vec<ModelBindingAdjustment>, FunctionalConfigError> {
+                let mut binding = Self::readFunctionModelBinding(preferences)?;
+                if binding.is_empty() {
+                    return Ok(Vec::new());
+                }
+                let mut adjustments = Vec::new();
+                let mut changed = false;
+
+                if let Some(chat) = binding.get_mut(&FunctionType::CHAT) {
+                    if chat.providerId == providerId && !remaining.contains(chat.modelId.as_str()) {
+                        let previousModelId = chat.modelId.clone();
+                        let nextModelId = preferredChatModelId.map(str::to_string);
+                        if let Some(nextId) = &nextModelId {
+                            chat.modelId = nextId.clone();
+                            Self::normalizeBinding(&mut binding);
+                            changed = true;
+                        }
+                        adjustments.push(ModelBindingAdjustment {
+                            functionType: FunctionType::CHAT,
+                            previousModelId,
+                            newModelId: nextModelId,
+                        });
+                    }
+                }
+
+                let mut otherFunctions: Vec<FunctionType> = binding
+                    .keys()
+                    .filter(|functionType| **functionType != FunctionType::CHAT)
+                    .cloned()
+                    .collect();
+                otherFunctions
+                    .sort_by_key(|functionType| Self::functionTypeName(functionType.clone()));
+
+                for functionType in otherFunctions {
+                    let Some(entry) = binding.get_mut(&functionType) else {
+                        continue;
+                    };
+                    if entry.followsChat
+                        || entry.providerId != providerId
+                        || remaining.contains(entry.modelId.as_str())
+                    {
+                        continue;
+                    }
+                    let previousModelId = entry.modelId.clone();
+                    let nextModelId = generalReplacementId.map(str::to_string);
+                    if let Some(nextId) = &nextModelId {
+                        entry.modelId = nextId.clone();
+                        changed = true;
+                    }
+                    adjustments.push(ModelBindingAdjustment {
+                        functionType,
+                        previousModelId,
+                        newModelId: nextModelId,
+                    });
+                }
+
+                if changed {
+                    Self::writeFunctionModelBinding(preferences, binding)?;
+                }
+                Ok(adjustments)
+            },
+        )
     }
 
     /// Builds the complete default binding map for every functional model role.

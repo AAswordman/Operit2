@@ -505,6 +505,141 @@ void main() {
       },
     );
   }
+  testWidgets(
+    'sync provider models replaces stale non-custom models and preserves custom models',
+    (tester) async {
+      final bridge = _ModelSettingsBridge();
+      bridge.overrideModels = [
+        bridge.buildModel('stale-model'),
+        bridge.buildModel('custom-model', custom: true),
+      ];
+      bridge.syncHandler = (_) {
+        bridge.overrideModels = [
+          bridge.buildModel('custom-model', custom: true),
+          bridge.buildModel('fresh-model'),
+        ];
+        return const core.ProviderModelSyncResult(
+          addedCount: 1,
+          removedCount: 1,
+          keptCustomCount: 1,
+          totalCount: 2,
+          bindingAdjustments: [],
+        );
+      };
+      final panelKey = GlobalKey<ModelSettingsPanelState>();
+      await _pumpModelSettings(tester, bridge, panelKey);
+      final l10n = AppLocalizations.of(panelKey.currentContext!)!;
+      await tester.tap(find.text('Test Provider'));
+      await tester.pumpAndSettle();
+      expect(find.text('stale-model'), findsOneWidget);
+      expect(find.text('custom-model'), findsOneWidget);
+      expect(find.text(l10n.settingsModelCustomBadge), findsOneWidget);
+
+      await tester.tap(find.text(l10n.settingsModelSyncModels));
+      await tester.pumpAndSettle();
+
+      expect(bridge.syncModelsCalls, 1);
+      expect(find.text('stale-model'), findsNothing);
+      expect(find.text('fresh-model'), findsOneWidget);
+      expect(find.text('custom-model'), findsOneWidget);
+      expect(find.text(l10n.settingsModelCustomBadge), findsOneWidget);
+      expect(find.text(l10n.settingsModelSyncSummary(1, 1, 1)), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    'sync provider models notifies binding switches and missing replacements',
+    (tester) async {
+      final bridge = _ModelSettingsBridge();
+      bridge.syncHandler = (_) {
+        bridge.overrideModels = [bridge.buildModel('fresh-model')];
+        bridge.chatBinding = const core.FunctionModelBinding(
+          providerId: 'test-provider',
+          modelId: 'fresh-model',
+          followsChat: false,
+        );
+        return const core.ProviderModelSyncResult(
+          addedCount: 1,
+          removedCount: 1,
+          keptCustomCount: 0,
+          totalCount: 1,
+          bindingAdjustments: [
+            core.ModelBindingAdjustment(
+              functionType: core.FunctionType.chat,
+              previousModelId: 'test-model',
+              newModelId: 'fresh-model',
+            ),
+          ],
+        );
+      };
+      final panelKey = GlobalKey<ModelSettingsPanelState>();
+      await _pumpModelSettings(tester, bridge, panelKey);
+      final l10n = AppLocalizations.of(panelKey.currentContext!)!;
+      await tester.tap(find.text('Test Provider'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text(l10n.settingsModelSyncModels));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(l10n.settingsModelSyncSwitchedBinding(1, 1, 'fresh-model')),
+        findsOneWidget,
+      );
+
+      bridge.syncHandler = (_) {
+        bridge.overrideModels = const [];
+        return const core.ProviderModelSyncResult(
+          addedCount: 0,
+          removedCount: 1,
+          keptCustomCount: 0,
+          totalCount: 0,
+          bindingAdjustments: [
+            core.ModelBindingAdjustment(
+              functionType: core.FunctionType.chat,
+              previousModelId: 'fresh-model',
+              newModelId: null,
+            ),
+          ],
+        );
+      };
+      await tester.tap(find.text(l10n.settingsModelSyncModels));
+      await tester.pumpAndSettle();
+      expect(find.text(l10n.settingsModelSyncMissingBinding(1)), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    'sync failure dialog offers custom model input and shows created model',
+    (tester) async {
+      final bridge = _ModelSettingsBridge()
+        ..syncModelsError = 'HTTP 502 bad gateway';
+      final panelKey = GlobalKey<ModelSettingsPanelState>();
+      await _pumpModelSettings(tester, bridge, panelKey);
+      final l10n = AppLocalizations.of(panelKey.currentContext!)!;
+      await tester.tap(find.text('Test Provider'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text(l10n.settingsModelSyncModels));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text(l10n.settingsModelCustomModel),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextFormField), 'manual-model');
+      await tester.tap(find.text(l10n.save));
+      await tester.pumpAndSettle();
+
+      expect(bridge.createdCustomModels, [('test-provider', 'manual-model')]);
+      expect(find.text('manual-model'), findsOneWidget);
+      expect(find.text(l10n.settingsModelCustomBadge), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
   for (final success in [true, false]) {
     testWidgets(
       'completed ${success ? 'passed' : 'failed'} connection checks restore after reopening settings',
@@ -864,8 +999,11 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
   bool missingChatBinding = false;
   List<Map<String, Object?>>? participantModels;
   String? requestedModelChatId;
-  int? catalogUpdatedAt;
-  int catalogRefreshCalls = 0;
+  List<core.ModelProfile>? overrideModels;
+  core.ProviderModelSyncResult Function(String providerId)? syncHandler;
+  String? syncModelsError;
+  int syncModelsCalls = 0;
+  final List<(String, String)> createdCustomModels = [];
   bool connectionTestSucceeds = true;
   String connectionTestError = 'HTTP 503';
   int connectionTestCalls = 0;
@@ -903,28 +1041,32 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
   );
   static const contextSpec = core.ModelContextSpec(maxContextTokens: 200_000);
 
-  core.ModelProfile get model => core.ModelProfile(
-    id: modelId,
-    pricingOverride: null,
-    contextOverride: contextSpec,
-    capabilitiesOverride: core.ModelCapabilityOverrides(
-      directImage: capabilities.directImage,
-      directAudio: capabilities.directAudio,
-      directVideo: capabilities.directVideo,
-      toolCall: capabilities.toolCall,
-    ),
-    builtinToolsOverride: const [],
-    requestOverride: const core.ModelRequestOverrides(
-      supportsStructuredTools: null,
-      enableClaude1HPromptCache: null,
-    ),
-    listed: null,
-    thinkingOverride: null,
-    thinkingLevel: null,
-    parameters: const [],
-    summary: summarySettings,
-    localRuntime: localRuntime,
-  );
+  core.ModelProfile buildModel(String id, {bool custom = false}) =>
+      core.ModelProfile(
+        id: id,
+        custom: custom,
+        pricingOverride: null,
+        contextOverride: contextSpec,
+        capabilitiesOverride: core.ModelCapabilityOverrides(
+          directImage: capabilities.directImage,
+          directAudio: capabilities.directAudio,
+          directVideo: capabilities.directVideo,
+          toolCall: capabilities.toolCall,
+        ),
+        builtinToolsOverride: const [],
+        requestOverride: const core.ModelRequestOverrides(
+          supportsStructuredTools: null,
+          enableClaude1HPromptCache: null,
+        ),
+        listed: null,
+        thinkingOverride: null,
+        thinkingLevel: null,
+        parameters: const [],
+        summary: summarySettings,
+        localRuntime: localRuntime,
+      );
+
+  core.ModelProfile get model => buildModel(modelId);
 
   core.ProviderProfile get provider =>
       savedProvider ??
@@ -942,7 +1084,7 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
         customHeaders: '{}',
         requestLimitPerMinute: 0,
         maxConcurrentRequests: 1,
-        models: [model],
+        models: overrideModels ?? [model],
       );
 
   core.ResolvedModelConfig get config => core.ResolvedModelConfig(
@@ -1019,11 +1161,42 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
       case 'getModelCatalogStatus':
         if (request.methodName == 'refreshModelCatalog') {
           catalogRefreshCalls++;
+      case 'syncProviderModels':
+        syncModelsCalls++;
+        if (syncModelsError != null) {
+          return encodeCoreLink([
+            1,
+            'COMMAND_ERROR',
+            syncModelsError,
+            null,
+            null,
+            null,
+          ]);
         }
-        result = core.ModelCatalogStatus(
-          updatedAt: catalogUpdatedAt,
-          lastError: 'fixture catalog offline',
-        ).toJson();
+        final args = request.args as Map;
+        final providerId = args['providerId'] as String;
+        final handler = syncHandler;
+        result =
+            (handler != null
+                    ? handler(providerId)
+                    : core.ProviderModelSyncResult(
+                        addedCount: 0,
+                        removedCount: 0,
+                        keptCustomCount: 0,
+                        totalCount: provider.models.length,
+                        bindingAdjustments: const [],
+                      ))
+                .toJson();
+      case 'createProviderModel':
+        final args = request.args as Map;
+        final providerId = args['providerId'] as String;
+        final addedModelId = args['modelId'] as String;
+        createdCustomModels.add((providerId, addedModelId));
+        overrideModels = [
+          ...provider.models,
+          buildModel(addedModelId, custom: true),
+        ];
+        result = addedModelId;
       case 'getModelBindingForFunction':
         if (missingChatBinding) throw StateError('No chat model binding');
         result = chatBinding.toJson();
@@ -1054,22 +1227,23 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
         result = [provider.toJson()];
       case 'getAllModelSummaries':
         result = [
-          core.ProviderModelSummary(
-            providerId: binding.providerId,
-            providerName: provider.name,
-            providerTypeId: provider.providerTypeId,
-            endpoint: provider.endpoint,
-            modelId: modelId,
-            capabilities: capabilities,
-            context: contextSpec,
-            pricing: null,
-            thinking: const core.ModelThinkingSpec(
-              supported: false,
-              toggle: false,
-              efforts: [],
-              budget: null,
-            ),
-          ).toJson(),
+          for (final item in provider.models)
+            core.ProviderModelSummary(
+              providerId: binding.providerId,
+              providerName: provider.name,
+              providerTypeId: provider.providerTypeId,
+              endpoint: provider.endpoint,
+              modelId: item.id,
+              capabilities: capabilities,
+              context: contextSpec,
+              pricing: null,
+              thinking: const core.ModelThinkingSpec(
+                supported: false,
+                toggle: false,
+                efforts: [],
+                budget: null,
+              ),
+            ).toJson(),
         ];
       case 'getThinkingSettingsForModel':
         thinkingCalls++;

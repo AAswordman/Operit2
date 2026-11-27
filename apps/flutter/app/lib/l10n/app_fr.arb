@@ -997,6 +997,54 @@
   "settingsModelEditProvider": "Modifier le fournisseur",
   "settingsModelAddModel": "Ajouter un modèle",
   "settingsModelAddModelShort": "Ajouter",
+  "settingsModelSyncModels": "Synchroniser les modèles",
+  "settingsModelSyncingModels": "Synchronisation...",
+  "settingsModelSyncModelsTooltip": "Récupérer la dernière liste de modèles et supprimer les anciens modèles non personnalisés",
+  "settingsModelCustomBadge": "Personnalisé",
+  "settingsModelSyncUpToDate": "La liste des modèles est à jour ({total} au total)",
+  "@settingsModelSyncUpToDate": {
+    "placeholders": {
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelSyncSummary": "Synchronisé : +{added}, -{removed}, {keptCustom} personnalisés conservés",
+  "@settingsModelSyncSummary": {
+    "placeholders": {
+      "added": {
+        "type": "int"
+      },
+      "removed": {
+        "type": "int"
+      },
+      "keptCustom": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelSyncSwitchedBinding": "Synchronisé (+{added}, -{removed}) ; le modèle lié supprimé a été basculé vers {target}",
+  "@settingsModelSyncSwitchedBinding": {
+    "placeholders": {
+      "added": {
+        "type": "int"
+      },
+      "removed": {
+        "type": "int"
+      },
+      "target": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelSyncMissingBinding": "Synchronisé (-{removed}) ; le modèle lié a été supprimé et aucun modèle ne reste",
+  "@settingsModelSyncMissingBinding": {
+    "placeholders": {
+      "removed": {
+        "type": "int"
+      }
+    }
+  },
   "settingsModelAvailableFetchedOnly": "Récupérés uniquement",
   "settingsModelAvailableIncludeHistory": "Inclure l'historique",
   "settingsModelAvailableSourceFetched": "Récupéré",

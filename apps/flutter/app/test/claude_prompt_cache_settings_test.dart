@@ -137,6 +137,7 @@ class _ClaudeSettingsBridge extends OperitRuntimeBridge {
 
   core.ModelProfile get model => core.ModelProfile(
     id: binding.modelId,
+    custom: false,
     pricingOverride: null,
     contextOverride: contextSpec,
     capabilitiesOverride: core.ModelCapabilityOverrides(
