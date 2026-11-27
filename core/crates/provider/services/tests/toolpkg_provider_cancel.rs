@@ -18,7 +18,7 @@ use operit_providers::{chat, runtime_support};
 use operit_util::stream::RevisableTextStream::ResponseStreamItem;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[path = "../../tests/ProviderMediaTestSupport.rs"]
@@ -37,17 +37,19 @@ enum HookBehavior {
 /// Runtime support whose package hook simulates a long-running plugin generation.
 struct HookSupport {
     started: Arc<AtomicBool>,
-    behavior: HookBehavior,
+    behavior: Mutex<HookBehavior>,
 }
 
 impl HookSupport {
+    /// Creates a controllable plugin hook fixture.
     fn new(behavior: HookBehavior) -> Arc<Self> {
         Arc::new(Self {
             started: Arc::new(AtomicBool::new(false)),
-            behavior,
+            behavior: Mutex::new(behavior),
         })
     }
 
+    /// Waits until the hook has emitted its first result.
     async fn wait_started(&self) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while !self.started.load(Ordering::SeqCst) {
@@ -94,6 +96,15 @@ impl ProviderRuntimeSupport for HookSupport {
         _functionType: FunctionType,
     ) -> Result<ProviderFunctionModelBinding, String> {
         Err("cancel fixture does not expose model bindings".to_string())
+    }
+
+    /// Rejects model lookup because this fixture invokes a provider directly.
+    fn modelBindingForChat(
+        &self,
+        _chatId: Option<&str>,
+        _functionType: FunctionType,
+    ) -> Result<ProviderFunctionModelBinding, String> {
+        Err("cancel fixture does not expose chat model bindings".to_string())
     }
 
     fn resolvedModelConfig(
@@ -154,7 +165,7 @@ impl ProviderRuntimeSupport for HookSupport {
         onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<String>, String>> + Send>>
     {
-        let behavior = self.behavior.clone();
+        let behavior = self.behavior.lock().unwrap().clone();
         let started = self.started.clone();
         Box::pin(async move {
             match behavior {
@@ -285,10 +296,14 @@ async fn cancel_streaming_closes_inflight_plugin_stream() {
     support.wait_started().await;
 
     provider.cancel_streaming();
+    *support.behavior.lock().unwrap() = HookBehavior::CompleteText("next answer".into());
+    let mut next = provider.send_message(send_request(Vec::new())).await.unwrap();
     let chunks = collect_chunks(&mut stream).await;
 
     assert!(chunks.contains(&"hello".to_string()));
     assert!(stream.terminal_failure().is_none());
+    assert_eq!(collect_chunks(&mut next).await, vec!["next answer"]);
+    assert!(next.terminal_failure().is_none());
 }
 
 /// A hook that completes without intermediate chunks must still publish its final text.

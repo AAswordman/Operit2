@@ -4032,8 +4032,11 @@ mod chat_deletion_tests {
         let mut turn = ChatRuntime::new();
         turn.activeTurnId = 30;
         turn.executionLease = Some(lease);
+        let pendingSend = turn.cancellationToken.clone();
         core.messageProcessingDelegate.chatRuntimes.lock().unwrap().insert("route-chat".into(), turn);
         core.messageProcessingDelegate.setChatExecutionStateForTest("route-chat".into(), ChatExecutionState {
+            taskTitle: None,
+            currentRound: 0,
             isLoading: false,
             inputProcessingState: InputProcessingState::Summarizing { message: "summarizing".into() },
         });
@@ -4047,6 +4050,7 @@ mod chat_deletion_tests {
             let runtimes = core.messageProcessingDelegate.chatRuntimes.lock().unwrap();
             let runtime = runtimes.get("route-chat").unwrap();
             assert!(runtime.isCancelling, "a summary-window stop must reserve cancellation");
+            assert!(pendingSend.isCancelled(), "stopping between sends must close the turn's gate");
             assert_eq!(runtime.activeTurnId, 31);
         }
         pending.await.unwrap();

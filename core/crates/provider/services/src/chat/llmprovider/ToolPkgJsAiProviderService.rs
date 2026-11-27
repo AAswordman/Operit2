@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::sync::watch;
 
+use crate::chat::EnhancedAIService::MessageCancellationToken;
 use crate::chat::llmprovider::AIService::{
     AIService, AiServiceError, SendMessageRequest, SharedAiResponseStream,
 };
@@ -25,7 +25,7 @@ pub struct ToolPkgJsAiProviderService {
     config: ResolvedModelConfig,
     provider: ProviderToolPkgAiProviderRegistration,
     tokenCounts: Arc<Mutex<ToolPkgProviderTokenCounts>>,
-    cancelState: Arc<Mutex<ToolPkgCancelState>>,
+    cancellation: MessageCancellationToken,
     executionChatId: String,
     providerRuntimeContextKey: String,
     runtimeContext: ProviderRuntimeContext,
@@ -37,24 +37,6 @@ struct ToolPkgProviderTokenCounts {
     input: i64,
     cachedInput: i64,
     output: i64,
-}
-
-/// Shared cancellation state mirrored across every clone of one provider service.
-struct ToolPkgCancelState {
-    cancelled: bool,
-    cancelGeneration: u64,
-    cancelSignal: watch::Sender<u64>,
-}
-
-impl Default for ToolPkgCancelState {
-    fn default() -> Self {
-        let (cancelSignal, _) = watch::channel(0);
-        Self {
-            cancelled: false,
-            cancelGeneration: 0,
-            cancelSignal,
-        }
-    }
 }
 
 impl ToolPkgJsAiProviderService {
@@ -79,46 +61,9 @@ impl ToolPkgJsAiProviderService {
             config,
             provider,
             tokenCounts: Arc::new(Mutex::new(ToolPkgProviderTokenCounts::default())),
-            cancelState: Arc::new(Mutex::new(ToolPkgCancelState::default())),
+            cancellation: MessageCancellationToken::default(),
             runtimeContext,
             keyGetter,
-        }
-    }
-
-    fn is_cancelled(&self) -> bool {
-        self.cancelState
-            .lock()
-            .map(|state| state.cancelled)
-            .unwrap_or(false)
-    }
-
-    fn begin_request(&self) {
-        if let Ok(mut state) = self.cancelState.lock() {
-            state.cancelled = false;
-        }
-    }
-
-    fn mark_cancelled(&self) {
-        if let Ok(mut state) = self.cancelState.lock() {
-            state.cancelled = true;
-            state.cancelGeneration = state.cancelGeneration.wrapping_add(1);
-            let _ = state.cancelSignal.send(state.cancelGeneration);
-        }
-    }
-
-    fn cancel_receiver(&self) -> watch::Receiver<u64> {
-        self.cancelState
-            .lock()
-            .expect("ToolPkg cancel mutex poisoned")
-            .cancelSignal
-            .subscribe()
-    }
-
-    async fn waitForCancellation(mut receiver: watch::Receiver<u64>, observedGeneration: u64) {
-        while receiver.changed().await.is_ok() {
-            if *receiver.borrow() != observedGeneration {
-                break;
-            }
         }
     }
 
@@ -316,8 +261,9 @@ impl AIService for ToolPkgJsAiProviderService {
             ToolPkgProviderTokenCounts::default();
     }
 
+    /// Cancels the current hook without changing the gate held by an older worker.
     fn cancel_streaming(&mut self) {
-        self.mark_cancelled();
+        self.cancellation.cancel();
     }
 
     async fn get_models_list(&self) -> Result<Vec<ModelOption>, AiServiceError> {
@@ -334,6 +280,7 @@ impl AIService for ToolPkgJsAiProviderService {
         Ok(parseModelOptions(&decoded))
     }
 
+    /// Returns immediately while the Host runs a separately cancellable plugin request.
     async fn send_message(
         &mut self,
         request: SendMessageRequest,
@@ -387,27 +334,19 @@ impl AIService for ToolPkgJsAiProviderService {
             mutable_shared_stream(usize::MAX),
         );
         let producer = output.clone();
+        self.cancellation = MessageCancellationToken::default();
         let provider = self.clone();
-        let receiver = provider.cancel_receiver();
-        let observedGeneration = *receiver.borrow();
         defaultHostRuntimeTaskSchedulerHost()
             .scheduleHostRuntimeAsyncTask(
                 "toolpkg-ai-provider-response-stream",
                 Box::new(move || {
                     Box::pin(async move {
-                        let result = if provider.is_cancelled() {
-                            Err(AiServiceError::RequestCancelled)
-                        } else {
-                            tokio::select! {
-                                result = provider.runSendMessageHook(payload, &request, &producer) => result,
-                                _ = ToolPkgJsAiProviderService::waitForCancellation(receiver, observedGeneration) => {
-                                    Err(AiServiceError::RequestCancelled)
-                                }
+                        if let Some(Err(error)) = provider.cancellation.runUntilCancelled(
+                            provider.runSendMessageHook(payload, &request, &producer),
+                        ).await {
+                            if !matches!(error, AiServiceError::RequestCancelled) {
+                                producer.set_terminal_failure(error.to_string());
                             }
-                        };
-                        match result {
-                            Ok(()) | Err(AiServiceError::RequestCancelled) => {}
-                            Err(error) => producer.set_terminal_failure(error.to_string()),
                         }
                         producer.close();
                     })

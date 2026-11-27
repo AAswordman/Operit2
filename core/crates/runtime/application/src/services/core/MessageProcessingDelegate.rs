@@ -42,7 +42,7 @@ use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::PromptTurn;
 use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
 use operit_providers::chat::EnhancedAIService::{
-    ChatGuidanceInbox, EnhancedAIService, SendMessageCallbacks,
+    ChatGuidanceInbox, EnhancedAIService, MessageCancellationToken, SendMessageCallbacks,
 };
 use operit_providers::chat::TurnTokenUsage::{TurnTokenSnapshot, TurnTokenUsage};
 use operit_providers::runtime_support::ChatConfigurationResult;
@@ -342,6 +342,7 @@ pub struct ChatRuntime {
     pub sendJob: Option<String>,
     pub responseStream: Option<SharedAiResponseStream>,
     pub enhancedAiService: Option<EnhancedAIService>,
+    pub cancellationToken: MessageCancellationToken,
     pub guidanceInbox: Option<ChatGuidanceInbox>,
     pub streamCollectionJob: Option<String>,
     pub stateCollectionJob: Option<String>,
@@ -365,6 +366,7 @@ impl ChatRuntime {
             sendJob: None,
             responseStream: None,
             enhancedAiService: None,
+            cancellationToken: MessageCancellationToken::default(),
             guidanceInbox: None,
             streamCollectionJob: None,
             stateCollectionJob: None,
@@ -392,6 +394,7 @@ impl ChatRuntime {
         }
         let cancelledTurnId = self.activeTurnId;
         self.isCancelling = true;
+        self.cancellationToken.cancel();
         if let Some(inbox) = &self.guidanceInbox {
             inbox.closeAndClear();
         }
@@ -949,6 +952,7 @@ impl MessageProcessingDelegate {
                 .checked_add(1)
                 .expect("chat turn id must not overflow");
             runtime.isCancelling = false;
+            runtime.cancellationToken = MessageCancellationToken::default();
             runtime.executionLease = Some(executionLease);
             runtime.currentTurnOptions = turnOptions;
             runtime.requestSentAt = messageTimingNow().startedAtMs as i64;
@@ -1424,6 +1428,7 @@ impl MessageProcessingDelegate {
             }
             runtime.sendJob = None;
             runtime.responseStream = None;
+            runtime.enhancedAiService = None;
             runtime.streamCollectionJob = None;
             runtime.stateCollectionJob = None;
             runtime.activeStreamingAiMessage = None;
@@ -1653,7 +1658,8 @@ impl MessageProcessingDelegate {
         if expectedTurnId.is_none() { self.cancelSummaryTasks(Some(&chatId)); }
         let cancellation = self.withExistingRuntime(Some(chatId.clone()), |runtime| {
             runtime.reserveCancellation(expectedTurnId, self.isChatProcessing(&chatId)).map(|reservation|
-                reservation.map(|(cancelled, cancelling)| (cancelled, cancelling, runtime.responseStream.clone())))
+                reservation.map(|(cancelled, cancelling)| (cancelled, cancelling,
+                    runtime.responseStream.clone(), runtime.enhancedAiService.take())))
         });
         let mut delegate = self.clone_for_core();
         async move {
@@ -1661,32 +1667,13 @@ impl MessageProcessingDelegate {
                 if expectedTurnId.is_some() { return Err("Work runtime no longer exists".to_string()); }
                 return Ok(None);
             };
-            let Some((cancelledTurnId, cancellationTurnId, responseStream)) = reservation? else { return Ok(None); };
+            let Some((cancelledTurnId, cancellationTurnId, responseStream, service)) = reservation? else { return Ok(None); };
             if expectedTurnId.is_some() { delegate.cancelSummaryTasks(Some(&chatId)); }
             delegate.clearCurrentTurnToolInvocationCount(chatId.clone());
-            // Cancel the producer first. Closing the stream earlier lets its cleanup task
-            // remove the active service before AIMessageManager can invalidate execution.
-            let usageResult = match AIMessageManager::cancelOperation(chatId.clone()).await {
-                Ok(true) => Ok(()),
-                // The registry can be empty between segments of a live turn; invalidate the
-                // turn's service so a continuation cannot register after cancellation.
-                Ok(false) => {
-                    let fallbackService = delegate
-                        .withExistingRuntime(Some(chatId.clone()), |runtime| runtime.enhancedAiService.clone())
-                        .flatten();
-                    match fallbackService {
-                        Some(mut service) => {
-                            ChainLogger::info(
-                                SEND_CHAIN,
-                                "send.cancel.fallback",
-                                &[("chatKey", chatId.clone())],
-                            );
-                            service.cancelConversation().await
-                        }
-                        None => Ok(()),
-                    }
-                }
-                Err(error) => Err(error),
+            // The turn owns cancellation even before a send registers or after its stream closes.
+            let usageResult = match service {
+                Some(mut service) => service.cancelConversation().await,
+                None => Ok(()),
             };
             let ownsCancellation = delegate.withExistingRuntime(Some(chatId.clone()), |runtime| {
                 runtime.activeTurnId == cancellationTurnId && runtime.isCancelling
@@ -1939,7 +1926,7 @@ impl MessageProcessingDelegate {
             .withExistingRuntime(Some(chatId.clone()), |runtime| runtime.guidanceInbox.clone())
             .flatten();
         let (receiptSender, receiptReceiver) = oneshot::channel();
-        self.withRuntime(Some(chatId.clone()), |runtime| {
+        let cancellationToken = self.withRuntime(Some(chatId.clone()), |runtime| {
             runtime.enhancedAiService = Some(request.enhancedAiService.clone());
             runtime.receipt = Some(Arc::new(Mutex::new(ChatTurnReceiptState {
                 turnId, nativeExecutionId: request.turnOptions.nativeExecutionId.clone(), sender: Some(receiptSender),
@@ -1957,6 +1944,7 @@ impl MessageProcessingDelegate {
                     },
                 },
             })));
+            runtime.cancellationToken.clone()
         });
         let mut workGuard = self.startChatExecution(chatId.clone(), workTitle);
 
@@ -2150,6 +2138,7 @@ impl MessageProcessingDelegate {
             let displayProgram = ToolPkgMessageTransformBridge::prepareDisplay(&chatId, &aiMessage, 0, false).await
                 .map_err(operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed)?;
             let stream = AIMessageManager::sendMessage(AIMessageSendRequest {
+            cancellationToken,
             chatConfiguration: configuration.clone(),
             enhancedAiService: request.enhancedAiService,
             guidanceInbox: guidanceInbox.clone(),

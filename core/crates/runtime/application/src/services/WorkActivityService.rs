@@ -581,12 +581,26 @@ mod tests {
         assert_eq!(error, "Work generation is no longer active");
         assert_eq!(runtime.activeTurnId, 2);
         assert!(!runtime.isCancelling);
+        assert!(!runtime.cancellationToken.isCancelled());
         assert_eq!(runtime.reserveCancellation(Some(2), false).unwrap_err(), "Work execution is no longer running");
         assert_eq!(runtime.activeTurnId, 2);
         assert!(!runtime.isCancelling);
+        let pendingSend = runtime.cancellationToken.clone();
         assert_eq!(runtime.reserveCancellation(Some(2), true).unwrap(), Some((2, 3)));
         assert!(runtime.isCancelling);
+        assert!(pendingSend.isCancelled(), "the reserved stop must cancel pending sends immediately");
         assert!(runtime.reserveCancellation(Some(2), true).is_err());
+    }
+
+    /// Keeps a stopped turn closed when a fresh turn receives its own cancellation gate.
+    #[tokio::test]
+    async fn stoppedTurnCannotLaunchAfterTheNextTurnBegins() {
+        let mut runtime = super::super::core::MessageProcessingDelegate::ChatRuntime::new();
+        let oldSend = runtime.cancellationToken.clone();
+        runtime.reserveCancellation(None, true).unwrap();
+        runtime.cancellationToken = Default::default();
+        assert!(oldSend.runUntilCancelled(async { panic!("stopped send started") }).await.is_none());
+        assert_eq!(runtime.cancellationToken.runUntilCancelled(async { 42 }).await, Some(42));
     }
 
     /// Verifies failed request ownership is released rather than leaving phantom running work.
