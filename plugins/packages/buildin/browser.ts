@@ -145,9 +145,9 @@
         {
             "name": "run_code",
             "display": {"label": {"zh": "运行浏览器代码", "en": "Run browser code"}, "icon": "web"},
-            "description": { "zh": "运行 Playwright 风格代码片段。", "en": "Run a Playwright-style code snippet." },
+            "description": { "zh": "在当前页面执行异步 JavaScript 函数体；使用 return 返回结果，支持 await。", "en": "Run an async JavaScript function body in the current page; use return for a result and await for asynchronous work." },
             "parameters": [
-                { "name": "code", "description": { "zh": "代码片段。", "en": "Code snippet." }, "type": "string", "required": true }
+                { "name": "code", "description": { "zh": "异步 JavaScript 函数体。", "en": "Async JavaScript function body." }, "type": "string", "required": true }
             ]
         },
         {

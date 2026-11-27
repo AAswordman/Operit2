@@ -640,7 +640,10 @@ impl BrowserState {
 
     fn run_code(&mut self, code: &str) -> HostResult<String> {
         let tab = self.active_tab_mut()?;
-        let value = evaluate_value(&mut tab.session, code)?;
+        let script = format!(
+            "(async function() {{ const value = await (async function() {{\n{code}\n}})(); if (value === undefined) return null; const encoded = JSON.stringify(value); if (encoded === undefined) throw new TypeError('Result is not JSON serializable'); return JSON.parse(encoded); }})()"
+        );
+        let value = evaluate_value(&mut tab.session, &script)?;
         tab.collect_events()?;
         Ok(stringify_tool_value(value))
     }

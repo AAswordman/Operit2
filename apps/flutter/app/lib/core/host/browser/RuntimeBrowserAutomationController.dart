@@ -234,8 +234,8 @@ class RuntimeBrowserAutomationController {
     final id = '${identityHashCode(this)}-${_nextRunCodeId++}';
     return _fileUpload.capture(() async {
       await controller.runJavaScript(_runCodeKickoffScript(id, code));
-      final deadline = DateTime.now().add(const Duration(seconds: 30));
-      while (DateTime.now().isBefore(deadline)) {
+      final elapsed = Stopwatch()..start();
+      while (elapsed.elapsed < const Duration(seconds: 30)) {
         final state = _decodeRunCodeState(
           await controller.runJavaScriptReturningResult(
             _runCodePollScript(id),
@@ -274,17 +274,15 @@ class RuntimeBrowserAutomationController {
   store[id] = { pending: true };
   const encode = (value) => {
     if (value === undefined) return null;
-    try {
-      const text = JSON.stringify(value);
-      if (text !== undefined) return { json: text };
-    } catch (_) {}
-    return { text: String(value) };
+    const text = JSON.stringify(value);
+    if (text === undefined) throw new TypeError('Result is not JSON serializable');
+    return { json: text };
   };
   Promise.resolve((async function() {
 $code
-  })()).then(
-    (value) => { store[id] = { pending: false, value: encode(value) }; },
-    (error) => { store[id] = { pending: false, error: String(error && error.message || error) }; }
+  })()).then((value) => encode(value)).then(
+    (value) => { if (store[id]) store[id] = { pending: false, value }; },
+    (error) => { if (store[id]) store[id] = { pending: false, error: String(error && error.message || error) }; }
   );
 })()
 ''';
@@ -318,7 +316,7 @@ $code
     if (encoded is Map<String, Object?>) {
       final json = encoded['json'];
       if (json is String) return jsonDecode(json);
-      return encoded['text'];
+      throw StateError('browser_run_code returned an invalid result value');
     }
     return encoded;
   }

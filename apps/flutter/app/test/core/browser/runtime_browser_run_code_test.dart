@@ -35,14 +35,21 @@ void main() {
     await expectLater(browser.runCode('throw new Error("boom");'), throwsStateError);
   });
 
-  test('run code keeps non-serializable results as text', () async {
+  test('run code reports non-serializable results', () async {
     final platform = _Controller()
       ..pollStates.add({
         'pending': false,
-        'value': {'text': '[object HTMLDivElement]'},
+        'error': 'Result is not JSON serializable',
       });
     final browser = _browser(platform);
-    expect(await browser.runCode('return document.body;'), '[object HTMLDivElement]');
+    await expectLater(browser.runCode('return () => {};'), throwsStateError);
+  });
+
+  test('page evaluation preserves expression completion values', () async {
+    final platform = _Controller()..pollStates.add(42);
+    final browser = _browser(platform);
+    expect(await browser.evaluate('21 * 2'), '42');
+    expect(platform.evaluations.single, '21 * 2');
   });
 
   test('run code reports a lost page instead of hanging', () async {

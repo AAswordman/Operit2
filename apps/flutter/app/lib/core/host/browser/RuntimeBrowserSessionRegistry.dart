@@ -926,7 +926,7 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     if (controller == null) {
       throw StateError('Browser session controller is not registered');
     }
-    final result = await controller.runCode(script);
+    final result = await controller.evaluate(script);
     return _commandResult(
       success: true,
       command: command,
