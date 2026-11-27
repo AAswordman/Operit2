@@ -221,7 +221,11 @@ android {
     packaging {
         resources.excludes += "META-INF/versions/**/OSGI-INF/MANIFEST.MF"
         jniLibs {
-            useLegacyPackaging = true
+            // Keep JNI libraries uncompressed and page-aligned inside the APK so
+            // the linker mmaps them in place. Legacy packaging extracts the .so
+            // files onto the compressed F2FS data volume, where dlopen's random
+            // page faults cost seconds on cold start.
+            useLegacyPackaging = false
         }
     }
 
