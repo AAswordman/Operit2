@@ -39,6 +39,7 @@ pub struct ClaudeProvider {
     pub enable_tool_call: bool,
     pub custom_headers: Vec<(String, String)>,
     enable_claude_1h_prompt_cache: bool,
+    gateway_binding: Option<String>,
     state: Arc<Mutex<ClaudeProviderState>>,
     cancel_signal: tokio::sync::watch::Sender<bool>,
 }
@@ -69,9 +70,16 @@ impl ClaudeProvider {
             enable_tool_call,
             custom_headers,
             enable_claude_1h_prompt_cache: false,
+            gateway_binding: None,
             state: Arc::new(Mutex::new(ClaudeProviderState::default())),
             cancel_signal: tokio::sync::watch::channel(false).0,
         }
+    }
+
+    /// Binds Messages HTTP traffic to the device owning a local gateway.
+    pub fn with_gateway_binding(mut self, binding: String) -> Self {
+        self.gateway_binding = Some(binding);
+        self
     }
 
     /// Matches Kotlin enableClaude1hPromptCache; existing callers keep the default TTL.
@@ -125,7 +133,8 @@ impl ClaudeProvider {
         &self,
         request: super::ProviderHttp::RequestBuilder,
     ) -> Result<super::ProviderHttp::Response, AiServiceError> {
-        let request = request.key_getter(self.key_getter.clone(), KeyAuthentication::Header("x-api-key".into()));
+        let request = request.key_getter(self.key_getter.clone(), KeyAuthentication::Header("x-api-key".into()))
+            .gateway_binding(self.gateway_binding.clone());
         if self.is_cancelled() {
             return Err(AiServiceError::RequestCancelled);
         }
@@ -747,7 +756,11 @@ impl AIService for ClaudeProvider {
             .outputTokenCount
     }
     fn provider_model(&self) -> String {
-        format!("{}:{}", self.provider_type, self.model_name)
+        let provider = match self.gateway_binding {
+            Some(_) => "LOCAL_GATEWAY",
+            None => &self.provider_type,
+        };
+        format!("{provider}:{}", self.model_name)
     }
     fn reset_token_counts(&mut self) {
         let mut state = self

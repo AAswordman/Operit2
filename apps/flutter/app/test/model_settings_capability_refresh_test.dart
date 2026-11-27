@@ -33,6 +33,53 @@ Map<String, Object?> _participantModel({required bool followsGlobal}) => {
 
 void main() {
   testWidgets(
+    'local gateway can be selected and saved with its device routing hint',
+    (tester) async {
+      final bridge = _ModelSettingsBridge();
+      final key = GlobalKey<ModelSettingsPanelState>();
+      await _pumpModelSettings(tester, bridge, key);
+      final l10n = AppLocalizations.of(key.currentContext!)!;
+      await tester.tap(find.text('Test Provider'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip(l10n.settingsModelEditProvider));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find
+            .text(
+              l10n.settingsModelProviderTypeOption(
+                l10n.settingsModelProviderTypeOpenai,
+                'OpenAI',
+              ),
+            )
+            .last,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find
+            .text(
+              l10n.settingsModelProviderTypeOption(
+                l10n.settingsModelProviderTypeLocalGateway,
+                'Local Gateway',
+              ),
+            )
+            .last,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(l10n.settingsModelLocalGatewayHint), findsOneWidget);
+      expect(find.text('http://127.0.0.1:8000/v1/responses'), findsOneWidget);
+      await tester.tap(find.text(l10n.save).last);
+      await tester.pumpAndSettle();
+      expect(bridge.savedProvider?.providerTypeId, 'LOCAL_GATEWAY');
+      expect(
+        bridge.savedProvider?.endpoint,
+        'http://127.0.0.1:8000/v1/responses',
+      );
+      expect(bridge.savedProvider?.models.single.id, 'test-model');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'thinking changes refresh the open composer model popup without dismissing it',
     (tester) async {
       final bridge = _ObservableModelSettingsBridge();
@@ -1118,6 +1165,14 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
                   providerTypeId: 'OPENAI',
                   displayName: 'OpenAI',
                   defaultEndpoint: 'https://example.com/v1',
+                  endpointOptions: [],
+                  operations: [],
+                  models: [],
+                ).toJson(),
+                const core.ProviderCatalogEntry(
+                  providerTypeId: 'LOCAL_GATEWAY',
+                  displayName: 'Local Gateway',
+                  defaultEndpoint: 'http://127.0.0.1:8000/v1/responses',
                   endpointOptions: [],
                   operations: [],
                   models: [],

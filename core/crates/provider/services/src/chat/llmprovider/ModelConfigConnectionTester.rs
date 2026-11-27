@@ -115,7 +115,8 @@ impl ModelConfigConnectionTester {
                 return Ok(Self::report(config, items));
             }
         };
-        let parameters = Self::testParameters(&configForTest.apiProviderType, parameters);
+        let protocol = Self::testProtocol(&configForTest)?;
+        let parameters = Self::testParameters(&protocol, parameters);
         let items =
             Self::testService(serviceHandle, &configForTest.capabilities, parameters, stream).await;
 
@@ -124,7 +125,8 @@ impl ModelConfigConnectionTester {
 
     /// Tests one explicit credential using the provider's actual chat request implementation.
     pub async fn testApiKey(config: ResolvedModelConfig, context: ProviderRuntimeContext) -> Result<(), String> {
-        let parameters = Self::testParameters(&config.apiProviderType, config.parameters.clone());
+        let protocol = Self::testProtocol(&config)?;
+        let parameters = Self::testParameters(&protocol, config.parameters.clone());
         let mut service = MultiServiceManager::new(context).createServiceForConfig(config).map_err(|error| error.to_string())?;
         let result = Self::executeTestRequest(&mut service, SendMessageRequest {
             chat_history: vec![PromptTurn::new(PromptTurnKind::USER, "Hi")],
@@ -134,6 +136,14 @@ impl ModelConfigConnectionTester {
         }).await;
         service.release();
         result
+    }
+
+    /// Uses the configured gateway protocol for connection-test output parameters.
+    fn testProtocol(config: &ResolvedModelConfig) -> Result<ApiProviderType, String> {
+        match config.apiProviderType {
+            ApiProviderType::LOCAL_GATEWAY => super::LocalGatewayTransport::protocol(&config.apiEndpoint),
+            _ => Ok(config.apiProviderType.clone()),
+        }
     }
 
     /// Runs every supported probe with the same user-selected response mode.

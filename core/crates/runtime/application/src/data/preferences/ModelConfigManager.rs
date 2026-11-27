@@ -82,6 +82,8 @@ pub enum ModelConfigError {
     ModelCatalog(String),
     #[error("connection test error: {0}")]
     ConnectionTest(String),
+    #[error("local gateway error: {0}")]
+    LocalGateway(String),
     #[error("invalid thinking level: {0}")]
     InvalidThinkingLevel(String),
     #[error("API key pool error: {0}")]
@@ -117,7 +119,7 @@ struct StoredModelConnectionTest {
 /// Stores provider profiles, model profiles, and resolved model configuration.
 #[derive(Clone)]
 pub struct ModelConfigManager {
-
+    storage: Arc<dyn operit_host_api::RuntimeStorageHost>,
     modelConfigDataStore: PreferencesDataStore,
     connectionTestDataStore: CoreNodeStateStore,
     keyPoolState: Arc<Mutex<ApiKeyPoolState>>,
@@ -151,6 +153,7 @@ impl ModelConfigManager {
     pub fn default() -> Self {
         let storage = operit_store::RuntimeStorageHost::defaultRuntimeStorageHost();
         Self {
+            storage: storage.clone(),
             keyPoolState: keyPoolState(&storage),
             modelConfigDataStore: Self::preferenceStore(storage.clone(), operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH),
             connectionTestDataStore: CoreNodeStateStore::newWithStorage(storage, operit_util::RuntimeStorageLayout::RUNTIME_MODEL_CONNECTION_TESTS_PATH),
@@ -303,6 +306,10 @@ impl ModelConfigManager {
         let provider = ProviderProfile::new(providerId.clone(), name, providerType, endpoint);
         self.modelConfigDataStore.try_edit_result(|preferences| {
             Self::assertProviderNameUniqueInPreferences(preferences, &provider.name, None)?;
+            if provider.providerType == ApiProviderType::LOCAL_GATEWAY {
+                crate::services::LocalGatewayService::createBinding(self.storage.clone(), &provider)
+                    .map_err(ModelConfigError::LocalGateway)?;
+            }
             Self::writeProvider(preferences, &provider)?;
             Ok::<(), ModelConfigError>(())
         })?;
@@ -322,6 +329,14 @@ impl ModelConfigManager {
         self.modelConfigDataStore.try_edit_result(|preferences| {
             self.assertProviderExistsInPreferences(preferences, &provider.id)?;
             let current = self.readProviderFromPreferences(preferences, &provider.id)?;
+            if provider.providerType == ApiProviderType::LOCAL_GATEWAY {
+                operit_providers::chat::llmprovider::LocalGatewayTransport::protocol(&provider.endpoint)
+                    .map_err(ModelConfigError::LocalGateway)?;
+                if current.providerType != ApiProviderType::LOCAL_GATEWAY {
+                    crate::services::LocalGatewayService::createBinding(self.storage.clone(), &provider)
+                        .map_err(ModelConfigError::LocalGateway)?;
+                }
+            }
             provider.currentKeyIndex = usize::try_from(current.currentKeyIndex)
                 .ok()
                 .and_then(|index| current.apiKeyPool.get(index))
@@ -448,7 +463,23 @@ impl ModelConfigManager {
     pub fn getAvailableProviderModels(
         &self,
         providerId: &str,
-    ) -> Result<Vec<AvailableProviderModel>, ModelConfigError> {
+    ) -> impl std::future::Future<Output = Result<Vec<AvailableProviderModel>, ModelConfigError>> + 'static {
+        let manager = self.clone();
+        let providerId = providerId.to_string();
+        async move {
+            let provider = manager.getProviderProfile(&providerId)?;
+            if provider.providerType == ApiProviderType::LOCAL_GATEWAY {
+                return operit_providers::chat::llmprovider::LocalGatewayTransport::call(
+                    "listLocalGatewayModels", serde_json::json!({"bindingKey": provider.id}),
+                ).await.map_err(ModelConfigError::ModelListFetch);
+            }
+            manager.availableProviderModelsLocal(&providerId)
+        }
+    }
+
+    /// Fetches model inventory only after the gateway route has selected its owner.
+    pub(crate) fn availableProviderModelsLocal(&self, providerId: &str)
+        -> Result<Vec<AvailableProviderModel>, ModelConfigError> {
         let provider = self.getProviderProfile(providerId)?;
         if provider.providerType == ApiProviderType::LOCAL_MODEL {
             let resolver = ModelSpecResolver::new(&provider)?;
@@ -474,7 +505,12 @@ impl ModelConfigManager {
                     Arc::new(move |key, started, outcome| reportManager.reportProviderApiKey(&reportId, key, started, outcome).map_err(|error| error.to_string())),
                 )
             };
-            let remoteModels = ModelListFetcher::fetch(&provider, &providerCatalog, getter)
+            let mut discoveryProvider = provider.clone();
+            if provider.providerType == ApiProviderType::LOCAL_GATEWAY {
+                discoveryProvider.providerType = operit_providers::chat::llmprovider::LocalGatewayTransport::protocol(&provider.endpoint)
+                    .map_err(ModelConfigError::ModelListFetch)?;
+            }
+            let remoteModels = ModelListFetcher::fetch(&discoveryProvider, &providerCatalog, getter)
                 .map_err(ModelConfigError::ModelListFetch)?;
             for remoteModel in remoteModels {
                 if seenModelIds.insert(remoteModel.modelId.to_ascii_lowercase()) {

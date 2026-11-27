@@ -564,6 +564,31 @@ impl MultiServiceManager {
         spec: ProviderServiceSpec,
     ) -> Result<Box<dyn AIService>, AiServiceError> {
         match spec.params {
+            ProviderCreateParams::LocalGatewayProvider { config } => {
+                let protocol = crate::chat::llmprovider::LocalGatewayTransport::protocol(&config.apiEndpoint)
+                    .map_err(AiServiceError::RequestFailed)?;
+                let endpoint = crate::chat::llmprovider::EndpointCompleter::EndpointCompleter::completeEndpointForProviderType(
+                    &config.apiEndpoint, protocol.clone());
+                let getter = Self::createKeyGetter(runtime_context, AIServiceFactory::api_key_provider(&config));
+                let headers = AIServiceFactory::parse_custom_headers(&config.customHeaders)?.into_iter().collect();
+                match protocol {
+                    ApiProviderType::ANTHROPIC_GENERIC => Ok(Box::new(ClaudeProvider::new(
+                        endpoint, getter, config.modelId, protocol.name().into(), headers, config.capabilities.toolCall,
+                    ).with_claude_1h_prompt_cache(config.request.enableClaude1hPromptCache)
+                        .with_gateway_binding(config.providerId))),
+                    ApiProviderType::OPENAI_RESPONSES_GENERIC => Ok(Box::new(OpenAIResponsesProvider::new(
+                        endpoint, getter, config.modelId, protocol.name().into(), headers,
+                        config.capabilities.directImage, config.capabilities.directAudio, config.capabilities.directVideo,
+                        config.builtinTools, config.capabilities.toolCall, runtime_context.clone(),
+                    ).with_gateway_binding(config.providerId))),
+                    ApiProviderType::OPENAI_GENERIC => Ok(Box::new(OpenAIProvider::new_with_capabilities(
+                        endpoint, getter, config.modelId, protocol.name().into(), headers,
+                        config.capabilities.directImage, config.capabilities.directAudio, config.capabilities.directVideo,
+                        config.capabilities.toolCall,
+                    ).with_gateway_binding(config.providerId))),
+                    _ => Err(AiServiceError::RequestFailed("Unsupported local gateway protocol".into())),
+                }
+            },
             ProviderCreateParams::LocalModelProvider { model_binding, settings } => Ok(Box::new(
                 crate::chat::llmprovider::LocalModelProvider::LocalChatAIProvider::new(
                     model_binding, settings, runtime_context.clone(),

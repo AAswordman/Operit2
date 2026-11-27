@@ -42,6 +42,7 @@ pub struct OpenAIResponsesProvider {
     pub builtinTools: Vec<ModelBuiltinTool>,
     pub customHeaders: Vec<(String, String)>,
     runtimeContext: ProviderRuntimeContext,
+    gatewayBinding: Option<String>,
     state: Arc<Mutex<OpenAIResponsesProviderState>>,
 }
 
@@ -111,8 +112,15 @@ impl OpenAIResponsesProvider {
             enableToolCall,
             customHeaders,
             runtimeContext,
+            gatewayBinding: None,
             state: Arc::new(Mutex::new(OpenAIResponsesProviderState::default())),
         }
+    }
+
+    /// Binds Responses HTTP traffic to the device owning a local gateway.
+    pub fn with_gateway_binding(mut self, binding: String) -> Self {
+        self.gatewayBinding = Some(binding);
+        self
     }
 
     fn apply_usage_counts(&self, usage: &UsageCounts) {
@@ -173,7 +181,7 @@ impl OpenAIResponsesProvider {
 
     /// Creates the transport that owns both request token counting and live response usage.
     fn parentProvider(&self) -> OpenAIProvider {
-        OpenAIProvider::new_with_capabilities(
+        let mut parent = OpenAIProvider::new_with_capabilities(
             self.responsesApiEndpoint.clone(),
             self.key_getter.clone(),
             self.modelName.clone(),
@@ -185,7 +193,11 @@ impl OpenAIResponsesProvider {
             self.enableToolCall,
         )
 
-        .with_responses_api(true)
+        .with_responses_api(true);
+        if let Some(binding) = &self.gatewayBinding {
+            parent = parent.with_gateway_binding(binding.clone());
+        }
+        parent
     }
 
     /// Encodes a Responses payload with the same provider serializer used for transmission.
@@ -1251,7 +1263,11 @@ impl AIService for OpenAIResponsesProvider {
     }
 
     fn provider_model(&self) -> String {
-        format!("{}:{}", self.responsesProviderType, self.modelName)
+        let provider = match self.gatewayBinding {
+            Some(_) => "LOCAL_GATEWAY",
+            None => &self.responsesProviderType,
+        };
+        format!("{provider}:{}", self.modelName)
     }
 
     fn reset_token_counts(&mut self) {
@@ -1363,6 +1379,7 @@ impl AIService for OpenAIResponsesProvider {
         }
 
         let response = super::ProviderHttp::post(&self.responsesApiEndpoint)
+            .gateway_binding(self.gatewayBinding.clone())
             .key_getter(self.key_getter.clone(), KeyAuthentication::Bearer)
             .headers(self.headers()?)
             .json(&requestBody)

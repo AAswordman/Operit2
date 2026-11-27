@@ -3308,6 +3308,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       searchQuery: _mentionSearchQuery,
       triggerChar: triggerChar,
       hasBoundWorkspace: _currentWorkspacePath?.trim().isNotEmpty == true,
+      chatId: _currentChatId,
       showsCommands: _mentionShowsCommands,
       controller: _mentionSuggestionController,
       onCommandSelected: (option, {required completeOnly}) {

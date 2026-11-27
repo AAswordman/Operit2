@@ -828,6 +828,8 @@
   "settingsModelProviderTypeOllama": "Ollama",
   "settingsModelProviderTypeOpenaiLocal": "OpenAI 本地",
   "settingsModelProviderTypeLocalModel": "本地模型",
+  "settingsModelProviderTypeLocalGateway": "本地网关",
+  "settingsModelLocalGatewayHint": "请在运行 Magpie、CC Switch 等网关的设备上创建此供应商。本地地址指该设备的地址；其他设备会通过 route 请求它。支持 /v1/chat/completions、/v1/responses 和 /v1/messages。网关设备需保持在线并允许远程执行。",
   "localModelsLoadFailed": "本地模型状态加载失败：{error}",
   "@localModelsLoadFailed": {
     "placeholders": {

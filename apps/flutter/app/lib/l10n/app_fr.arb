@@ -849,6 +849,8 @@
   "settingsModelProviderTypeOllama": "Ollama",
   "settingsModelProviderTypeOpenaiLocal": "OpenAI Local",
   "settingsModelProviderTypeLocalModel": "Modèle local",
+  "settingsModelProviderTypeLocalGateway": "Passerelle locale",
+  "settingsModelLocalGatewayHint": "Créez ce fournisseur sur l’appareil exécutant Magpie, CC Switch ou une autre passerelle. Les adresses locales désignent cet appareil ; les autres appareils y accèdent par route. Compatible avec /v1/chat/completions, /v1/responses et /v1/messages. Gardez cet appareil en ligne et autorisez l’exécution à distance.",
   "localModelsLoadFailed": "Échec du chargement de l'état des modèles locaux : {error}",
   "@localModelsLoadFailed": {
     "placeholders": {

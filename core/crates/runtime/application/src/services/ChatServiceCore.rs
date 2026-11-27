@@ -428,6 +428,21 @@ impl ChatServiceCore {
         }
     }
 
+    /// Opens the configured gateway on its owning device using ordinary route permissions.
+    #[operit_route_macros::operit_core_route(binding = bindingKey, permission = "target:runtime.execute")]
+    pub fn openLocalGatewayResponse(&self, bindingKey: String, requestJson: String)
+        -> Result<operit_link::CoreStream<serde_json::Value>, String> {
+        super::LocalGatewayService::response(self.runtimeToolHandler().getContext(), bindingKey, requestJson)
+    }
+
+    /// Fetches gateway models from the same device that owns its inference requests.
+    #[operit_route_macros::operit_core_route(binding = bindingKey, permission = "target:runtime.execute")]
+    pub fn listLocalGatewayModels(&self, bindingKey: String)
+        -> Result<Vec<operit_model::ModelConfigData::AvailableProviderModel>, String> {
+        super::LocalGatewayService::requireOwner(&self.runtimeToolHandler().getContext(), &bindingKey)?;
+        ModelConfigManager::default().availableProviderModelsLocal(&bindingKey).map_err(|error| error.to_string())
+    }
+
     /// Clones the plugin execution host before releasing the borrowed chat core.
     #[operit_route_macros::operit_core_internal]
     pub fn toolPkgRouteHost(&self) -> AIToolHandler {

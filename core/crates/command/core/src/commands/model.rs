@@ -288,6 +288,7 @@ pub async fn run_model_command(
             let mut models = command
                 .modelManager()
                 .getAvailableProviderModels(providerId)
+                .await
                 .map_err(|error| error.to_string())?;
             if !includeHistory {
                 models.retain(|model| model.isFetched());
@@ -329,6 +330,7 @@ pub async fn run_model_command(
             let manager = command.modelManager();
             let available = manager
                 .getAvailableProviderModels(providerId)
+                .await
                 .map_err(|error| error.to_string())?
                 .into_iter()
                 .find(|model| model.modelId == modelId)

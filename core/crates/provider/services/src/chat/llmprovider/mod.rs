@@ -80,3 +80,5 @@ pub(crate) mod ProviderMediaTestSupport;
 
 #[path = "LocalModelProvider.rs"]
 pub mod LocalModelProvider;
+#[path = "LocalGatewayTransport.rs"]
+pub mod LocalGatewayTransport;

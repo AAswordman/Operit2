@@ -19,6 +19,7 @@ const Map<String, String> providerLogoAssets = <String, String>{
   'GOOGLE': 'assets/model_logos/GOOGLE.svg',
   'INFINIAI': 'assets/model_logos/INFINIAI.png',
   'LMSTUDIO': 'assets/model_logos/LMSTUDIO.svg',
+  'LOCAL_GATEWAY': 'assets/model_logos/LOCAL_GATEWAY.svg',
   'MIMO': 'assets/model_logos/MIMO.svg',
   'MINIMAX': 'assets/model_logos/MINIMAX.svg',
   'MISTRAL': 'assets/model_logos/MISTRAL.svg',

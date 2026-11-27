@@ -52,6 +52,7 @@ LMSTUDIO|LM Studio|http://localhost:1234/v1/chat/completions||list_models:GET:/v
 OLLAMA|Ollama|http://localhost:11434/v1/chat/completions||list_models:GET:/v1/models:$.data:$.id:::::::::::::false
 OPENAI_LOCAL|OpenAI Local|http://localhost:8000/v1/chat/completions||list_models:GET:/v1/models:$.data:$.id:::::::::::::false
 LOCAL_MODEL|Local Models|||
+LOCAL_GATEWAY|Local Gateway|http://localhost:8000/v1/chat/completions||list_models:GET:/v1/models:$.data:$.id:::::::::::::false
 PPINFRA|PPInfra|https://api.ppinfra.com/openai/v1/chat/completions||list_models:GET:/openai/v1/models:$.data:$.id:::::::::::::true
 NOVITA|Novita AI|https://api.novita.ai/openai/v1/chat/completions|https://api.novita.ai/openai/v1/chat/completions~OpenAI-compatible;https://api.novita.ai/anthropic/v1/messages~Anthropic-compatible|list_models:GET:/openai/v1/models:$.data:$.id:::::::::::::true
 MINIMAX|MiniMax|https://api.minimaxi.com/v1/chat/completions|https://api.minimaxi.com/v1/chat/completions~China (minimaxi.com);https://api.minimax.io/v1/chat/completions~International (minimax.io)|list_models:GET:/v1/models:$.data:$.id:::::::::::::true

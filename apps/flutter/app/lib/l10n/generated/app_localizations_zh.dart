@@ -1774,6 +1774,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelProviderTypeLocalModel => '本地模型';
 
   @override
+  String get settingsModelProviderTypeLocalGateway => '本地网关';
+
+  @override
+  String get settingsModelLocalGatewayHint =>
+      '请在运行 Magpie、CC Switch 等网关的设备上创建此供应商。本地地址指该设备的地址；其他设备会通过 route 请求它。支持 /v1/chat/completions、/v1/responses 和 /v1/messages。网关设备需保持在线并允许远程执行。';
+
+  @override
   String localModelsLoadFailed(Object error) {
     return '本地模型状态加载失败：$error';
   }

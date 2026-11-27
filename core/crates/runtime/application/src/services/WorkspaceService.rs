@@ -133,27 +133,30 @@ impl WorkspaceService {
         Ok(workspaceEntries)
     }
 
-    /// Lists ranked workspace file suggestions for an active @ mention.
+    /// Lists ranked file suggestions from the bound workspace or the chat output directory.
     #[allow(non_snake_case)]
     pub async fn listMentionWorkspaceSuggestions(
         &self,
         chatId: String,
         searchQuery: String,
     ) -> Result<Vec<WorkspaceFileEntry>, String> {
-        let workspace = self.boundWorkspace(&chatId)?
-            .ok_or_else(|| format!("Chat has no bound workspace: {chatId}"))?;
+        let roots = match self.boundWorkspace(&chatId)? {
+            Some(workspace) => workspace.folders.into_iter()
+                .map(|folder| (folder.path, folder.name)).collect::<Vec<_>>(),
+            None => vec![(self.filePathForChat(&chatId, "")?, String::new())],
+        };
         let normalizedQuery = searchQuery.trim().to_ascii_lowercase();
         let recursive = !normalizedQuery.is_empty();
         let mut suggestions = Vec::<MentionWorkspaceSuggestion>::new();
-        for folder in &workspace.folders {
-            let gitignorePath = joinFilePath(&folder.path, ".gitignore")?;
+        for (root, relativeRoot) in roots {
+            let gitignorePath = joinFilePath(&root, ".gitignore")?;
             let info = self.fileExists(&gitignorePath).await?;
             let rules = if info.exists && !info.isDirectory {
                 GitIgnoreFilter::buildRulesFromContent(&self.readText(&gitignorePath).await?)
             } else {
                 GitIgnoreFilter::defaultRules()
             };
-            let mut directories = vec![(folder.path.clone(), folder.name.clone())];
+            let mut directories = vec![(root, relativeRoot)];
             while let Some((directory, relative)) = directories.pop() {
                 for entry in self.listFiles(&directory).await? {
                     let childRelative = joinRelativePath(&relative, &entry.name)?;

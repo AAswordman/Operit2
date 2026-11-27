@@ -90,6 +90,8 @@ pub mod WorkActivityService;
 
 #[path = "LocalLlmService.rs"]
 pub(crate) mod LocalLlmService;
+#[path = "LocalGatewayService.rs"]
+pub(crate) mod LocalGatewayService;
 
 #[path = "ModelCatalogService.rs"]
 pub(crate) mod ModelCatalogService;

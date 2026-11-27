@@ -116,6 +116,7 @@ class MentionSuggestionPanel extends StatefulWidget {
     required this.searchQuery,
     required this.triggerChar,
     required this.hasBoundWorkspace,
+    required this.chatId,
     required this.onPackageSelected,
     required this.onFileSelected,
     this.showsCommands = false,
@@ -127,6 +128,7 @@ class MentionSuggestionPanel extends StatefulWidget {
   final String searchQuery;
   final String triggerChar;
   final bool hasBoundWorkspace;
+  final String? chatId;
   final ValueChanged<String> onPackageSelected;
   final ValueChanged<String> onFileSelected;
   final bool showsCommands;
@@ -310,13 +312,14 @@ class _MentionSuggestionPanelState extends State<MentionSuggestionPanel> {
       widget.triggerChar,
       widget.searchQuery,
       widget.hasBoundWorkspace,
+      widget.chatId,
       widget.viewModel,
     ].join('\n');
     if (_fileSuggestionKey == key) {
       return;
     }
     _fileSuggestionKey = key;
-    if (_showsWorkspaceSuggestions && widget.hasBoundWorkspace) {
+    if (_showsWorkspaceSuggestions && widget.chatId != null) {
       final generation = ++_fileLoadGeneration;
       _loadingFiles = true;
       _filesError = null;
@@ -371,7 +374,7 @@ class _MentionSuggestionPanelState extends State<MentionSuggestionPanel> {
 
   List<WorkspaceFileEntry> get _filteredFiles {
     if (!_showsWorkspaceSuggestions ||
-        !widget.hasBoundWorkspace ||
+        widget.chatId == null ||
         _loadingFiles ||
         _filesError != null) {
       return const <WorkspaceFileEntry>[];
@@ -618,13 +621,13 @@ class _MentionSuggestionPanelState extends State<MentionSuggestionPanel> {
           title: _mentionText(l10n, zh: 'Files', en: 'Files'),
         ),
       );
-      if (!widget.hasBoundWorkspace) {
+      if (widget.chatId == null) {
         children.add(
           _MentionSuggestionEmptyRow(
             text: _mentionText(
               l10n,
-              zh: '当前对话未绑定工作区',
-              en: 'Current chat not bound to workspace',
+              zh: '请先选择对话',
+              en: 'Select a conversation first',
             ),
           ),
         );
@@ -638,8 +641,8 @@ class _MentionSuggestionPanelState extends State<MentionSuggestionPanel> {
             text: !hasQuery
                 ? _mentionText(
                     l10n,
-                    zh: '输入名称或路径搜索工作区项目',
-                    en: 'Enter name or path to search workspace items',
+                    zh: '输入名称或路径搜索文件',
+                    en: 'Enter a name or path to search files',
                   )
                 : _mentionText(
                     l10n,

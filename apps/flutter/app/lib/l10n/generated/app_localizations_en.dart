@@ -1841,6 +1841,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelProviderTypeLocalModel => 'Local model';
 
   @override
+  String get settingsModelProviderTypeLocalGateway => 'Local gateway';
+
+  @override
+  String get settingsModelLocalGatewayHint =>
+      'Create this provider on the device running Magpie, CC Switch, or another gateway. Local addresses refer to that device; other devices reach it through route. Supports /v1/chat/completions, /v1/responses, and /v1/messages. Keep the gateway device online and allow remote execution.';
+
+  @override
   String localModelsLoadFailed(Object error) {
     return 'Failed to load local model status: $error';
   }

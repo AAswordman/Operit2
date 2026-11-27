@@ -79,6 +79,7 @@ fn all_provider_type_names() -> Vec<String> {
         ApiProviderType::OLLAMA,
         ApiProviderType::OPENAI_LOCAL,
         ApiProviderType::LOCAL_MODEL,
+        ApiProviderType::LOCAL_GATEWAY,
         ApiProviderType::PPINFRA,
         ApiProviderType::NOVITA,
         ApiProviderType::MINIMAX,

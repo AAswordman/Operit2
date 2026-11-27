@@ -3394,6 +3394,18 @@ abstract class AppLocalizations {
   /// **'Local model'**
   String get settingsModelProviderTypeLocalModel;
 
+  /// No description provided for @settingsModelProviderTypeLocalGateway.
+  ///
+  /// In en, this message translates to:
+  /// **'Local gateway'**
+  String get settingsModelProviderTypeLocalGateway;
+
+  /// No description provided for @settingsModelLocalGatewayHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Create this provider on the device running Magpie, CC Switch, or another gateway. Local addresses refer to that device; other devices reach it through route. Supports /v1/chat/completions, /v1/responses, and /v1/messages. Keep the gateway device online and allow remote execution.'**
+  String get settingsModelLocalGatewayHint;
+
   /// No description provided for @localModelsLoadFailed.
   ///
   /// In en, this message translates to:

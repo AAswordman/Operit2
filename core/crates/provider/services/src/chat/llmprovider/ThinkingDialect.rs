@@ -96,6 +96,10 @@ impl ThinkingDialect {
             ApiProviderType::GOOGLE | ApiProviderType::GEMINI_GENERIC => Some(Self::Gemini),
             ApiProviderType::OPENROUTER | ApiProviderType::NOUS_PORTAL => Some(Self::OpenRouter),
             ApiProviderType::LOCAL_MODEL => Some(Self::LocalRuntime),
+            ApiProviderType::LOCAL_GATEWAY => {
+                let protocol = super::LocalGatewayTransport::protocol(endpoint).ok()?;
+                Self::for_provider(protocol.name(), endpoint, model_id)
+            }
             ApiProviderType::DEEPSEEK => {
                 if deepseek_uses_responses_protocol(endpoint).ok()? {
                     Some(Self::DeepSeekResponses)

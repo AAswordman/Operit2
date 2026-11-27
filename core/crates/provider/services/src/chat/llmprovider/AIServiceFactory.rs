@@ -18,6 +18,7 @@ pub struct LlmRequestTraceContext {
 /// Concrete provider implementation selected for a resolved model config.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProviderServiceKind {
+    LocalGatewayProvider,
     LocalModelProvider,
     OpenAIProvider,
     OpenAIResponsesProvider,
@@ -50,6 +51,7 @@ pub enum ApiKeyProviderSpec {
 /// Provider-specific constructor parameters emitted by the service factory.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProviderCreateParams {
+    LocalGatewayProvider { config: ResolvedModelConfig },
     LocalModelProvider { model_binding: String, settings: operit_model::ModelConfigData::LocalModelRuntimeSettings },
     OpenAIProvider {
         api_endpoint: String,
@@ -295,6 +297,10 @@ impl AIServiceFactory {
         );
 
         let spec = match provider_type {
+            ApiProviderType::LOCAL_GATEWAY => Ok(ProviderServiceSpec {
+                kind: ProviderServiceKind::LocalGatewayProvider,
+                params: ProviderCreateParams::LocalGatewayProvider { config },
+            }),
             ApiProviderType::OPENAI
             | ApiProviderType::XAI
             | ApiProviderType::OPENAI_GENERIC

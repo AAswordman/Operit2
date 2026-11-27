@@ -196,6 +196,7 @@ pub(super) struct RequestBuilder {
     headers: HeaderMap,
     error: Option<AiServiceError>,
     credentials: Option<(KeyGetter, KeyAuthentication)>,
+    gateway_binding: Option<String>,
 }
 
 impl RequestBuilder {
@@ -219,7 +220,14 @@ impl RequestBuilder {
             headers: HeaderMap::new(),
             error: None,
             credentials: None,
+            gateway_binding: None,
         }
+    }
+
+    /// Selects the device Binding that owns this local gateway.
+    pub(super) fn gateway_binding(mut self, binding: Option<String>) -> Self {
+        self.gateway_binding = binding;
+        self
     }
 
     /// Applies validated provider headers without opening a transport.
@@ -325,7 +333,7 @@ impl RequestBuilder {
                     key,
                     started_at: operit_host_api::TimeUtils::currentTimeMillis(),
                 };
-                match Self::open_response(host.clone(), request).await {
+                match Self::open_response(host.clone(), request, self.gateway_binding.clone()).await {
                     Ok(mut response) => {
                         if let Some(outcome) = key_outcome(
                             response.head.statusCode,
@@ -349,15 +357,19 @@ impl RequestBuilder {
                 }
             }
         }
-        Self::open_response(host, self.request).await
+        Self::open_response(host, self.request, self.gateway_binding).await
     }
 
     /// Opens one request and preserves its response for the decision layer before body consumption.
     async fn open_response(
         host: Arc<dyn HttpHost>,
         request: HttpRequestData,
+        gateway_binding: Option<String>,
     ) -> Result<Response, AiServiceError> {
-        let mut body = ResponseBody::open(host, request)?;
+        let mut body = match gateway_binding {
+            Some(binding) => ResponseBody::open_gateway(binding, request)?,
+            None => ResponseBody::open(host, request)?,
+        };
         match body.events.recv().await {
             Some(Event::Head(head)) => {
                 let status = StatusCode::from_u16(
@@ -420,7 +432,7 @@ impl Response {
     }
 }
 
-enum Event {
+pub(super) enum Event {
     Head(HttpResponseHead),
     Bytes(Vec<u8>),
     Closed(Result<(), String>),
@@ -428,7 +440,7 @@ enum Event {
 
 /// Releases the Host request on completion, cancellation, parsing failure or consumer drop.
 pub(super) struct ResponseBody {
-    host: Arc<dyn HttpHost>,
+    host: Option<Arc<dyn HttpHost>>,
     id: String,
     events: tokio::sync::mpsc::UnboundedReceiver<Event>,
     finished: bool,
@@ -436,6 +448,20 @@ pub(super) struct ResponseBody {
 }
 
 impl ResponseBody {
+    /// Owns the routed stream until completion or cancellation by the response consumer.
+    fn open_gateway(binding: String, request: HttpRequestData) -> Result<Self, AiServiceError> {
+        let (sender, events) = tokio::sync::mpsc::unbounded_channel();
+        operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask("local-gateway-response", Box::new(move || Box::pin(async move {
+                let result = super::LocalGatewayTransport::forward_response(binding, request, &sender).await;
+                if let Err(error) = result {
+                    let _ = sender.send(Event::Closed(Err(error)));
+                }
+            })))
+            .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+        Ok(Self { host: None, id: String::new(), events, finished: false, key_attempt: None })
+    }
+
     /// Binds ordered Host callbacks to one asynchronous response consumer.
     fn open(host: Arc<dyn HttpHost>, request: HttpRequestData) -> Result<Self, AiServiceError> {
         let id = format!("provider-http-{}", uuid::Uuid::new_v4());
@@ -443,13 +469,13 @@ impl ResponseBody {
         let head_sender = sender.clone();
         let chunk_sender = sender.clone();
         let body = Self {
-            host,
+            host: Some(host.clone()),
             id,
             events,
             finished: false,
             key_attempt: None,
         };
-        body.host
+        host
             .openHttpResponseStream(
                 body.id.clone(),
                 request,
@@ -509,7 +535,9 @@ impl Stream for ResponseBody {
 impl Drop for ResponseBody {
     /// Cancels header and body reads through the same Host that opened them.
     fn drop(&mut self) {
-        let _ = self.host.closeHttpByteStream(&self.id);
+        if let Some(host) = &self.host {
+            let _ = host.closeHttpByteStream(&self.id);
+        }
     }
 }
 

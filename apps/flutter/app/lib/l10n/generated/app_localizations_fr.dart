@@ -1867,6 +1867,13 @@ class AppLocalizationsFr extends AppLocalizations {
   String get settingsModelProviderTypeLocalModel => 'Modèle local';
 
   @override
+  String get settingsModelProviderTypeLocalGateway => 'Passerelle locale';
+
+  @override
+  String get settingsModelLocalGatewayHint =>
+      'Créez ce fournisseur sur l’appareil exécutant Magpie, CC Switch ou une autre passerelle. Les adresses locales désignent cet appareil ; les autres appareils y accèdent par route. Compatible avec /v1/chat/completions, /v1/responses et /v1/messages. Gardez cet appareil en ligne et autorisez l’exécution à distance.';
+
+  @override
   String localModelsLoadFailed(Object error) {
     return 'Échec du chargement de l\'état des modèles locaux : $error';
   }

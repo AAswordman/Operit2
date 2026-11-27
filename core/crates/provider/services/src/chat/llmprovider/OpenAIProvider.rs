@@ -53,6 +53,7 @@ pub struct OpenAIProvider {
     pub enable_tool_call: bool,
     pub custom_headers: Vec<(String, String)>,
     pub preserve_reasoning_content: bool,
+    gateway_binding: Option<String>,
     responsesProtocol: ResponsesStreamProtocol,
     use_responses_api: bool,
     state: Arc<Mutex<OpenAIProviderState>>,
@@ -502,6 +503,7 @@ impl OpenAIProvider {
             enable_tool_call,
             custom_headers,
             preserve_reasoning_content: false,
+            gateway_binding: None,
             responsesProtocol: ResponsesStreamProtocol::OpenAi,
             use_responses_api: false,
             state: Arc::new(Mutex::new(OpenAIProviderState::default())),
@@ -559,10 +561,17 @@ impl OpenAIProvider {
             enable_tool_call,
             custom_headers,
             preserve_reasoning_content,
+            gateway_binding: None,
             responsesProtocol: ResponsesStreamProtocol::OpenAi,
             use_responses_api: false,
             state: Arc::new(Mutex::new(OpenAIProviderState::default())),
         }
+    }
+
+    /// Sends HTTP requests through the gateway device's Binding route.
+    pub fn with_gateway_binding(mut self, binding: String) -> Self {
+        self.gateway_binding = Some(binding);
+        self
     }
 
     /// Selects rich tool-output support by API protocol, matching Kotlin useResponsesApi.
@@ -686,7 +695,8 @@ impl OpenAIProvider {
         &self,
         request: super::ProviderHttp::RequestBuilder,
     ) -> Result<super::ProviderHttp::Response, AiServiceError> {
-        let request = request.key_getter(self.key_getter.clone(), self.key_authentication());
+        let request = request.key_getter(self.key_getter.clone(), self.key_authentication())
+            .gateway_binding(self.gateway_binding.clone());
         let provider_model = self.provider_model();
         let endpoint = self.diagnosticEndpoint()?;
         let started_at = currentTimeMillis();
@@ -2492,7 +2502,11 @@ impl AIService for OpenAIProvider {
     }
 
     fn provider_model(&self) -> String {
-        format!("{}:{}", self.provider_type, self.model_name)
+        let provider = match self.gateway_binding {
+            Some(_) => "LOCAL_GATEWAY",
+            None => &self.provider_type,
+        };
+        format!("{provider}:{}", self.model_name)
     }
 
     fn reset_token_counts(&mut self) {
@@ -2521,6 +2535,7 @@ impl AIService for OpenAIProvider {
 
     async fn test_connection(&self) -> Result<String, AiServiceError> {
         let response = super::ProviderHttp::post(&self.api_endpoint)
+            .gateway_binding(self.gateway_binding.clone())
             .key_getter(self.key_getter.clone(), self.key_authentication())
             .headers(self.headers()?)
             .json(&json!({
