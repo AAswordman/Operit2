@@ -65,15 +65,18 @@ class _ContextUsagePanelState extends State<ContextUsagePanel> {
             padding: const EdgeInsets.symmetric(vertical: 8),
             child: Text(l10n.loading, style: theme.textTheme.bodySmall),
           )
-        else if (widget.loadFailed || widget.summary == null)
-          Text(
-            l10n.contextStatsSummaryLoadFailed,
-            style: theme.textTheme.bodySmall?.copyWith(color: colors.error),
-          )
-        else if (widget.visualMode == ContextVisualMode.segmented)
-          _buildSegmentedView(theme, colors, widget.summary!)
-        else
-          _buildTelemetryView(theme, colors, widget.summary!),
+        else ...<Widget>[
+          if (widget.loadFailed || widget.summary == null)
+            Text(
+              l10n.contextStatsSummaryLoadFailed,
+              style: theme.textTheme.bodySmall?.copyWith(color: colors.error),
+            ),
+          if (widget.summary != null)
+            if (widget.visualMode == ContextVisualMode.segmented)
+              _buildSegmentedView(theme, colors, widget.summary!)
+            else
+              _buildTelemetryView(theme, colors, widget.summary!),
+        ],
         if (widget.compactError case final error?) ...<Widget>[
           const SizedBox(height: 6),
           Text(

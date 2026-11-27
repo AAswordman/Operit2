@@ -363,10 +363,102 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+
+  testWidgets(
+    'a failed poll keeps the snapshot visible with an error and allows retry',
+    (tester) async {
+      final bridge = _DeviceStatsBridge('local');
+      await tester.pumpWidget(_app(bridge));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(TopBarDynamicCapsule));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('5826 / 1000000'), findsOneWidget);
+
+      bridge.summaryError = StateError('Context lookup failed');
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('5826 / 1000000'), findsOneWidget);
+      expect(find.text('无法加载上下文信息'), findsOneWidget);
+      expect(_refreshButton(tester).onPressed, isNotNull);
+
+      bridge.summaryError = null;
+      bridge.currentWindowSize = 129774;
+      await tester.tap(find.byIcon(Icons.refresh_rounded));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('129774 / 1000000'), findsOneWidget);
+      expect(find.text('无法加载上下文信息'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets('a hung summary times out and later polls recover', (
+    tester,
+  ) async {
+    final gate = Completer<void>();
+    final bridge = _DeviceStatsBridge('local')..summaryGate = gate;
+    await tester.pumpWidget(_app(bridge));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(TopBarDynamicCapsule));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('5826 / 1000000'), findsNothing);
+    expect(_refreshButton(tester).onPressed, isNull);
+    expect(bridge.summaryCalls, 1);
+
+    await tester.pump(const Duration(seconds: 4));
+    expect(bridge.summaryCalls, 1);
+
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.text('无法加载上下文信息'), findsOneWidget);
+    expect(_refreshButton(tester).onPressed, isNotNull);
+
+    bridge.summaryGate = null;
+    bridge.currentWindowSize = 129774;
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('129774 / 1000000'), findsOneWidget);
+    expect(find.text('无法加载上下文信息'), findsNothing);
+    bridge.currentWindowSize = 999;
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('129774 / 1000000'), findsOneWidget);
+    expect(bridge.summaryCalls, 2);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a pending summary cannot update another chat', (tester) async {
+    final gate = Completer<void>();
+    final bridge = _DeviceStatsBridge('local')..summaryGate = gate;
+    await tester.pumpWidget(_app(bridge));
+    await tester.pumpAndSettle();
+
+    bridge.summaryGate = null;
+    bridge.currentWindowSize = 129774;
+    await tester.pumpWidget(_app(bridge, chatId: 'other-chat'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(TopBarDynamicCapsule));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('129774 / 1000000'), findsOneWidget);
+
+    bridge.currentWindowSize = 999;
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('129774 / 1000000'), findsOneWidget);
+    expect(_refreshButton(tester).onPressed, isNotNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 Finder _deviceSemantics(String name, String status) =>
     find.bySemanticsLabel('$name，$status');
+
+/// Reads the refresh action exposed by the context panel.
+IconButton _refreshButton(WidgetTester tester) => tester.widget<IconButton>(
+  find.ancestor(
+    of: find.byIcon(Icons.refresh_rounded),
+    matching: find.byType(IconButton),
+  ),
+);
 
 Finder _selectedRow(String name) => find.byWidgetPredicate(
   (widget) =>
@@ -438,7 +530,9 @@ class _DeviceStatsBridge extends OperitRuntimeBridge {
   Object? switchError;
   Completer<void>? topologyGate;
   Object? topologyError;
+  Completer<void>? summaryGate;
   Object? summaryError;
+  int summaryCalls = 0;
   int topologyCalls = 0;
   int compactCalls = 0;
   int currentWindowSize = 5826;
@@ -475,6 +569,8 @@ class _DeviceStatsBridge extends OperitRuntimeBridge {
       if (topologyError case final error?) throw error;
     }
     if (request.methodName == 'chatInputMenuSummary') {
+      summaryCalls++;
+      await summaryGate?.future;
       if (summaryError case final error?) throw error;
     }
     final value = switch (request.methodName) {

@@ -169,14 +169,15 @@ class _ChatContextStatsTopBarButtonState
     await Future.wait<void>(<Future<void>>[_loadSummary(), _loadTopology()]);
   }
 
+  /// Bounds each poll and keeps the last snapshot alongside any refresh error.
   Future<void> _loadSummary() async {
     if (_pollingSummary) return;
-    _pollingSummary = true;
+    setState(() => _pollingSummary = true);
     final epoch = _requestEpoch;
     try {
-      final summary = await widget.viewModel.chatCore.chatInputMenuSummary(
-        chatId: widget.currentChatId,
-      );
+      final summary = await widget.viewModel.chatCore
+          .chatInputMenuSummary(chatId: widget.currentChatId)
+          .timeout(const Duration(seconds: 5));
       if (!mounted || epoch != _requestEpoch) return;
       setState(() {
         _summary = summary;
@@ -185,8 +186,8 @@ class _ChatContextStatsTopBarButtonState
       });
     } catch (_) {
       if (!mounted || epoch != _requestEpoch) return;
+      // Keep the last snapshot; the panel displays the refresh error alongside it.
       setState(() {
-        _summary = null;
         _loading = false;
         _loadFailed = true;
       });

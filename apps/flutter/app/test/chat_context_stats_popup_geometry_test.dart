@@ -128,6 +128,8 @@ void main() {
           }
         }
         await tester.pumpWidget(const SizedBox.shrink());
+        // Let the last summary timeout complete after stopping the poll timer.
+        await tester.pump(const Duration(seconds: 5));
       });
     }
   }
