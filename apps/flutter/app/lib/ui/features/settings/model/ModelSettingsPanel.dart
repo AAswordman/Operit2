@@ -893,8 +893,10 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
         currentKeyIndex: provider.currentKeyIndex,
         keyRotationMode: provider.keyRotationMode,
         customHeaders: _customHeadersController.text,
-        requestLimitPerMinute: int.parse(_requestLimitController.text),
-        maxConcurrentRequests: int.parse(_maxConcurrentController.text),
+        requestLimitPerMinute:
+            int.tryParse(_requestLimitController.text.trim()) ?? 0,
+        maxConcurrentRequests:
+            int.tryParse(_maxConcurrentController.text.trim()) ?? 0,
         models: provider.models,
       ),
       keyId: entry.id,
@@ -928,8 +930,10 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
             !_isCodexProvider && !_isLocalProvider && _useKeyPool,
         apiKeyPool: _keyPool,
         customHeaders: _customHeadersController.text,
-        requestLimitPerMinute: int.parse(_requestLimitController.text),
-        maxConcurrentRequests: int.parse(_maxConcurrentController.text),
+        requestLimitPerMinute:
+            int.tryParse(_requestLimitController.text.trim()) ?? 0,
+        maxConcurrentRequests:
+            int.tryParse(_maxConcurrentController.text.trim()) ?? 0,
       ),
     );
   }
@@ -7928,14 +7932,17 @@ class _DialogTextField extends StatelessWidget {
         keyboardType:
             keyboardType ??
             (numberOnly ? TextInputType.number : TextInputType.text),
-        inputFormatters: inputFormatters,
+        inputFormatters: [
+          if (numberOnly) FilteringTextInputFormatter.digitsOnly,
+          ...?inputFormatters,
+        ],
         decoration: InputDecoration(labelText: label, suffixIcon: suffixIcon),
         validator: (value) {
           final text = value?.trim() ?? '';
           if (requiredField && text.isEmpty) {
             return label;
           }
-          if (numberOnly && text.isEmpty) {
+          if (numberOnly && int.tryParse(text) == null) {
             return label;
           }
           return validator?.call(value);
