@@ -2,7 +2,7 @@
 pub const SERVICE_TARGET: &str = "edge.scene";
 pub const VERSION: u32 = 1;
 pub const ACTIONS: &[&str] = &[
-    "capabilities", "config.read", "config.apply", "config.clear", "state",
+    "capabilities", "config.read", "config.apply", "config.show", "config.clear", "state",
     "pack.begin", "pack.chunk", "pack.commit", "pack.abort", "pack.remove",
 ];
 pub const MAX_REQUEST: usize = 1024;

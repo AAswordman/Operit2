@@ -18,3 +18,12 @@ pub fn createPeerService<R: PeerRouter + 'static>(
 ) -> Result<Arc<HostRuntimePeerService>, String> {
     HostRuntimePeerService::newWithLimits(host, router, info, limits)
 }
+
+/// Creates an Edge receiver that uses directory discovery as a client only.
+/// Pairing, sessions and Space authority use the same shared runtime.
+#[allow(non_snake_case)]
+pub fn createEndpointPeerService<R: PeerRouter + 'static>(
+    host: Arc<HostManager>, router: &Arc<R>, info: LinkDeviceInfo, limits: PeerRuntimeLimits,
+) -> Result<Arc<HostRuntimePeerService>, String> {
+    HostRuntimePeerService::newEndpointWithLimits(host, router, info, limits)
+}

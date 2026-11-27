@@ -1,6 +1,8 @@
 #![allow(non_snake_case)]
 // Compile the actual firmware modules, including the same stream renderer.
 mod core_access;
+#[path = "../../../board/src/tcp.rs"]
+mod tcp;
 #[path = "../../../src/device_preferences.rs"]
 mod device_preferences;
 #[path = "../../../src/device_space_ui.rs"]
@@ -14,6 +16,8 @@ mod wav;
 mod edge_chat;
 mod ipc;
 mod memory;
+#[path = "../../../src/runtime_profile.rs"]
+mod runtime_profile;
 #[path = "../../../src/runtime_storage_codec.rs"]
 mod runtime_storage_codec;
 #[path = "../../../src/runtime_storage_host.rs"]
@@ -23,8 +27,6 @@ mod runtime_storage_pack;
 mod send_receipt;
 #[path = "../../../src/space_work.rs"]
 mod space_work;
-#[path = "../../../src/standalone_chat.rs"]
-mod standalone_chat;
 mod storage;
 mod storage_pressure;
 use operit_link::protocol::LinkDeviceInfo;
@@ -158,23 +160,18 @@ fn initialize(
     let storage = storage::DeviceStorage::open(backend)?;
     let discoveryEnabled = std::env::var("OPERIT_SIM_DISCOVERY")
         .map_or(true, |value| value != "false" && value != "0");
-    let discovery = if discoveryEnabled {
+    let mut hostManager = operit_host_api::HostManager::HostManager::default()
+        .withTcpHost(Arc::new(tcp::Esp32TcpHost))
+        .withRuntimeStorageHost(storage.clone())
+        .withHostRuntimeTaskSchedulerHost(scheduler.clone());
+    if discoveryEnabled {
         let address = std::env::var("OPERIT_SIM_DISCOVERY_IP")?.parse::<std::net::IpAddr>()?;
         if address.is_unspecified() {
             return Err("Simulator discovery requires one explicit interface IP".into());
         }
-        operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::forInterface(address)
-    } else {
-        operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::default()
-    };
-    let hostManager = operit_host_api::HostManager::HostManager::default()
-        .withTcpHost(Arc::new(operit_host_native_common::NativeTcpHost))
-        .withHttpHost(Arc::new(
-            operit_host_native_common::NativeHttpHost::default(),
-        ))
-        .withServiceDiscoveryHost(Arc::new(discovery))
-        .withRuntimeStorageHost(storage.clone())
-        .withHostRuntimeTaskSchedulerHost(scheduler.clone());
+        hostManager = hostManager.withServiceDiscoveryHost(Arc::new(
+            operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::forInterface(address)));
+    }
     let identityStore =
         operit_edge_sdk::storage::CoreNodeIdentityStore::CoreNodeIdentityStore::new(storage.clone());
     let nodeId =
@@ -187,9 +184,9 @@ fn initialize(
         pairingIncarnation: None,
     };
     let edgeRouter = EdgePeerRouter::new(nodeId.clone());
-    let sceneService = Arc::new(
-        operit_edge_sdk::scene::SceneService::new(320, 240, 24, true).with_storage(storage.clone())?,
-    );
+    let sceneService = Arc::new(operit_edge_sdk::scene::SceneService::new_with_limits(
+        320, 240, 24, true, runtime_profile::SCENE_LIMITS,
+    )?.with_storage(storage.clone())?);
     let speech = Arc::new(device_speech::DeviceSpeech::default());
     let (speechOutput, speechInput) = speech.handlers();
     let mut edgeNode = operit_edge_sdk::device::EdgeNode::fromHostManager(hostManager.clone())
@@ -201,11 +198,11 @@ fn initialize(
         ))
         .withStreamHandlers(speechOutput, speechInput);
     let services = {
-        let peers = operit_edge_sdk::device::peer::createPeerService(
+        let peers = runtime_profile::create_peer_service(
             Arc::new(hostManager.clone()),
             &edgeRouter,
             deviceInfo.clone(),
-            operit_edge_sdk::runtime::HostRuntimePeerService::PeerRuntimeLimits::constrained(),
+            runtime_profile::peer_limits(),
         )?;
         let portMode = if configuredAddress.ends_with(":0") {
             PeerHostPortMode::Automatic
@@ -379,7 +376,7 @@ struct SimulatorState<'a> {
     speech: serde_json::Value,
     playback: Vec<serde_json::Value>,
     coreAccess: serde_json::Value,
-    deviceSpace: serde_json::Value,
+    deviceSpace: device_space_ui::DeviceSpaceSnapshot,
     memory: serde_json::Value,
     storage: serde_json::Value,
     deviceId: &'a str,
@@ -392,8 +389,7 @@ struct SimulatorState<'a> {
     spaceJoinAssignmentVersion: u64,
     error: String,
     lastAction: String,
-    plugins: serde_json::Value,
-    chat: serde_json::Value,
+    chat: edge_chat::ChatSnapshot,
     chatPreview: String,
     chatScreen: String,
     chatTask: String,
@@ -416,21 +412,6 @@ impl Simulator {
 
     /// Applies the same periodic route and device-configuration updates as the firmware.
     fn poll(&mut self) -> Result<(), String> {
-        let scope = operit_edge_sdk::runtime::NodeSpaceService::NodeSpaceContext::spaceStore(
-            self.spaceService.as_ref(),
-        )
-        .space()?;
-        let preferences =
-            operit_edge_sdk::storage::DevicePreferencesStore::DevicePreferencesStore::new(self.storage.clone())
-                .read(&scope.spaceId, &self.nodeId)?
-                .values();
-        if let Err(message) = standalone_chat::configure(
-            self.hostManager.httpHost.clone(),
-            &scope.spaceId,
-            preferences.get("chat"),
-        ) {
-            *self.error.lock().unwrap() = message;
-        }
         self.chatRoute.poll(self.services.clone());
         self.deviceSpaceUi.poll();
         self.pollReview()?;
@@ -526,8 +507,8 @@ impl Simulator {
             );
         }
         let chat_state = edge_chat::snapshot();
-        let chat_screen = edge_chat::screenTextFromSnapshot(&chat_state);
-        let chat_preview = edge_chat::previewFromSnapshot(&chat_state);
+        let chat_screen = edge_chat::screenTextFromSnapshot(&chat_state).to_owned();
+        let chat_preview = "Operit".to_string();
         sendReceipt.capture(edge_chat::takeSendResult());
         let pairing_code = services
             .peers()
@@ -577,7 +558,6 @@ impl Simulator {
                 .unwrap_or(0),
             error: error.lock().unwrap().clone(),
             lastAction: lastAction.lock().unwrap().clone(),
-            plugins: edge_chat::pluginsSnapshot(),
             chat: chat_state,
             chatPreview: chat_preview,
             chatScreen: chat_screen,
@@ -782,10 +762,6 @@ impl Simulator {
                 }) {
                     review.pending = None;
                 }
-            } else if action.starts_with("edge_plugins_")
-                || action.starts_with("edge_plugin_")
-            {
-                edge_chat::pluginsAction(action)?;
             } else if action == "edge_pair" || action == "edge_unpair" {
                 if action == "edge_unpair" {
                     *coreAccess.lock().await = core_access::CoreAccess::default();
@@ -831,14 +807,8 @@ impl Simulator {
                 deviceSpaceUi.reset();
                 *coreAccess.lock().await = core_access::CoreAccess::default();
                 chatRoute.reset();
-            } else if action == "edge_history_older" || action == "edge_history_newer" {
-                edge_chat::moveHistory(action == "edge_history_older")?;
-            } else if action == "edge_conversations_refresh" {
-                edge_chat::conversationsAction()?;
             } else if action == "edge_new" {
                 edge_chat::newChat()?;
-            } else if let Some(chatId) = action.strip_prefix("edge_select:") {
-                edge_chat::selectChat(chatId)?;
             } else {
                 return Err("Unknown simulator action".to_string());
             }

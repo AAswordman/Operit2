@@ -1,3 +1,5 @@
+import {firmwareCheckFromOutput} from '../firmware-check.mts';
+import type {FirmwareCheck} from '../firmware-check.mts';
 import {simulatorBuildArguments, simulatorExecutable} from '../simulator-build.mts';
 import {requestUi, takeUiCommands, completeUiCommand} from './ui-debug.mts';
 import {spawn} from 'node:child_process';
@@ -13,7 +15,7 @@ import path from 'node:path';
 import {networkInterfaces} from 'node:os';
 import type {IncomingMessage, ServerResponse} from 'node:http';
 
-async function jsonBody(req: IncomingMessage, limit: number, message: string): Promise<unknown> {
+async function jsonBody(req: IncomingMessage, limit: number, message: string, allowEmpty = false): Promise<unknown> {
   const chunks: Buffer[] = []; let length = 0;
   for await (const chunk of req) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -21,6 +23,7 @@ async function jsonBody(req: IncomingMessage, limit: number, message: string): P
     if (length > limit) throw new Error(message);
     chunks.push(bytes);
   }
+  if (allowEmpty && length === 0) return {};
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
 }
 
@@ -35,6 +38,7 @@ const ipcSockets = new Set<Socket>();
 let starting = false;
 let ready = false;
 let output = '';
+let firmwareCheck: FirmwareCheck = {status: 'not-checked'};
 let sequence = 0;
 let lifecycle = 0;
 let previousExit: Promise<void> = Promise.resolve();
@@ -157,7 +161,7 @@ export async function copySimulatorBinary(source: string, destination: string,
 }
 
 /** Prepares the bounded desktop Host dependencies and owns the current simulator process. */
-async function start(): Promise<void> {
+async function start(mode: 'firmware' | 'runtime-only'): Promise<void> {
   if (child || starting) return;
   starting = true;
   const generation = ++lifecycle;
@@ -167,6 +171,37 @@ async function start(): Promise<void> {
     if (generation !== lifecycle) return;
     output = '';
     ready = false;
+    firmwareCheck = {status: mode === 'firmware' ? 'checking' : 'not-checked'};
+    if (mode === 'firmware') {
+      // Cargo's own dependency cache invalidates on source/config/toolchain changes.
+      // Never infer Xtensa image size from the desktop executable or an old report.
+      const checking = spawn(process.execPath,
+        ['--experimental-strip-types', path.join(root, 'edge/boards/esp32/editor/src/build.mts'), '--firmware-check'],
+        {cwd: root, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe']});
+      child = checking;
+      let checkOutput = '';
+      const appendCheck = (chunk: Buffer): void => {
+        checkOutput = (checkOutput + chunk.toString()).slice(-64000);
+        if (generation === lifecycle) output = (output + chunk.toString()).slice(-12000);
+      };
+      checking.stdout.on('data', appendCheck);
+      checking.stderr.on('data', appendCheck);
+      let code: number | null;
+      try {
+        code = await new Promise<number | null>((resolve, reject) => {
+          checking.once('error', reject);
+          checking.once('close', resolve);
+        });
+      } catch (error) {
+        if (generation !== lifecycle) return;
+        firmwareCheck = {status: 'failed', error: String(error)};
+        throw error;
+      }
+      if (generation !== lifecycle || child !== checking) return;
+      firmwareCheck = firmwareCheckFromOutput(checkOutput, code);
+      if (firmwareCheck.status !== 'passed') throw new Error(firmwareCheck.error);
+    }
+    if (generation !== lifecycle) return;
     // Spawn the binary directly so stop and editor shutdown own the real process.
     const python = path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
     const prepare = spawn(python, ['-X', 'utf8', 'edge/boards/esp32/editor/prepare-simulator.py'], {
@@ -222,19 +257,33 @@ async function start(): Promise<void> {
       output = (output + `\nSimulator exited (code=${code}, signal=${signal})\n`).slice(-12000);
       if (child === runtime) { child = null; ready = false; closeIpc(); failPending(); }
     });
-  } catch (e) { child = null; ready = false; closeIpc(); failPending(); output += String(e); }
-  finally { starting = false; }
+  } catch (e) {
+    if (generation !== lifecycle) return;
+    child = null; ready = false; closeIpc(); failPending(); output += String(e);
+  } finally { if (generation === lifecycle) starting = false; }
 }
 
 /** Stops the owned process and closes all IPC resources. */
 export function stopSimulator(): void {
   lifecycle += 1;
   const processToStop = child;
+  const checking = firmwareCheck.status === 'checking';
+  if (checking) firmwareCheck = {status: 'not-checked', error: '固件检查已取消'};
+  starting = false;
   child = null;
   ready = false;
   closeIpc();
   failPending();
-  processToStop?.kill();
+  if (checking && processToStop?.pid) {
+    if (process.platform === 'win32') {
+      const termination = spawn('taskkill', ['/pid', String(processToStop.pid), '/t', '/f'],
+        {windowsHide: true, stdio: 'ignore'});
+      termination.once('error', () => { processToStop.kill(); });
+    } else {
+      try { process.kill(-processToStop.pid, 'SIGTERM'); }
+      catch { processToStop.kill(); }
+    }
+  } else processToStop?.kill();
 }
 
 /** Sends one correlated command over the current simulator connection. */
@@ -262,7 +311,14 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
   };
   try {
     if (url.pathname === '/api/simulator/start' && req.method === 'POST') {
-      void start(); reply(202, {ok: true});
+      const input = await jsonBody(req, 256, '启动参数超过限制', true);
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('无效的模拟器启动参数');
+      const fields = input as {mode?: unknown};
+      if (Object.keys(fields).some(key => key !== 'mode') ||
+          (fields.mode !== undefined && fields.mode !== 'firmware' && fields.mode !== 'runtime-only')) {
+        throw new Error('mode 必须是 firmware 或 runtime-only');
+      }
+      void start(fields.mode === 'runtime-only' ? 'runtime-only' : 'firmware'); reply(202, {ok: true});
     } else if (url.pathname === '/api/simulator/stop' && req.method === 'POST') {
       stopSimulator(); reply(200, {ok: true});
     } else if (url.pathname === '/api/simulator/state' && req.method === 'GET') {
@@ -271,7 +327,7 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         const raw = device as {address?: unknown};
         if (typeof raw.address === 'string') raw.address = advertisedAddress(raw.address);
       }
-      reply(200, {running: !!child || starting, ready, output, device});
+      reply(200, {running: !!child || starting, ready, output, device, firmwareCheck});
     } else if (url.pathname === '/api/simulator/storage' && req.method === 'GET') {
       reply(200, await rpc('storageRecords'));
     } else if (url.pathname === '/api/simulator/storage-control' && req.method === 'POST') {

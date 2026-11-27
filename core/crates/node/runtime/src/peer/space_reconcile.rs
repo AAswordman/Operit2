@@ -180,7 +180,7 @@ fn peerProtocol(service: &dyn NodeSpaceContext, peer: &str) -> Option<u32> {
 fn rememberPeerProtocol(service: &dyn NodeSpaceContext, peer: &str, version: u32) {
     let store = PeerStateStore::new(service.storage());
     if store.putRecord(RECONCILE_CAPS_PATH, peer, &version).is_err() {
-        operit_util::AppLogger::AppLogger::w("SpaceReconcile", &format!(
+        operit_util::app_log!(w, "SpaceReconcile", &format!(
             "failed to remember protocol version {version} for {peer}"
         ));
     }
@@ -196,7 +196,9 @@ fn rememberPeerProtocol(service: &dyn NodeSpaceContext, peer: &str, version: u32
 fn mergePeerOperations(service: &dyn NodeSpaceContext, peer: &str, spaceId: &str,
     operations: &[SyncOperation]) -> Result<usize, String> {
     if operations.len() > MAX_RECONCILE_PAGE_OPS {
-        space_doctor::updateCounters(service, |counters| counters.oversizeOffersRefused += 1).ok();
+        if cfg!(feature = "full") && !service.isSpaceEndpoint() {
+            space_doctor::updateCounters(service, |counters| counters.oversizeOffersRefused += 1).ok();
+        }
         return Err(format!(
             "Reconciliation page of {} operations exceeds the {} operation ceiling",
             operations.len(),
@@ -208,7 +210,7 @@ fn mergePeerOperations(service: &dyn NodeSpaceContext, peer: &str, spaceId: &str
     let mut applied = 0;
     for operation in operations {
         if operation.originDeviceId != peer || known.contains(&operation.opId) { continue; }
-        let record = NetworkControlCommandRecord::deserialize(&operation.payload)
+        let record = operit_util::SerializationSetup::fromJsonValueRef::<NetworkControlCommandRecord>(&operation.payload)
             .map_err(|e| format!("Reconciliation offered a malformed control command: {e}"))?;
         if record.spaceId != spaceId {
             return Err("Reconciliation offered a command from another Space".into());
@@ -236,7 +238,7 @@ pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreC
     let merged = service.networkControlStore().currentSpaceOperations()?;
     let state = service.networkControlStore().currentState()?;
     service.spaceStore().alignRemoteMemberRecord(peer.to_string(), state.memberNodeIds.contains(peer))?;
-    operit_util::AppLogger::AppLogger::trace("SpaceReconcile", &format!(
+    operit_util::app_log!(trace, "SpaceReconcile", &format!(
         "shared Space reconciliation with {peer}: merged {applied} operations, members {}",
         state.memberNodeIds.len()
     ));
@@ -333,7 +335,7 @@ pub(crate) async fn reconcile(service: &dyn NodeSpaceContext, peer: &str) -> Res
         mergePeerOperations(service, peer, &current.spaceId, &outcome.operations)?;
         service.spaceStore().importDeviceProfiles(outcome.deviceProfiles.clone())?;
         if let Some(gap) = outcome.historyGap.filter(|gap| !gap.is_empty()) {
-            operit_util::AppLogger::AppLogger::w("SpaceReconcile", &format!(
+            operit_util::app_log!(w, "SpaceReconcile", &format!(
                 "peer {peer} cannot backfill origins below its export floors: {gap:?}"
             ));
         }
@@ -367,17 +369,20 @@ pub(crate) async fn reconcile(service: &dyn NodeSpaceContext, peer: &str) -> Res
     } else {
         space_join::leave(service)?;
     }
-    operit_util::AppLogger::AppLogger::trace("SpaceReconcile", &format!(
+    operit_util::app_log!(trace, "SpaceReconcile", &format!(
         "shared Space reconciliation with {peer}: members {}, localIsMember={localIsMember}, converged={converged} in {rounds} round(s)",
         state.memberNodeIds.len()
     ));
-    space_doctor::updateCounters(service, |counters| {
-        counters.reconcileExchanges += 1;
-        counters.reconcileRounds += rounds as u64;
-        if !converged {
-            counters.reconcileIncomplete += 1;
-        }
-    }).ok();
+    // Core owns diagnostic trends; endpoint reconciliation only persists authority.
+    if cfg!(feature = "full") && !service.isSpaceEndpoint() {
+        space_doctor::updateCounters(service, |counters| {
+            counters.reconcileExchanges += 1;
+            counters.reconcileRounds += rounds as u64;
+            if !converged {
+                counters.reconcileIncomplete += 1;
+            }
+        }).ok();
+    }
     Ok(SharedSpaceReconciliation {
         spaceId: current.spaceId,
         members: state.memberNodeIds.into_iter().collect(),

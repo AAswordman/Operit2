@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>ESP32 任务猫</title>
+<style>
+:root{color-scheme:dark;font:15px/1.6 system-ui,'Microsoft YaHei',sans-serif;color:#edf3f5;background:#131b25}body{max-width:760px;margin:auto;padding:36px 24px}h1{font-size:30px;margin-bottom:8px}p{color:#aebfce}section{background:#1d2937;border:1px solid #344758;border-radius:18px;padding:24px;margin:20px 0}button{border:0;border-radius:10px;padding:10px 18px;margin:6px 8px 6px 0;background:#acdccc;color:#132b24;cursor:pointer;font:inherit}button:disabled{opacity:.5}#state{color:#b4e5d5}#issues{white-space:pre-wrap;color:#f6beaa}.device{padding:12px 0;border-bottom:1px solid #344758}.detail{font-size:12px;overflow-wrap:anywhere;color:#aebfce}
+</style>
+<h1>ESP32 任务猫</h1><p>任务在本机运行，猫在 ESP32 上陪你。关闭此页仍会同步任务状态。</p>
+<section><strong id="state">正在识别设备…</strong><div id="devices"></div><p id="issues"></p><button id="refresh">刷新设备</button><button id="disconnect">停止展示</button></section>
+<section><strong>工作 · 思考 · 待批准 · 完成 · 空闲 · 异常</strong><p>先在本机的「设备空间」配对 ESP32，并加入同一空间。只有一台在线设备时自动连接，多台时点击选择。</p><p>此试验版使用任务状态猫的精简像素动画，每种状态保留两帧。首次连接会上传素材，请等待设备确认。</p></section>
+<script>
+const $=id=>document.getElementById(id);
+async function request(action,nodeId){const raw=await Esp32Studio.request({action,nodeId});const result=typeof raw==='string'?JSON.parse(raw):raw;if(!result.ok)throw Error(result.error);return result.data;}
+async function run(work){document.querySelectorAll('button').forEach(b=>b.disabled=true);$('issues').textContent='';try{await work();}catch(e){$('state').textContent='尚未连接';$('issues').textContent=String(e.message||e);}finally{document.querySelectorAll('button').forEach(b=>b.disabled=false);}}
+async function refresh(){const data=await request('discover');$('devices').replaceChildren();$('state').textContent=data.connected?'已连接 · '+data.connected.target.label:'等待选择在线 ESP32';for(const device of data.devices){const row=document.createElement('div');row.className='device';const title=document.createElement('div');title.textContent=device.target.label+' · '+device.model;const detail=document.createElement('div');detail.className='detail';detail.textContent=device.target.nodeId;const button=document.createElement('button');button.textContent='在这台设备上展示';button.onclick=()=>run(async()=>{await request('connect',device.target.nodeId);$('state').textContent='已连接 · '+device.target.label;});row.append(title,detail,button);$('devices').append(row);}$('issues').textContent=data.issues.map(i=>i.label+'：'+i.message).join('\n');}
+$('refresh').onclick=()=>run(refresh);$('disconnect').onclick=()=>run(async()=>{await request('disconnect');$('state').textContent='已停止展示';});if(window.Esp32Studio)run(refresh);else window.addEventListener("operitComposeDslInterfacesReady",()=>run(refresh),{once:true});
+</script></html>

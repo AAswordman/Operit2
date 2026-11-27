@@ -9,6 +9,25 @@ pub struct EditorIpc {
     input: Lines<BufReader<TcpStream>>,
 }
 
+// State replies can include base64 PCM beside the live node. Grow in small
+// blocks so Vec doubling does not require two large allocations on the device heap.
+#[derive(Default)]
+struct ReplyBytes(Vec<u8>);
+impl std::io::Write for ReplyBytes {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let required = self.0.len().checked_add(bytes.len())
+            .ok_or(std::io::ErrorKind::OutOfMemory)?;
+        if required > self.0.capacity() {
+            let capacity = required.max(self.0.capacity().saturating_add(512));
+            self.0.try_reserve_exact(capacity - self.0.len())
+                .map_err(|_| std::io::ErrorKind::OutOfMemory)?;
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+}
+
 /// Borrows a successful command result until its single wire serialization.
 #[derive(Serialize)]
 struct Response<'a, T: Serialize> {
@@ -66,9 +85,10 @@ impl EditorIpc {
         &mut self,
         value: impl Serialize,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut bytes = serde_json::to_vec(&value)?;
-        bytes.push(b'\n');
-        self.input.get_mut().get_mut().write_all(&bytes).await?;
+        let mut bytes = ReplyBytes::default();
+        serde_json::to_writer(&mut bytes, &value)?;
+        self.input.get_mut().get_mut().write_all(&bytes.0).await?;
+        self.input.get_mut().get_mut().write_all(b"\n").await?;
         Ok(())
     }
 }
@@ -126,7 +146,7 @@ mod tests {
     async fn responses_preserve_unicode_and_order() {
         let (mut ipc, editor) = connection().await;
         let replies = [
-            serde_json::json!({"id": 1, "value": "聊天内容"}),
+            serde_json::json!({"id": 1, "value": "聊天内容🙂".repeat(1800)}),
             serde_json::json!({"id": 2, "error": "closed"}),
         ];
         let mut lines = BufReader::new(editor).lines();

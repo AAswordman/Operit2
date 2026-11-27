@@ -17,12 +17,29 @@ fn routedArgs(value: &mut CoreValue) -> Option<&mut CoreValue> {
         _ => None,
     }
 }
+// Route metadata has one codec regardless of the operation's payload type.
+fn encodeRoute(route: RoutedCoreRequest<()>, payload: CoreValue) -> Result<CoreValue, CoreLinkError> {
+    let mut envelope = toCoreValue(route).map_err(|failure| error(failure.to_string()))?;
+    if let CoreValue::Map(fields) = &mut envelope { fields.insert("payload".into(), payload); }
+    Ok(envelope)
+}
+fn decodeRoute(mut envelope: CoreValue) -> Result<(RoutedCoreRequest<()>, CoreValue), CoreLinkError> {
+    let slot = match &mut envelope {
+        CoreValue::Map(fields) => fields.get_mut("payload"),
+        CoreValue::List(fields) => fields.get_mut(5),
+        _ => None,
+    }.ok_or_else(|| error("Missing routed payload"))?;
+    let payload = std::mem::replace(slot, CoreValue::Null);
+    Ok((fromCoreValue(envelope).map_err(|failure| error(failure.to_string()))?, payload))
+}
 fn encodeRouted<T: Clone + serde::Serialize>(
     mut request: RoutedCoreRequest<T>, args: fn(&mut T) -> &mut CoreValue,
 ) -> Result<T, CoreLinkError> {
     let payload = std::mem::replace(args(&mut request.payload), CoreValue::Null);
     let mut wire = request.payload.clone();
-    let mut envelope = toCoreValue(request).map_err(|failure| error(failure.to_string()))?;
+    let RoutedCoreRequest { spaceId, originNodeId, targetNodeId, ttl, routeKind, payload: metadata } = request;
+    let mut envelope = encodeRoute(RoutedCoreRequest { spaceId, originNodeId, targetNodeId, ttl, routeKind, payload: () },
+        toCoreValue(metadata).map_err(|failure| error(failure.to_string()))?)?;
     *routedArgs(&mut envelope).ok_or_else(|| error("Missing routed args"))? = payload;
     *args(&mut wire) = envelope;
     Ok(wire)
@@ -31,9 +48,11 @@ fn decodeRouted<T: serde::de::DeserializeOwned>(
     mut envelope: CoreValue, args: fn(&mut T) -> &mut CoreValue,
 ) -> Result<RoutedCoreRequest<T>, CoreLinkError> {
     let payload = routedArgs(&mut envelope).map(|value| std::mem::replace(value, CoreValue::Null));
-    let mut request: RoutedCoreRequest<T> = fromCoreValue(envelope).map_err(|failure| error(failure.to_string()))?;
-    if let Some(payload) = payload { *args(&mut request.payload) = payload; }
-    Ok(request)
+    let (route, metadata) = decodeRoute(envelope)?;
+    let mut request = fromCoreValue(metadata).map_err(|failure| error(failure.to_string()))?;
+    if let Some(payload) = payload { *args(&mut request) = payload; }
+    let RoutedCoreRequest { spaceId, originNodeId, targetNodeId, ttl, routeKind, .. } = route;
+    Ok(RoutedCoreRequest { spaceId, originNodeId, targetNodeId, ttl, routeKind, payload: request })
 }
 pub(super) fn routedCall(request: RoutedCoreRequest<CoreCallRequest>) -> Result<CoreCallRequest, CoreLinkError> {
     encodeRouted(request, |request| &mut request.args)

@@ -2869,7 +2869,7 @@ fn bounded_json_buffer_measures_utf8_escapes_and_fails_without_growing() {
             value.serialize(&mut serde_json::Serializer::with_formatter(writer,
                 serde_json::ser::PrettyFormatter::with_indent(indent)))
         };
-        let mut writer = super::PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true };
+        let mut writer = super::PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true, compact: false, inString: false, escaped: false };
         encode(&mut writer).unwrap();
         let measured = writer.measured;
         writer.bytes.try_reserve_exact(measured).unwrap();
@@ -2882,7 +2882,7 @@ fn bounded_json_buffer_measures_utf8_escapes_and_fails_without_growing() {
         value.serialize(&mut serde_json::Serializer::with_formatter(&mut expected,
             serde_json::ser::PrettyFormatter::with_indent(indent))).unwrap();
         assert_eq!(writer.bytes, expected);
-        let mut tooSmall = super::PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: false, bounded: true };
+        let mut tooSmall = super::PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: false, bounded: true, compact: false, inString: false, escaped: false };
         assert!(encode(&mut tooSmall).is_err());
         assert_eq!(tooSmall.bytes.capacity(), 0);
     }
@@ -2926,6 +2926,40 @@ fn constrained_typed_replace_preserves_raw_payloads_and_rolls_back_failed_public
     let writes = host.writeCount();
     make().removeEntry("absent").unwrap();
     assert_eq!(host.writeCount(), writes);
+}
+
+#[test]
+fn constrained_typed_replace_keeps_durable_state_when_either_encoding_pass_fails() {
+    use serde::Serialize;
+    struct FailingValue {
+        calls: std::cell::Cell<usize>,
+        failAt: usize,
+    }
+    impl Serialize for FailingValue {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let call = self.calls.get() + 1;
+            self.calls.set(call);
+            if call == self.failAt { return Err(serde::ser::Error::custom("injected serializer failure")); }
+            json!({"status": "approved", "text": "设备\n\""}).serialize(serializer)
+        }
+    }
+    let host = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
+    let path = "runtime/two-pass-replace.json";
+    let original = br#"{"__operit_preferences_schema_version":1,"keep":{"n":1e2},"request":"pending"}"#;
+    let store = super::CoreNodeStateStore::newWithStorage(host.clone(), path).withSchema(1, |_, _| Ok(()));
+    for failAt in [1, 2] {
+        host.writeBytes(path, original).unwrap();
+        let writes = host.writeCount();
+        let value = FailingValue { calls: std::cell::Cell::new(0), failAt };
+        let error = store.setTypedEntry("request", &value).unwrap_err();
+        assert!(error.to_string().contains("injected serializer failure"));
+        assert_eq!(value.calls.get(), failAt);
+        assert_eq!(host.writeCount(), writes, "neither encoding pass may publish partial bytes");
+        assert_eq!(host.readBytes(path).unwrap(), original);
+        assert_eq!(store.typedEntry::<String>("request").unwrap().as_deref(), Some("pending"));
+        store.setTypedEntry("request", &"approved").unwrap();
+        assert_eq!(store.typedEntry::<String>("request").unwrap().as_deref(), Some("approved"));
+    }
 }
 
 #[test]
@@ -3546,4 +3580,67 @@ fn replay_skips_remigration_when_owner_state_covers_history() {
     let value = PreferencesDataStore::newWithStorage(host.clone(), path).withSchema(9, counted_migrations)
         .data().unwrap().get(&stringPreferencesKey("provider_p")).cloned();
     assert_eq!(value, Some(json!({"name":"Current"})));
+}
+
+#[test]
+fn node_local_schema_codec_keeps_state_atomic_without_a_transaction_view() {
+    let key = stringPreferencesKey("record");
+    let mut values = Preferences::default();
+    values.set(&key, json!({"old": 7}));
+    let failed = crate::Transaction::migration::Definition::from_node_preferences(|_, staged| {
+        staged.set(&stringPreferencesKey("partial"), true);
+        Err(PreferencesDataStoreError::Message("codec failed".into()))
+    });
+    let before = values.clone();
+    assert!(failed.state(0, &mut values).is_err());
+    assert_eq!(values, before);
+    assert!(values.view.is_none());
+    let migration = crate::Transaction::migration::Definition::from_node_preferences(|_, staged| {
+        let key = stringPreferencesKey("record");
+        let old = staged.get(&key).unwrap()["old"].clone();
+        staged.set(&key, json!({"new": old}));
+        Ok(())
+    });
+    migration.state(0, &mut values).unwrap();
+    assert_eq!(values.get(&key), Some(&json!({"new":7})));
+    assert!(values.view.is_none());
+    assert!(values.commit.is_none());
+}
+
+#[test]
+fn typed_node_records_keep_cached_edits_migrations_and_numeric_map_keys() {
+    #[derive(Debug, serde::Deserialize, serde::Serialize, PartialEq)]
+    enum Status { Running { task: String }, Completed }
+    #[derive(Debug, serde::Deserialize, serde::Serialize, PartialEq)]
+    struct Record { states: BTreeMap<u64, Status>, revision: u64 }
+    for releasePreferencesCache in [false, true] {
+        let host = Arc::new(MemoryStorageHost { releasePreferencesCache, ..Default::default() });
+        let path = "runtime/typed-cached-migration.preferences.json";
+        host.writeBytes(path, b"{}").unwrap();
+        let record = Record {
+            states: BTreeMap::from([
+                (u64::MAX, Status::Running { task: "任务猫\n\"".into() }),
+                (0, Status::Completed),
+            ]),
+            revision: u64::MAX,
+        };
+        let value = serde_json::to_value(&record).unwrap();
+        let store = super::CoreNodeStateStore::newWithStorage(host.clone(), path)
+            .withSchema(1, move |_, p| {
+                p.set(&stringPreferencesKey("cat"), value.clone());
+                Ok(())
+            });
+        assert_eq!(store.typedEntry::<Record>("cat").unwrap(), Some(record));
+        let changed = Record { states: BTreeMap::from([(42, Status::Completed)]), revision: 7 };
+        store.edit(|p| p.set(&stringPreferencesKey("cat"), serde_json::to_value(&changed).unwrap())).unwrap();
+        let writes = host.writeCount();
+        assert_eq!(store.typedEntries::<Record>().unwrap(), vec![("cat".into(), changed)]);
+        store.edit(|p| p.set(&stringPreferencesKey("unrelated"), json!(["not", "a", "record"]))).unwrap();
+        let afterEdit = host.writeCount();
+        assert!(afterEdit >= writes);
+        assert_eq!(store.typedEntry::<Record>("cat").unwrap().unwrap().revision, 7);
+        assert!(store.typedEntry::<Record>("absent").unwrap().is_none());
+        assert!(store.typedEntries::<Record>().is_err());
+        assert_eq!(host.writeCount(), afterEdit, "typed reads must not republish a current snapshot");
+    }
 }

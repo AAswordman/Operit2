@@ -25,7 +25,9 @@ tokio = { version = "1", default-features = false }
 uuid = { version = "1", features = ["v4"] }
 
 [features]
-default = []
+default = ["directory"]
+# Products with only LAN discovery can omit the HTTP directory client/server.
+directory = ["operit-node-edge?/directory", "operit-node-runtime?/peer-directory"]
 # Authenticated pairing, device space membership and typed remote services.
 space = ["dep:operit-node-edge", "dep:operit-node-runtime", "dep:operit-host-api", "dep:operit-link", "dep:operit-store", "dep:operit-edge-contract", "dep:operit-proxy-edge"]
 # Display products can opt into scene rendering; headless products do not link it.
@@ -36,7 +38,7 @@ http-agent = ["dep:operit-host-api", "dep:serde_json", "dep:tokio"]
 [dependencies]
 serde_json = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["sync", "time"], optional = true }
-operit-node-edge = { path = "node", optional = true }
+operit-node-edge = { path = "node", default-features = false, optional = true }
 operit-edge-contract = { path = "contract", optional = true }
 operit-proxy-edge = { path = "proxy", optional = true }
 operit-edge-scene = { path = "scene", optional = true }

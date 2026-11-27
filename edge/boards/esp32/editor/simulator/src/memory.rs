@@ -1,7 +1,7 @@
 //! A fixed Rust heap and guarded task stacks; desktop memory cannot extend these budgets.
 use linked_list_allocator::LockedHeap;
 use operit_host_native_scheduler::{DEVICE_ASYNC_STACK_BYTES, DEVICE_BLOCKING_STACK_BYTES};
-use operit_edge_sdk::runtime::HostRuntimePeerService::PeerRuntimeLimits;
+
 use std::{
     alloc::{GlobalAlloc, Layout},
     cell::UnsafeCell,
@@ -84,7 +84,7 @@ pub fn snapshot() -> serde_json::Value {
         let heap = ALLOCATOR.heap.lock();
         (heap.used(), heap.free())
     };
-    let limits = PeerRuntimeLimits::constrained();
+    let limits = crate::runtime_profile::peer_limits();
     serde_json::json!({
         "profile": "esp32-2432s028", "kind": "enforced-budgets", "liveTelemetry": !cfg!(test),
         "heapCapacityBytes": HEAP_BYTES, "heapUsedBytes": used, "heapFreeBytes": free,
@@ -93,7 +93,7 @@ pub fn snapshot() -> serde_json::Value {
         "lastFailedAllocationBytes": ALLOCATOR.lastFailure.load(Ordering::Relaxed),
         "mainStackBytes": MAIN_STACK_BYTES, "asyncStackBytes": DEVICE_ASYNC_STACK_BYTES, "blockingStackBytes": DEVICE_BLOCKING_STACK_BYTES,
         "stackEnforcement": "fixed-mapping-with-guard-page",
-        "maxPeerMessageBytes": limits.maxMessageBytes, "incomingSessions": limits.incomingSessions,
+        "maxPeerMessageBytes": limits.maxMessageBytes, "maxPeerFrameBytes": limits.maxFrameBytes, "incomingSessions": limits.incomingSessions,
         "pendingPairings": limits.pendingPairings, "concurrentProbes": limits.concurrentProbes,
         "enforcedOperations": ["rust-allocation", "main-stack", "async-worker-stack", "blocking-worker-stack", "framed-peer-send", "framed-peer-receive"],
         "note": "Simulator Rust allocations only. Task stacks are separate fixed mappings. C/Wasm UI memory is reported by the renderer; these are not board measurements."
@@ -252,6 +252,7 @@ mod tests {
         assert_eq!(snapshot["heapCapacityBytes"], 262144);
         assert_eq!(snapshot["mainStackBytes"], 16384);
         assert_eq!(snapshot["maxPeerMessageBytes"], 8192);
+        assert_eq!(snapshot["maxPeerFrameBytes"], 2048);
         assert_eq!(snapshot["kind"], "enforced-budgets");
         assert!(snapshot.get("largest8BitBlock").is_none());
     }

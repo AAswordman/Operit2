@@ -659,7 +659,7 @@ impl SyncOperationStore {
         store.withEncodedEntries(|entries| {
             let mut operations = BTreeMap::<String, SyncOperation>::new();
             for value in entries.values() {
-                let operation: SyncOperation = serde_json::from_str(value.get())
+                let operation: SyncOperation = serde_json::from_slice(value.get().as_bytes())
                     .map_err(|error| error.to_string())?;
                 if let Some(previous) = operations.insert(operation.opId.clone(), operation.clone()) {
                     if previous != operation {
@@ -735,7 +735,7 @@ impl SyncOperationStore {
             };
             if let Err(error) = store.publishOutbox(self) {
                 let error = format!("preference outbox path={path}: {error}");
-                operit_util::AppLogger::AppLogger::w("CoreSyncTrace", &error);
+                operit_util::app_log!(w, "CoreSyncTrace", &error);
                 errors.push(error);
             }
         }
@@ -749,6 +749,9 @@ impl SyncOperationStore {
         &self,
         operation: &SyncOperation,
     ) -> Result<(), SyncOperationStoreError> {
+        if !cfg!(feature = "sqlite-journal") {
+            return Err(SyncOperationStoreError::Message("SQLite transaction journals require the sqlite-journal feature".into()));
+        }
         self.appendOperation(operation)?;
         self.recordAppliedOperation(operation)?;
         publishSyncMutation();
@@ -888,6 +891,9 @@ impl SyncOperationStore {
         &self,
         path: &str,
     ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        if !cfg!(feature = "sqlite-journal") {
+            return Err(SyncOperationStoreError::Message("SQLite transaction journals require the sqlite-journal feature".into()));
+        }
         let routes = crate::PreferenceLayout::routes(self.storageHost.clone()).map_err(SyncOperationStoreError::Message)?;
         let paths = std::iter::once(path).chain(routes.iter().filter(|(_, target)| target.as_str() == path).map(|(source, _)| source.as_str()));
         let mut history = Vec::new();
@@ -1278,7 +1284,7 @@ impl SyncOperationStore {
         let encryption = PreferencesEncryption::load_existing()
             .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?;
         let storedPayload: StoredEncryptedSyncPayload =
-            serde_json::from_value(operation.payload.clone())?;
+            operit_util::SerializationSetup::fromJsonValue(operation.payload.clone())?;
         let payloadBytes = serde_json::to_vec(&storedPayload.envelope)?;
         let decryptedPayload = encryption
             .decrypt(
@@ -1322,7 +1328,7 @@ impl SyncOperationStore {
             })?;
             let trimmed = line.trim();
             if !trimmed.is_empty() {
-                match serde_json::from_str::<SyncOperation>(trimmed) {
+                match serde_json::from_slice::<SyncOperation>(trimmed.as_bytes()) {
                     Ok(operation) => {
                         scan.decodedLines += 1;
                         scan.highestSequence = scan.highestSequence.max(operation.sequence);
@@ -1377,7 +1383,7 @@ impl SyncOperationStore {
                 if trimmed.is_empty() {
                     continue;
                 }
-                let stored: StoredSyncEntityVersion = serde_json::from_str(trimmed)?;
+                let stored: StoredSyncEntityVersion = serde_json::from_slice(trimmed.as_bytes())?;
                 if state
                     .value
                     .get(&stored.entityKey)
@@ -1406,7 +1412,7 @@ impl SyncOperationStore {
         if content.trim().is_empty() {
             return Ok(T::default());
         }
-        Ok(serde_json::from_str(&content)?)
+        Ok(serde_json::from_slice(content.as_bytes())?)
     }
 
     /// Writes one JSON metadata document while its dedicated metadata lock is held.
@@ -1717,6 +1723,12 @@ fn networkControlClockKey(originDeviceId: &str) -> String {
 mod SyncOperationStoreTests;
 
 impl SyncOperationStore {
+    #[cfg(not(feature = "sqlite-journal"))]
+    pub(crate) fn withJournal<T>(&self, _action: impl FnOnce(&mut crate::Transaction::Journal) -> Result<T, SyncOperationStoreError>) -> Result<T, SyncOperationStoreError> {
+        Err(SyncOperationStoreError::Message("SQLite transaction journals require the sqlite-journal feature".into()))
+    }
+
+    #[cfg(feature = "sqlite-journal")]
     pub(crate) fn withJournal<T>(&self, action: impl FnOnce(&mut crate::Transaction::Journal) -> Result<T, SyncOperationStoreError>) -> Result<T, SyncOperationStoreError> {
         let mut state = lockSyncState(&self.sharedState.journal, "transaction journal")?;
         if state.is_none() {
@@ -1726,7 +1738,7 @@ impl SyncOperationStore {
                 // Opening owners against the empty journal rebuilds their normal replay baselines.
                 let clock = self.readJson(&self.clockPath()).unwrap_or_default();
                 journal.reset_failed_import(&clock)?;
-                operit_util::AppLogger::AppLogger::w("TransactionSync", &format!(
+                operit_util::app_log!(w, "TransactionSync", &format!(
                     "sync_legacy.reset root={} reason={error}; rebuilding baselines from business data",
                     self.rootPath,
                 ));
@@ -1734,13 +1746,13 @@ impl SyncOperationStore {
             journal.reclaim_sql_copies()?;
             // Also clean leftovers from earlier migrations, without importing them again.
             if let Err(error) = self.cleanLegacyJournal() {
-                operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_legacy.cleanup: {error}"));
+                operit_util::app_log!(w, "TransactionSync", &format!("sync_legacy.cleanup: {error}"));
             }
             #[cfg(feature = "full")]
             if let Err(error) = journal.migrate_file_index(self.storageHost.as_ref()).and_then(|_| {
                 journal.collect_blobs(self.storageHost.as_ref(), &self.rootPath, currentTimeMillis()?, None)
             }) {
-                operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_files.upgrade: {error}"));
+                operit_util::app_log!(w, "TransactionSync", &format!("sync_files.upgrade: {error}"));
             }
             *state = Some(journal);
         }
@@ -1777,7 +1789,7 @@ impl SyncOperationStore {
             journal.collect_blobs(self.storageHost.as_ref(), &self.rootPath, now, sql_paths)
         }) {
             *last = 0;
-            operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_files.cleanup: {error}"));
+            operit_util::app_log!(w, "TransactionSync", &format!("sync_files.cleanup: {error}"));
         }
     }
 
@@ -1787,10 +1799,16 @@ impl SyncOperationStore {
     }
 
     pub(crate) fn retirementOperations(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        if !cfg!(feature = "sqlite-journal") {
+            return Err(SyncOperationStoreError::Message("SQLite transaction journals require the sqlite-journal feature".into()));
+        }
         self.withJournal(|journal| journal.headers(None))?.iter().map(|record| self.original(&record.op_id)).collect()
     }
 
     pub(crate) fn retireTransactionJournal(&self) -> Result<(), SyncOperationStoreError> {
+        if !cfg!(feature = "sqlite-journal") {
+            return Err(SyncOperationStoreError::Message("SQLite transaction journals require the sqlite-journal feature".into()));
+        }
         self.withJournal(|journal| journal.transaction(|tx| {
             for table in ["originals", "legacy_receipts", "transaction_owners", "transaction_files", "transaction_commits"] {
                 tx.execute(&format!("DELETE FROM {table}"), vec![])?;
@@ -1840,14 +1858,14 @@ impl SyncOperationStore {
                 }
             }
             for (id, raw) in &received.pending {
-                let pending: Value = serde_json::from_str(raw.get())?;
+                let pending: Value = serde_json::from_slice(raw.get().as_bytes())?;
                 let stored: SyncOperation = if pending.get("record").is_some() {
-                    let record: JournalRecord = serde_json::from_value(pending["record"].clone())?;
+                    let record: JournalRecord = operit_util::SerializationSetup::fromJsonValue(pending["record"].clone())?;
                     let key = pending.get("revision").and_then(Value::as_str)
                         .map(|revision| format!("{id}:{revision}")).unwrap_or_else(|| id.clone());
                     let path = format!("{}/pending/{:x}.json", self.rootPath, Sha256::digest(key.as_bytes()));
                     self.readRecordAt(&path, &record)?
-                } else { serde_json::from_value(pending.clone())? };
+                } else { operit_util::SerializationSetup::fromJsonValue(pending.clone())? };
                 let original = self.decodeOperationPayload(stored)?;
                 if original.opId != *id { return Err(SyncOperationStoreError::Message("Invalid legacy pending identity".into())); }
                 let stored = self.encodeOperationPayload(&original)?;
@@ -1859,11 +1877,20 @@ impl SyncOperationStore {
     }
 
     fn original(&self, id: &str) -> Result<SyncOperation, SyncOperationStoreError> {
+        if !cfg!(feature = "sqlite-journal") {
+            return Err(SyncOperationStoreError::Message("SQLite transaction journals require the sqlite-journal feature".into()));
+        }
         let stored = self.withJournal(|journal| journal.get(id))?
             .ok_or_else(|| SyncOperationStoreError::Message(format!("Missing immutable original {id}")))?;
         self.decodeOperationPayload(stored)
     }
 
+    #[cfg(not(feature = "sqlite-journal"))]
+    fn storeOriginals(&self, _operations: &[SyncOperation], _pending: bool) -> Result<(), SyncOperationStoreError> {
+        Err(SyncOperationStoreError::Message("SQLite transaction journals require the sqlite-journal feature".into()))
+    }
+
+    #[cfg(feature = "sqlite-journal")]
     fn storeOriginals(&self, operations: &[SyncOperation], pending: bool) -> Result<(), SyncOperationStoreError> {
         for operation in operations { crate::SyncBlobIo::verify_transaction(self.storageHost.as_ref(),&self.rootPath,operation).map_err(SyncOperationStoreError::Message)?; }
         let encryption = operations.iter().any(encryptedPreferenceSyncOperation)
@@ -1879,6 +1906,9 @@ impl SyncOperationStore {
     }
 
     pub fn appendLocalOperation(&self, originDeviceId: &str, operation: NewSyncOperation) -> Result<SyncOperation, SyncOperationStoreError> {
+        if !cfg!(feature = "sqlite-journal") {
+            return Err(SyncOperationStoreError::Message("SQLite transaction journals require the sqlite-journal feature".into()));
+        }
         let control = beginControlWrite(&self.storageHost, &self.rootPath, operation.domain == NETWORK_CONTROL_SYNC_DOMAIN)?;
         let mut cached = lockSyncState(&self.sharedState.clock, "clock")?;
         let mut clock = self.loadCachedJson(&mut cached, &self.clockPath())?.clone();
@@ -1916,6 +1946,9 @@ impl SyncOperationStore {
     }
 
     pub fn appendOperations(&self, operations: &[SyncOperation]) -> Result<(), SyncOperationStoreError> {
+        if !cfg!(feature = "sqlite-journal") {
+            return Err(SyncOperationStoreError::Message("SQLite transaction journals require the sqlite-journal feature".into()));
+        }
         if operations.is_empty() { return Ok(()); }
         let control = beginControlWrite(&self.storageHost, &self.rootPath, operations.iter().any(|op| op.domain == NETWORK_CONTROL_SYNC_DOMAIN))?;
         let mut cached = lockSyncState(&self.sharedState.clock, "clock")?;
@@ -1943,6 +1976,9 @@ impl SyncOperationStore {
     }
 
     pub fn appendUnobservedOperations(&self, operations: &[SyncOperation]) -> Result<(), SyncOperationStoreError> {
+        if !cfg!(feature = "sqlite-journal") {
+            return Err(SyncOperationStoreError::Message("SQLite transaction journals require the sqlite-journal feature".into()));
+        }
         if operations.is_empty() { return Ok(()); }
         let control = beginControlWrite(&self.storageHost, &self.rootPath, operations.iter().any(|op| op.domain == NETWORK_CONTROL_SYNC_DOMAIN))?;
         self.storeOriginals(operations, false)?;
@@ -1953,6 +1989,9 @@ impl SyncOperationStore {
     }
 
     pub fn receiveOperations(&self, operations: &[SyncOperation]) -> Result<(), SyncOperationStoreError> {
+        if !cfg!(feature = "sqlite-journal") {
+            return Err(SyncOperationStoreError::Message("SQLite transaction journals require the sqlite-journal feature".into()));
+        }
         if operations.is_empty() { return Ok(()); }
         let control = beginControlWrite(&self.storageHost, &self.rootPath, operations.iter().any(|op| op.domain == NETWORK_CONTROL_SYNC_DOMAIN))?;
         self.storeOriginals(operations, true)?;
@@ -2007,7 +2046,7 @@ impl SyncOperationStore {
             }
             Ok(())
         }))?;
-        operit_util::AppLogger::AppLogger::i("TransactionSync", &format!("sync_file.ignored domain={domain} path={path} reason=excluded"));
+        operit_util::app_log!(i, "TransactionSync", &format!("sync_file.ignored domain={domain} path={path} reason=excluded"));
         Ok(())
     }
 
@@ -2068,6 +2107,9 @@ impl SyncOperationStore {
     pub fn receipt(&self) -> Result<SyncReceipt, SyncOperationStoreError> { self.withJournal(|journal| journal.receipt()) }
 
     fn readJournalWithInventory<K: SyncOperationKnowledge>(&self, clock: &K, query: JournalQuery<'_>, mut inventory: Option<&mut BTreeSet<String>>) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        if !cfg!(feature = "sqlite-journal") {
+            return Err(SyncOperationStoreError::Message("SQLite transaction journals require the sqlite-journal feature".into()));
+        }
         if query.limit == 0 && inventory.is_none() { return Ok(Vec::new()); }
         let floors = if query.export_floors {
             let mut state = lockSyncState(&self.sharedState.exportFloors, "export floors")?;

@@ -12,6 +12,21 @@ pub trait PeerRouter: Send + Sync {
     fn localNodeId(&self) -> String;
     /// Declares whether connection policy is owned by an endpoint projection rather than a Core journal.
     fn nodeLocalControlProjection(&self) -> bool { false }
+    /// Reads revocation through the router's authority backend. Endpoint
+    /// adapters reuse their installed node-local projection instead of linking
+    /// Core's replicated preference backend into the shared session engine.
+    #[cfg(feature = "peer-runtime")]
+    fn peerConnectionRevoked(
+        &self, storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>, node: &str,
+    ) -> Result<bool, String> {
+        use operit_store::NetworkControlStore::NetworkControlStore;
+        let control = if self.nodeLocalControlProjection() {
+            NetworkControlStore::newNodeLocal(storage)
+        } else {
+            NetworkControlStore::new(storage)
+        }?;
+        control.nodeIsDisconnected(node)
+    }
     async fn routedCall(
         &self,
         previousNodeId: String,

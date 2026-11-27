@@ -1,6 +1,8 @@
 //! Real TCP, shared pairing and shared admission, with no application runtime.
 #[path = "../../../src/runtime_storage_pack.rs"]
 mod runtime_storage_pack;
+#[path = "../../../src/runtime_profile.rs"]
+mod runtime_profile;
 use runtime_storage_pack as pack;
 #[path = "../../../src/runtime_storage_codec.rs"]
 mod codec;
@@ -30,7 +32,22 @@ struct Storage(
     bool,
     Mutex<codec::tests::PhysicalNvs>,
     Mutex<Option<usize>>,
+    Arc<JournalStorage>,
 );
+/// Full Core needs the production SQLite journal as well as in-memory preferences.
+/// Each fixture owns a private temporary namespace, shared across reopen operations.
+struct JournalStorage(operit_host_native_storage::NativeRuntimeStorageHost);
+impl Default for JournalStorage {
+    fn default() -> Self {
+        let root = std::env::temp_dir().join(format!("operit-space-test-{}", uuid::Uuid::new_v4()));
+        Self(operit_host_native_storage::NativeRuntimeStorageHost::new(root.clone(), root.join("workspaces")))
+    }
+}
+impl Drop for JournalStorage {
+    fn drop(&mut self) {
+        if let Some(root) = self.0.runtimeRootDir() { let _ = std::fs::remove_dir_all(root); }
+    }
+}
 impl Storage {
     fn update(&self, change: impl FnOnce(&mut BTreeMap<String, Vec<u8>>)) -> HostResult<()> {
         let mut files = self.0.lock().unwrap();
@@ -68,6 +85,10 @@ impl Storage {
     }
 }
 impl RuntimeStorageHost for Storage {
+    fn openTransactionDatabase(&self, path: &str) -> HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
+        if self.1 { return Err(HostError::new("Endpoint storage has no SQL journal")); }
+        self.4.0.openTransactionDatabase(path)
+    }
     fn retainPreferencesCache(&self) -> bool { !self.1 }
     fn nodeLocalApplicationHistoryLimit(&self) -> Option<usize> { self.1.then_some(2) }
 
@@ -180,6 +201,7 @@ fn node(
         bounded,
         Mutex::default(),
         Mutex::default(),
+        Default::default(),
     )))
 }
 fn node_from_storage(
@@ -207,7 +229,9 @@ fn node_from_storage(
         hostRuntimeTaskSchedulerHost: Some(Arc::new(NativeHostRuntimeTaskSchedulerHost)),
         ..HostManager::default()
     });
-    let peer = operit_edge_sdk::device::peer::createPeerService(
+    let create = if bounded { runtime_profile::create_peer_service }
+        else { operit_edge_sdk::device::peer::createPeerService };
+    let peer = create(
         host.clone(),
         &router,
         operit_link::protocol::LinkDeviceInfo {
@@ -824,7 +848,7 @@ async fn approval_retry_recovers_each_partial_write_without_duplicate_admission(
                     // in-memory decision or operation can rescue this retry.
                     gateway_peer.stop().await.unwrap();
                     wait_for_peer_availability(&applicant_peer, &gateway.localNodeId(), false).await;
-                    let recovered = Arc::new(Storage(Mutex::new(storage.0.lock().unwrap().clone()), true, Mutex::new(storage.2.lock().unwrap().clone()), Mutex::default()));
+                    let recovered = Arc::new(Storage(Mutex::new(storage.0.lock().unwrap().clone()), true, Mutex::new(storage.2.lock().unwrap().clone()), Mutex::default(), storage.4.clone()));
                     (storage, gateway_router, gateway_peer, gateway) = node_from_storage(recovered);
                     gateway_peer.startListening(&[PeerTransport::Tcp]).await.unwrap();
                     wait_for_peer_availability(&applicant_peer, &gateway.localNodeId(), true).await;
@@ -838,7 +862,7 @@ async fn approval_retry_recovers_each_partial_write_without_duplicate_admission(
             }).count();
             assert_eq!(admissions, 1, "failure point {failure} appended duplicate admissions");
             // Reopen fresh storage identity: no process-shared store caches.
-            let reopened = Arc::new(Storage(Mutex::new(storage.0.lock().unwrap().clone()), true, Mutex::new(storage.2.lock().unwrap().clone()), Mutex::default()));
+            let reopened = Arc::new(Storage(Mutex::new(storage.0.lock().unwrap().clone()), true, Mutex::new(storage.2.lock().unwrap().clone()), Mutex::default(), storage.4.clone()));
             let restored = NodeSpaceService::new(reopened, gateway_peer.clone()).unwrap();
             assert_eq!(restored.spaceChannelScope(&applicant_id).unwrap(), gateway.spaceChannelScope(&applicant_id).unwrap());
         }).await;
@@ -975,6 +999,7 @@ mod core_edge {
         router: Arc<RecordingEdgeRouter>,
         peers: Arc<HostRuntimePeerService>,
         service: Arc<NodeSpaceService>,
+        scene: Arc<operit_edge_sdk::scene::SceneService>,
     }
 
     fn host(storage: Arc<Storage>) -> Arc<HostManager> {
@@ -1074,7 +1099,7 @@ mod core_edge {
             traffic: Mutex::default(),
         });
         let host = host(storage.clone());
-        let peers = operit_edge_sdk::device::peer::createPeerService(
+        let peers = runtime_profile::create_peer_service(
             host.clone(),
             &router,
             operit_link::protocol::LinkDeviceInfo {
@@ -1100,14 +1125,28 @@ mod core_edge {
             })
             .unwrap();
         inner.installSpace(service.clone()).unwrap();
-        let edge = EdgeNode::fromHostManager((*host).clone())
-            .withNodeServices(NodeServices::new(peers.clone()));
+        let scene = Arc::new(operit_edge_sdk::scene::SceneService::new_with_limits(
+            320, 240, 24, true, runtime_profile::SCENE_LIMITS,
+        ).unwrap().with_storage(storage.clone()).unwrap());
+        let handler_scene = scene.clone();
+        let edge = operit_edge_sdk::device::EdgeNode::headless().withCallHandler(Arc::new(move |request| {
+                let scene = handler_scene.clone();
+                Box::pin(async move {
+                    if request.target != "edge.scene" { return None; }
+                    Some(CoreCallResponse {
+                        requestId: request.requestId,
+                        result: scene.call(&request.methodName, request.args)
+                            .map_err(CoreLinkError::internal),
+                    })
+                })
+            }));
         inner.install(Arc::new(edge)).unwrap();
         EdgeFixture {
             storage,
             router,
             peers,
             service,
+            scene,
         }
     }
     fn fresh_edge() -> EdgeFixture {
@@ -1116,6 +1155,7 @@ mod core_edge {
             true,
             Mutex::default(),
             Mutex::default(),
+            Default::default(),
         )))
     }
     fn reopened(storage: &Arc<Storage>) -> Arc<Storage> {
@@ -1124,6 +1164,7 @@ mod core_edge {
             storage.1,
             Mutex::new(storage.2.lock().unwrap().clone()),
             Mutex::default(),
+            storage.4.clone(),
         ))
     }
     async fn start(core: &CoreFixture, edge: &EdgeFixture) {
@@ -1257,6 +1298,61 @@ mod core_edge {
         })
         .await;
         core.peers.stop().await.unwrap();
+        edge.peers.stop().await.unwrap();
+        outcome.unwrap();
+    }
+
+    /// Saving a second Core pairing must not grant it the selected Space.
+    #[tokio::test]
+    async fn two_core_pairings_survive_restart_with_only_one_admitted_space() {
+        let _guard = TEST_LOCK.lock().await;
+        let a = core_node();
+        let b = core_node();
+        let edge = edge_node_with_limits(Arc::new(Storage(
+            Mutex::default(), true, Mutex::default(), Mutex::default(),
+            Default::default(),
+        )), runtime_profile::peer_limits());
+        let outcome = tokio::time::timeout(Duration::from_secs(30), async {
+            start(&a, &edge).await;
+            b.peers.startListening(&[PeerTransport::Tcp]).await.unwrap();
+            let a_id = a.router.localNodeId();
+            let b_id = b.router.localNodeId();
+            for core in [&a, &b] {
+                // Device-initiated pairings authorize its outgoing join request.
+                // Inbound and outbound grants remain separate in the shared protocol.
+                let address = PeerStateStore::new(core.storage.clone()).hostConfig().unwrap().unwrap().bindAddress;
+                let pending = edge.peers.startPairing(PeerEndpoint {
+                    nodeId: core.router.localNodeId(), address,
+                }, Some(PeerTransport::Tcp)).await.unwrap();
+                let code = core.peers.pairingPrompts().unwrap().into_iter()
+                    .find(|prompt| prompt.pairingId == pending.pairingId).unwrap().confirmationCode;
+                edge.peers.finishPairing(&pending.pairingId, &code).await.unwrap();
+            }
+            assert_eq!(edge.peers.pairedPeers().unwrap().len(), 2);
+            assert_eq!(edge.service.spaceChannelScope(&a_id).unwrap(), None);
+            assert_eq!(edge.service.spaceChannelScope(&b_id).unwrap(), None);
+            let request = edge.service.requestDeviceSpaceJoin(a_id.clone()).await.unwrap();
+            assert_eq!(request.status, SpaceJoinStatus::Pending);
+            a.service.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true).await.unwrap();
+            assert_eq!(edge.service.refreshDeviceSpaceJoin(request.requestId).await.unwrap().status, SpaceJoinStatus::Joined);
+            let selected_space = a.service.deviceSpace().unwrap().spaceId;
+            let state = edge.service.spaceStore().space().unwrap();
+            assert_eq!(state.spaceId, selected_space);
+            assert!(state.members.contains(&a_id));
+            assert!(!state.members.contains(&b_id));
+            assert_eq!(edge.service.spaceChannelScope(&a_id).unwrap(), Some(selected_space.clone()));
+            assert_eq!(edge.service.spaceChannelScope(&b_id).unwrap(), None);
+            assert_eq!(edge.peers.pairedPeers().unwrap().len(), 2);
+            edge.peers.stop().await.unwrap();
+            let restored = edge_node_with_limits(reopened(&edge.storage), runtime_profile::peer_limits());
+            assert_eq!(restored.peers.pairedPeers().unwrap().len(), 2);
+            assert_eq!(restored.service.spaceStore().space().unwrap().spaceId, selected_space);
+            assert_eq!(restored.service.spaceChannelScope(&a_id).unwrap(), Some(selected_space));
+            assert_eq!(restored.service.spaceChannelScope(&b_id).unwrap(), None);
+            restored.peers.stop().await.unwrap();
+        }).await;
+        a.peers.stop().await.unwrap();
+        b.peers.stop().await.unwrap();
         edge.peers.stop().await.unwrap();
         outcome.unwrap();
     }
@@ -1587,6 +1683,120 @@ mod core_edge {
         }
     }
 
+    async fn scene_call(core: &CoreFixture, edge: &EdgeFixture, method: &str, args: serde_json::Value) -> serde_json::Value {
+        let edge_id = edge.service.localNodeId();
+        let response = core.peers.call(&edge_id, RoutedCoreRequest {
+            spaceId: core.service.deviceSpace().unwrap().spaceId,
+            originNodeId: core.router.localNodeId(),
+            targetNodeId: edge_id.clone(),
+            ttl: 2,
+            routeKind: RoutedCoreRequestKind::Target,
+            payload: CoreCallRequest::new(format!("cat-{method}"), "edge.scene", method, toCoreValue(args).unwrap()),
+        }).await;
+        let value: serde_json::Value = operit_link::fromCoreValue(response.result
+            .unwrap_or_else(|error| panic!("{method}: {error:?}"))).unwrap();
+        assert_eq!(value["v"], 1);
+        assert_eq!(value["ok"], true, "{method}: {value}");
+        value["result"].clone()
+    }
+
+    /// The Core supplies the plugin's real assets through the authenticated,
+    /// 2 KiB TCP carrier. Edge runs only the shared scene parser and renderer.
+    #[tokio::test]
+    async fn admitted_core_streams_original_task_cat_packs_to_edge_renderer() {
+        use base64::Engine;
+        use serde_json::json;
+        let _guard = TEST_LOCK.lock().await;
+        let core = core_node();
+        let edge = edge_node_with_limits(Arc::new(Storage(Mutex::default(), true,
+            Mutex::default(), Mutex::default(), Default::default())), runtime_profile::peer_limits());
+        let outcome = tokio::time::timeout(Duration::from_secs(60), async {
+            start(&core, &edge).await;
+            let core_id = core.router.localNodeId();
+            pair(&edge.peers, &core.peers, &core.storage, core_id.clone()).await;
+            assert_eq!(edge.service.spaceChannelScope(&core_id).unwrap(), None);
+            let request = edge.service.requestDeviceSpaceJoin(core_id.clone()).await.unwrap();
+            assert_eq!(request.status, SpaceJoinStatus::Pending);
+            core.service.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true).await.unwrap();
+            assert_eq!(edge.service.refreshDeviceSpaceJoin(request.requestId).await.unwrap().status, SpaceJoinStatus::Joined);
+            assert_eq!(edge.service.spaceChannelScope(&core_id).unwrap(), Some(core.service.deviceSpace().unwrap().spaceId));
+            assert_no_replica(&core, &edge);
+            let caps = scene_call(&core, &edge, "capabilities", json!({"v":1})).await;
+            assert_eq!(caps["limits"]["packBytes"], runtime_profile::SCENE_LIMITS.pack_bytes);
+            assert_eq!(caps["limits"]["chunkBytes"], 256);
+            let manifest = include_str!("../../../../../../plugins/packages/external/edge_esp32_pet/src/assets.ts");
+            let packs: serde_json::Value = serde_json::from_str(manifest.split_once("export const PACKS = ")
+                .unwrap().1.trim().strip_suffix(" as const;").unwrap()).unwrap();
+            let originals: [&[u8]; 6] = [
+                include_bytes!("../../../../../../plugins/packages/external/edge_esp32_pet/resources/cat-idle.esp"),
+                include_bytes!("../../../../../../plugins/packages/external/edge_esp32_pet/resources/cat-working.esp"),
+                include_bytes!("../../../../../../plugins/packages/external/edge_esp32_pet/resources/cat-thinking.esp"),
+                include_bytes!("../../../../../../plugins/packages/external/edge_esp32_pet/resources/cat-approval.esp"),
+                include_bytes!("../../../../../../plugins/packages/external/edge_esp32_pet/resources/cat-completed.esp"),
+                include_bytes!("../../../../../../plugins/packages/external/edge_esp32_pet/resources/cat-error.esp"),
+            ];
+            assert_eq!(packs.as_array().unwrap().len(), originals.len());
+            let mut previous: Option<String> = None;
+            for (pack, original) in packs.as_array().unwrap().iter().zip(originals) {
+                let id = pack["id"].as_str().unwrap();
+                assert_eq!(pack["bytes"].as_u64().unwrap() as usize, original.len());
+                assert_eq!(pack["frameMs"], 333);
+                let upload = scene_call(&core, &edge, "pack.begin", json!({"v":1,
+                    "packId":id,"bytes":pack["bytes"],"sha256":pack["sha256"]})).await["upload"].clone();
+                let mut decoded = Vec::new();
+                for chunk in pack["chunks"].as_array().unwrap() {
+                    let bytes = base64::engine::general_purpose::STANDARD.decode(chunk["data"].as_str().unwrap()).unwrap();
+                    assert!(bytes.len() <= 256);
+                    assert_eq!(chunk["offset"].as_u64().unwrap() as usize, decoded.len());
+                    decoded.extend_from_slice(&bytes);
+                    let ack = scene_call(&core, &edge, "pack.chunk", json!({"v":1,"upload":upload,
+                        "offset":chunk["offset"],"data":chunk["data"]})).await;
+                    assert_eq!(ack["offset"].as_u64().unwrap() as usize, decoded.len());
+                }
+                assert_eq!(decoded, original, "plugin chunks must contain the committed original cat pack");
+                scene_call(&core, &edge, "pack.commit", json!({"v":1,"upload":upload})).await;
+                let mut images = Vec::new();
+                for frame in [0, 1] {
+                    let shown = scene_call(&core, &edge, "config.show", json!({"v":1,"enabled":true,
+                        "background":0x1083,"layers":[{"asset":format!("{id}:cat"),"x":160,"y":108,
+                            "scale":3,"anchor":"center","play":false,"frame":frame}]})).await;
+                    assert_eq!(shown["persistent"], false);
+                    assert!(edge.scene.render_state().0);
+                    let mut pixels = vec![0u8; 320 * 240 * 2];
+                    for (row, strip) in pixels.chunks_mut(320 * 8 * 2).enumerate() {
+                        edge.scene.paint_strip(strip, (row * 8) as u16, 8, 0);
+                    }
+                    assert!(pixels[..320 * 24 * 2].iter().all(|byte| *byte == 0), "reserved navigation must survive rendering");
+                    assert!(pixels[320 * 24 * 2..].chunks_exact(2).any(|pixel| pixel != 0x1083u16.to_le_bytes()), "{id} rendered no cat pixels");
+                    images.push(pixels);
+                }
+                assert!(images[0] != images[1], "{id} decoded animation frames must differ");
+                if let Some(old) = previous.replace(id.into()) {
+                    scene_call(&core, &edge, "pack.remove", json!({"v":1,"packId":old})).await;
+                }
+                let caps = scene_call(&core, &edge, "capabilities", json!({"v":1})).await;
+                assert_eq!(caps["cache"]["packs"].as_array().unwrap().len(), 1);
+                assert_eq!(caps["cache"]["usedBytes"], pack["bytes"]);
+            }
+            assert!(!edge.storage.exists("runtime/device/display_scene.json").unwrap(), "transient task status must not write NVS every frame");
+            let transient_snapshot = reopened(&edge.storage);
+            scene_call(&core, &edge, "config.clear", json!({"v":1})).await;
+            assert!(!edge.scene.render_state().0);
+            scene_call(&core, &edge, "pack.remove", json!({"v":1,"packId":previous.unwrap()})).await;
+            // Stop the live identity before restoring its pre-clear snapshot.
+            edge.peers.stop().await.unwrap();
+            let restored = edge_node_with_limits(transient_snapshot, runtime_profile::peer_limits());
+            assert!(!restored.scene.render_state().0, "stale transient tasks must not reactivate after reboot");
+            assert_eq!(restored.peers.pairedPeers().unwrap().len(), 1);
+            assert_eq!(restored.service.spaceStore().space().unwrap().spaceId, core.service.deviceSpace().unwrap().spaceId);
+            restored.peers.stop().await.unwrap();
+            assert!(core.application.0.lock().unwrap().is_empty());
+        }).await;
+        core.peers.stop().await.unwrap();
+        edge.peers.stop().await.unwrap();
+        outcome.unwrap();
+    }
+
     fn assert_no_replica(core: &CoreFixture, edge: &EdgeFixture) {
         assert!(
             core.application.0.lock().unwrap().is_empty(),
@@ -1616,7 +1826,9 @@ mod core_edge {
         let _guard = TEST_LOCK.lock().await;
         let core = core_node();
         let edge = edge_node_with_limits(Arc::new(Storage(Mutex::default(), true,
-            Mutex::default(), Mutex::default())),
+            Mutex::default(), Mutex::default(),
+            Default::default(),
+        )),
             operit_edge_sdk::runtime::HostRuntimePeerService::PeerRuntimeLimits::constrained());
         start(&core, &edge).await;
         let result = tokio::time::timeout(Duration::from_secs(30), async {
@@ -3170,6 +3382,9 @@ mod core_edge {
             // the receipt without C gaining a reverse pairing or storage grant.
             reopened.synchronizePreferences().await.unwrap();
             a.service.synchronizePreferences().await.unwrap();
+            // The first exchange delivers C's exit. C acknowledges it only
+            // after its next poll observes that exact receipt in A's log.
+            reopened.synchronizePreferences().await.unwrap();
             assert_eq!(a.service.spaceStore().space().unwrap().spaceId, original);
             assert_eq!(
                 a.service.spaceStore().space().unwrap().members,

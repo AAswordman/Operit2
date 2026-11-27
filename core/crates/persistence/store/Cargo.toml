@@ -13,7 +13,10 @@ documentation = "https://docs.rs/operit-store"
 default = ["full"]
 # The same node identity, Preferences and network-policy records on embedded hosts.
 node-state = []
-full = ["node-state", "dep:operit-model", "dep:regex", "dep:jieba-rs", "dep:turso_parser", "operit-util/full"]
+# Business replication requires a Host SQLite transaction database. Endpoints
+# keep authority in their bounded node-local projection and need no SQL engine.
+sqlite-journal = []
+full = ["node-state", "sqlite-journal", "dep:operit-model", "dep:regex", "dep:jieba-rs", "dep:turso_parser", "operit-util/full"]
 
 [dependencies]
 base64.workspace = true

@@ -54,10 +54,6 @@ impl RuntimeStorageBackend for NvsSnapshotBackend {
 /// EspNvs::set_blob erases first, so it is used only on an unselected bank.
 pub struct NvsSnapshotBackend(EspNvs<NvsDefault>);
 impl codec::SnapshotBackend for NvsSnapshotBackend {
-    /// Reports cleanup failure after an already committed snapshot.
-    fn cleanup_warning(&mut self, error: HostError) {
-        log::warn!("runtime NVS post-commit cleanup: {}", error.message);
-    }
     /// Removes one unselected snapshot chunk.
     fn remove_chunk(&mut self, bank: u8, index: usize) -> HostResult<()> {
         self.0

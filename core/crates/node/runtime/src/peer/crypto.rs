@@ -345,7 +345,9 @@ impl Channel {
         if bytes.is_empty() { return Err(error("Empty session message")); }
         writer.incomplete = true;
         for (index, chunk) in bytes.chunks(self.chunkBytes).enumerate() {
-            let mut frame = Vec::with_capacity(SESSION_CHUNK_HEADER_BYTES + chunk.len() + aead::CHACHA20_POLY1305.tag_len());
+            let mut frame = Vec::new();
+            frame.try_reserve_exact(SESSION_CHUNK_HEADER_BYTES + chunk.len() + aead::CHACHA20_POLY1305.tag_len())
+                .map_err(|_| error("Insufficient memory for encrypted peer fragment"))?;
             frame.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
             frame.extend_from_slice(&((index * self.chunkBytes) as u64).to_be_bytes());
             frame.extend_from_slice(chunk);
@@ -644,11 +646,6 @@ impl MultiplexedChannel {
         self.dispatchStopped.notify_one();
         self.shutdown.notify_one();
         (self.changed)();
-    }
-
-    /// Returns the terminal channel error or a new local error.
-    fn failureOr(&self, message: &str) -> CoreLinkError {
-        self.failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone().unwrap_or_else(|| error(message))
     }
 
     /// Releases local state before awaiting transport shutdown.

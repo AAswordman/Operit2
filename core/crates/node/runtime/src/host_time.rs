@@ -1,6 +1,6 @@
 //! Peer operations use Host timers on both native executors and browser workers.
 use operit_host_api::{HostError, HostResult, HostRuntimeTurnFuture};
-use std::{future::Future, time::Duration};
+use std::{future::Future, pin::Pin, task::{Context, Poll}, time::Duration};
 
 pub(crate) async fn timeout<F: Future>(duration: Duration, operation: F) -> HostResult<F::Output> {
     let scheduler = operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost();
@@ -23,15 +23,26 @@ pub(crate) async fn withScheduler<F: Future>(
 
 async fn timeoutWithDelay<F: Future>(
     operation: F,
-    delay: HostRuntimeTurnFuture,
+    mut delay: HostRuntimeTurnFuture,
 ) -> HostResult<F::Output> {
-    tokio::select! {
-        biased;
-        result = operation => Ok(result),
-        result = delay => {
-            result?;
-            Err(HostError::timeout("Peer operation timed out"))
-        }
+    let mut operation = std::pin::pin!(operation);
+    std::future::poll_fn(|context| pollTimeout(operation.as_mut(), &mut delay, context)).await
+}
+
+// Erase only during a poll; storing a dyn Future across await loses F's Send.
+#[inline(never)]
+fn pollTimeout<T>(
+    mut operation: Pin<&mut dyn Future<Output = T>>,
+    delay: &mut HostRuntimeTurnFuture,
+    context: &mut Context<'_>,
+) -> Poll<HostResult<T>> {
+    if let Poll::Ready(value) = operation.as_mut().poll(context) {
+        return Poll::Ready(Ok(value));
+    }
+    match delay.as_mut().poll(context) {
+        Poll::Ready(result) => Poll::Ready(
+            result.and_then(|()| Err(HostError::timeout("Peer operation timed out")))),
+        Poll::Pending => Poll::Pending,
     }
 }
 
@@ -39,6 +50,12 @@ async fn timeoutWithDelay<F: Future>(
 mod tests {
     use super::*;
     use std::future::{pending, ready};
+
+    #[test]
+    fn movable_operation_keeps_timeout_movable() {
+        fn assert_send(_: impl Send) {}
+        assert_send(timeout(Duration::ZERO, ready(42)));
+    }
 
     #[tokio::test]
     async fn completed_operation_wins_over_elapsed_deadline() {

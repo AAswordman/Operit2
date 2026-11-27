@@ -41,6 +41,7 @@ fn growing_writer_matches_standard_messagepack_and_reuses_output() {
         ),
     ]);
     let expected = rmp_serde::to_vec_named(&value).unwrap();
+    assert_eq!(operit_link::encodedLinkSize(&value).unwrap(), expected.len());
     let mut output = vec![0xff; 3];
     encodeLinkInto(&value, &mut output).unwrap();
     assert_eq!(output, expected);
@@ -62,6 +63,8 @@ fn growing_writer_matches_standard_messagepack_and_reuses_output() {
     encodeLinkInto(Counted(&count), &mut output).unwrap();
     assert_eq!(count.get(), 1);
     assert_eq!(output, rmp_serde::to_vec_named("once").unwrap());
+    assert_eq!(operit_link::encodedLinkSize(Counted(&count)).unwrap(), output.len());
+    assert_eq!(count.get(), 2, "counting also serializes exactly once");
 }
 
 /// Verifies call requests preserve dispatch fields through the Link codec.
@@ -231,4 +234,73 @@ fn target_is_a_named_messagepack_string() {
         Some(&CoreValue::String("core/application.packageManager".into()))
     );
     assert!(!wire.contains_key("targetObjectId"));
+}
+#[test]
+fn value_sequences_keep_binary_u8_semantics_and_reject_unconsumed_items() {
+    use serde::de::{self, SeqAccess, Visitor};
+    struct Byte(u8);
+    impl<'de> Deserialize<'de> for Byte {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct ExactByte;
+            impl<'de> Visitor<'de> for ExactByte {
+                type Value = Byte;
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("a u8") }
+                fn visit_u8<E: de::Error>(self, value: u8) -> Result<Byte, E> { Ok(Byte(value)) }
+            }
+            deserializer.deserialize_u8(ExactByte)
+        }
+    }
+    let bytes = CoreValue::Bytes(vec![7, 255].into());
+    let decoded: Vec<Byte> = fromCoreValue(bytes.clone()).unwrap();
+    assert_eq!(decoded.into_iter().map(|byte| byte.0).collect::<Vec<_>>(), [7, 255]);
+    assert_eq!(fromCoreValue::<(u8, u8)>(bytes.clone()).unwrap(), (7, 255));
+    let list = CoreValue::List(vec![CoreValue::Unsigned(7), CoreValue::Unsigned(255)]);
+    assert_eq!(fromCoreValue::<Vec<u8>>(list.clone()).unwrap(), [7, 255]);
+    struct First;
+    impl<'de> Deserialize<'de> for First {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct FirstVisitor;
+            impl<'de> Visitor<'de> for FirstVisitor {
+                type Value = First;
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("one item") }
+                fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<First, A::Error> {
+                    let _: Option<u8> = sequence.next_element()?;
+                    Ok(First)
+                }
+            }
+            deserializer.deserialize_seq(FirstVisitor)
+        }
+    }
+    assert!(fromCoreValue::<First>(bytes).is_err());
+    assert!(fromCoreValue::<First>(list).is_err());
+}
+
+/// A shared value decoder must not collapse conflicting authorization fields.
+#[cfg(feature = "compact-codec")]
+#[test]
+fn duplicate_fields_are_rejected_before_typed_conversion() {
+    #[derive(Deserialize)]
+    struct Policy { allowed: bool }
+    let conflicting = [0x82, 0xa7, b'a', b'l', b'l', b'o', b'w', b'e', b'd', 0xc2,
+        0xa7, b'a', b'l', b'l', b'o', b'w', b'e', b'd', 0xc3];
+    assert!(rmp_serde::from_slice::<Policy>(&conflicting).is_err());
+    assert!(decodeLink::<Policy>(&conflicting).is_err());
+    let valid = encodeLink(core_map([("allowed", CoreValue::Bool(true))])).unwrap();
+    assert!(decodeLink::<Policy>(&valid).unwrap().allowed);
+}
+
+#[cfg(feature = "compact-codec")]
+#[test]
+fn compact_decoder_rejects_unbounded_or_incomplete_values() {
+    for bytes in [
+        vec![0xdd, 0xff, 0xff, 0xff, 0xff],
+        vec![0xdf, 0xff, 0xff, 0xff, 0xff],
+        vec![0xc0, 0xc0],
+        [vec![0x91; 2048], vec![0xc0]].concat(),
+    ] {
+        assert!(operit_link::decodeLink::<operit_link::CoreValue>(&bytes).is_err());
+    }
+    let value: Vec<u8> = (0..128).collect();
+    let bytes = operit_link::encodeLink(&value).unwrap();
+    assert_eq!(operit_link::decodeLink::<Vec<u8>>(&bytes).unwrap(), value);
 }

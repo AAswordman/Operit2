@@ -105,15 +105,10 @@ impl SpaceJoinUi {
                 })
             }),
         );
-        match scheduled {
-            Ok(()) => {
-                self.busy = true;
-                ui.actionError("");
-                ui.setSpaceJoinPrompt("", true);
-            }
-            Err(error) => {
-                log::error!("Space review schedule: {}", error.message);
-            }
+        if scheduled.is_ok() {
+            self.busy = true;
+            ui.actionError("");
+            ui.setSpaceJoinPrompt("", true);
         }
         true
     }
@@ -124,10 +119,8 @@ impl SpaceJoinUi {
                 Event::Ready(Ok(())) => {
                     self.ready = true;
                     self.initialization = None;
-                    log::info!("operit-esp32 shared Space admission ready");
                 }
-                Event::Ready(Err(error)) => {
-                    log::error!("Space initialization: {error}");
+                Event::Ready(Err(_)) => {
                     ui.actionError("空间初始化失败，正在重试");
                 }
                 Event::Poll(Ok(request)) => {
@@ -152,23 +145,17 @@ impl SpaceJoinUi {
                     ui.setSpaceJoinPrompt("", false);
                     ui.actionError("");
                     crate::edge_chat::clear();
-                    log::info!("Space left; direct pairing retained");
                 }
                 Event::Left(Err(error)) => {
-                    log::error!("Space exit: {error}");
                     ui.actionError(&error);
                 }
-                Event::Poll(Err(error)) => {
-                    log::warn!("Space review poll: {error}");
-                }
-                Event::Decision(Ok(request)) => {
-                    log::info!("Space review completed: {:?}", request.status);
+                Event::Poll(Err(_)) => {}
+                Event::Decision(Ok(_)) => {
                     self.pending = None;
                     ui.setSpaceJoinPrompt("", false);
                     ui.actionError("");
                 }
                 Event::Decision(Err(error)) => {
-                    log::error!("Space review failed (request retained): {error}");
                     // Console logging is disabled once UART carries Link frames.
                     // Retain the actual error in the existing bounded UI diagnostic.
                     ui.actionError(&error);

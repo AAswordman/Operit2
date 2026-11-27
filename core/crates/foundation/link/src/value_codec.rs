@@ -303,18 +303,12 @@ impl<'de> Deserializer<'de> for CoreValue {
             CoreValue::Unsigned(v) => visitor.visit_u64(v),
             CoreValue::Float(v) => visitor.visit_f64(v),
             CoreValue::String(v) => visitor.visit_string(v),
-            CoreValue::Bytes(v) => visitor.visit_bytes(&v),
+            CoreValue::Bytes(v) => crate::codec::withDecodeSource(v, |bytes| visitor.visit_bytes(bytes)),
             CoreValue::List(v) => {
-                let mut seq = de::value::SeqDeserializer::new(v.into_iter());
-                let result = visitor.visit_seq(&mut seq)?;
-                seq.end()?;
-                Ok(result)
+                visit_value_sequence(ValueSequence::Values(v.into_iter()), visitor)
             }
             CoreValue::Map(v) => {
-                let mut map = de::value::MapDeserializer::new(v.into_iter());
-                let result = visitor.visit_map(&mut map)?;
-                map.end()?;
-                Ok(result)
+                visit_value_map(v, visitor)
             }
         }
     }
@@ -381,12 +375,16 @@ impl<'de> Deserializer<'de> for CoreValue {
     fn deserialize_seq<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self {
             CoreValue::Bytes(v) => {
-                let mut seq = de::value::SeqDeserializer::new(v.iter().copied());
-                let result = visitor.visit_seq(&mut seq)?;
-                seq.end()?;
-                Ok(result)
+                visit_value_sequence(ValueSequence::Bytes { bytes: v, index: 0 }, visitor)
             }
-            v => v.deserialize_any(visitor),
+            CoreValue::List(v) => visit_value_sequence(ValueSequence::Values(v.into_iter()), visitor),
+            _ => Err(error("expected sequence")),
+        }
+    }
+    fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        match self {
+            CoreValue::Map(v) => visit_value_map(v, visitor),
+            _ => Err(error("expected map")),
         }
     }
     fn deserialize_tuple<V: Visitor<'de>>(self, _: usize, visitor: V) -> Result<V::Value, Error> {
@@ -406,10 +404,134 @@ impl<'de> Deserializer<'de> for CoreValue {
         _: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Error> {
-        self.deserialize_seq(visitor)
+        match self {
+            CoreValue::Map(v) => visit_value_map(v, visitor),
+            CoreValue::List(v) => visit_value_sequence(ValueSequence::Values(v.into_iter()), visitor),
+            CoreValue::Bytes(v) => visit_value_sequence(ValueSequence::Bytes { bytes: v, index: 0 }, visitor),
+            _ => Err(error("expected struct")),
+        }
     }
-    serde::forward_to_deserialize_any! { bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes byte_buf unit map identifier ignored_any }
+    fn deserialize_bool<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        match self { CoreValue::Bool(value) => visitor.visit_bool(value), _ => Err(error("expected bool")) }
+    }
+    fn deserialize_i64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        match self {
+            CoreValue::Signed(value) if value >= 0 => visitor.visit_u64(value as u64),
+            CoreValue::Signed(value) => visitor.visit_i64(value),
+            CoreValue::Unsigned(value) => visitor.visit_u64(value),
+            CoreValue::Float(value) => visitor.visit_f64(value),
+            _ => Err(error("expected number")),
+        }
+    }
+    fn deserialize_u64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_i64(visitor) }
+    fn deserialize_i8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_i64(visitor) }
+    fn deserialize_i16<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_i64(visitor) }
+    fn deserialize_i32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_i64(visitor) }
+    fn deserialize_u8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_i64(visitor) }
+    fn deserialize_u16<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_i64(visitor) }
+    fn deserialize_u32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_i64(visitor) }
+    fn deserialize_f32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_i64(visitor) }
+    fn deserialize_f64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_i64(visitor) }
+    fn deserialize_string<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        match self {
+            CoreValue::String(value) => visitor.visit_string(value),
+            CoreValue::Bytes(value) => crate::codec::withDecodeSource(value, |bytes| visitor.visit_bytes(bytes)),
+            _ => Err(error("expected string")),
+        }
+    }
+    fn deserialize_str<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_string(visitor) }
+    fn deserialize_char<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_string(visitor) }
+    fn deserialize_identifier<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_string(visitor) }
+    fn deserialize_bytes<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        match self {
+            CoreValue::String(value) => visitor.visit_string(value),
+            CoreValue::Bytes(value) => crate::codec::withDecodeSource(value, |bytes| visitor.visit_bytes(bytes)),
+            CoreValue::List(value) => visit_value_sequence(ValueSequence::Values(value.into_iter()), visitor),
+            _ => Err(error("expected bytes")),
+        }
+    }
+    fn deserialize_byte_buf<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_bytes(visitor) }
+    fn deserialize_unit<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        match self { CoreValue::Null => visitor.visit_unit(), _ => Err(error("expected unit")) }
+    }
+    fn deserialize_ignored_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        visitor.visit_unit()
+    }
 }
+// One visitor instantiation handles both list elements and binary-as-sequence.
+// Keep byte elements as u8 deserializers, matching Serde's original semantics.
+enum ValueSequence {
+    Values(std::vec::IntoIter<CoreValue>),
+    Bytes { bytes: crate::CoreBytes, index: usize },
+}
+impl ValueSequence {
+    fn remaining(&self) -> usize {
+        match self {
+            Self::Values(values) => values.len(),
+            Self::Bytes { bytes, index } => bytes.len() - index,
+        }
+    }
+}
+impl<'de> de::SeqAccess<'de> for ValueSequence {
+    type Error = Error;
+    #[cfg_attr(target_os = "espidf", inline(never))]
+    fn next_element_seed<T: de::DeserializeSeed<'de>>(
+        &mut self, seed: T,
+    ) -> Result<Option<T::Value>, Error> {
+        match self {
+            Self::Values(values) => values.next().map(|value| seed.deserialize(value)).transpose(),
+            Self::Bytes { bytes, index } => {
+                let Some(&byte) = bytes.get(*index) else { return Ok(None); };
+                *index += 1;
+                seed.deserialize(de::value::U8Deserializer::<Error>::new(byte)).map(Some)
+            }
+        }
+    }
+    fn size_hint(&self) -> Option<usize> { Some(self.remaining()) }
+}
+#[cfg_attr(target_os = "espidf", inline(never))]
+fn visit_value_sequence<'de, V: Visitor<'de>>(
+    mut sequence: ValueSequence, visitor: V,
+) -> Result<V::Value, Error> {
+    let result = visitor.visit_seq(&mut sequence)?;
+    if sequence.remaining() != 0 {
+        return Err(error("sequence has unconsumed elements"));
+    }
+    Ok(result)
+}
+
+#[cfg_attr(target_os = "espidf", inline(never))]
+fn visit_value_map<'de, V: Visitor<'de>>(
+    values: BTreeMap<String, CoreValue>, visitor: V,
+) -> Result<V::Value, Error> {
+    let mut map = ValueMap(de::value::MapDeserializer::new(values.into_iter()));
+    let result = visitor.visit_map(&mut map)?;
+    map.0.end()?;
+    Ok(result)
+}
+
+// Preserve Serde's map validation while sharing each field decoder across
+// typed messages instead of inlining it into every map visitor under LTO.
+struct ValueMap<'de>(de::value::MapDeserializer<
+    'de, std::collections::btree_map::IntoIter<String, CoreValue>, Error,
+>);
+impl<'de> de::MapAccess<'de> for ValueMap<'de> {
+    type Error = Error;
+    #[cfg_attr(target_os = "espidf", inline(never))]
+    fn next_key_seed<K: de::DeserializeSeed<'de>>(
+        &mut self, seed: K,
+    ) -> Result<Option<K::Value>, Error> {
+        de::MapAccess::next_key_seed(&mut self.0, seed)
+    }
+    #[cfg_attr(target_os = "espidf", inline(never))]
+    fn next_value_seed<V: de::DeserializeSeed<'de>>(
+        &mut self, seed: V,
+    ) -> Result<V::Value, Error> {
+        de::MapAccess::next_value_seed(&mut self.0, seed)
+    }
+    fn size_hint(&self) -> Option<usize> { de::MapAccess::size_hint(&self.0) }
+}
+
 struct ValueEnum(String, CoreValue);
 impl<'de> de::EnumAccess<'de> for ValueEnum {
     type Error = Error;

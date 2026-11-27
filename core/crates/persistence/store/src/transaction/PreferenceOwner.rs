@@ -29,7 +29,7 @@ fn data(store: &PreferencesDataStore, preferences: &Preferences) -> Result<Data,
     let version = PreferencesDataStore::readSchemaVersion(preferences)?;
     let mut result = preferences
         .view
-        .clone()
+        .as_deref().cloned()
         .unwrap_or_else(|| Data::empty(file::preferenceOwner(&store.storagePath, version)));
     result.owner = file::preferenceOwner(&store.storagePath, version);
     result.values = preferences
@@ -48,7 +48,7 @@ fn preferences(mut data: Data) -> Preferences {
         &PreferencesDataStore::schemaVersionKey(),
         data.owner.format,
     );
-    result.view = Some(data);
+    result.view = Some(Arc::new(data));
     result
 }
 fn state(store: &PreferencesDataStore) -> Result<Option<OwnerState>, Error> {
@@ -402,7 +402,7 @@ fn snapshot_unlocked(store: &PreferencesDataStore) -> Result<Snapshot, Error> {
     let mut values = match store.readFromStorage() {
         Ok(values) => values,
         Err(error @ (Error::Json(_) | Error::Encryption(_) | Error::Message(_))) => {
-            operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_consistency.damaged owner={} error={error}", store.storagePath));
+            operit_util::app_log!(w, "TransactionSync", &format!("sync_consistency.damaged owner={} error={error}", store.storagePath));
             let mut capture = Snapshot { damage: None, node: journal(store)?.localDeviceId()?,
                 data: Data::empty(file::preferenceOwner(&store.storagePath, store.schema.as_ref().map_or(0, |schema|schema.currentVersion))),
                 covered: BTreeSet::new(), generation: 0 };

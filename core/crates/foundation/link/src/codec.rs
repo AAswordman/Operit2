@@ -143,47 +143,62 @@ pub fn encodeLinkInto(
     appendLink(value, output)
 }
 
+struct LinkOutput<'a> {
+    output: &'a mut Vec<u8>,
+    count: Option<usize>,
+}
+impl std::io::Write for LinkOutput<'_> {
+    /// Grows fallibly in bounded blocks across small serializer writes.
+    /// Counts encoded bytes without retaining payload data.
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if let Some(count) = self.count.as_mut() {
+            *count = count.checked_add(bytes.len())
+                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+            return Ok(bytes.len());
+        }
+        let memory = || std::io::Error::from(std::io::ErrorKind::OutOfMemory);
+        if !cfg!(target_os = "espidf") {
+            self.output.try_reserve(bytes.len()).map_err(|_| memory())?;
+            self.output.extend_from_slice(bytes);
+            return Ok(bytes.len());
+        }
+        let required = self.output.len().checked_add(bytes.len()).ok_or_else(memory)?;
+        if required > self.output.capacity() {
+            // Keep growth bounded while the complete source tree is still
+            // alive. Doubling a multi-KiB buffer needs two large blocks at
+            // once on small fragmented heaps. Serialize only once so stream
+            // source capture and attachment registration remain unchanged.
+            let growth = self.output.capacity().clamp(256, 512);
+            let capacity = required.max(self.output.capacity().saturating_add(growth));
+            self.output
+                .try_reserve_exact(capacity - self.output.len())
+                .map_err(|_| memory())?;
+        }
+        self.output.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    /// Completes an in-memory write without flushing an external destination.
+    /// Completes a counting writer without allocating storage.
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+// The same serializer specialization counts plain data and emits real frames.
+// Keep serialization single-pass, including source/attachment capture.
+#[cfg_attr(target_os = "espidf", inline(never))]
+fn serializeLinkOutput(value: impl Serialize, output: &mut LinkOutput<'_>) -> Result<(), CoreLinkCodecError> {
+    value.serialize(&mut rmp_serde::Serializer::new(output).with_struct_map())
+        .map_err(|error| CoreLinkCodecError::Encode(error.to_string()))
+}
+
 /// Appends one value after an existing frame header without copying the payload.
 /// Serialization runs once; failure clears the entire incomplete frame.
 #[allow(non_snake_case)]
 pub fn appendLink(value: impl Serialize, output: &mut Vec<u8>) -> Result<(), CoreLinkCodecError> {
-    struct Output<'a>(&'a mut Vec<u8>);
-    impl std::io::Write for Output<'_> {
-        /// Grows fallibly in bounded blocks across small serializer writes.
-        /// Counts encoded bytes without retaining payload data.
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            let memory = || std::io::Error::from(std::io::ErrorKind::OutOfMemory);
-            if !cfg!(target_os = "espidf") {
-                self.0.try_reserve(bytes.len()).map_err(|_| memory())?;
-                self.0.extend_from_slice(bytes);
-                return Ok(bytes.len());
-            }
-            let required = self.0.len().checked_add(bytes.len()).ok_or_else(memory)?;
-            if required > self.0.capacity() {
-                // Keep growth bounded while the complete source tree is still
-                // alive. Doubling a multi-KiB buffer needs two large blocks at
-                // once on small fragmented heaps. Serialize only once so stream
-                // source capture and attachment registration remain unchanged.
-                let growth = self.0.capacity().clamp(256, 512);
-                let capacity = required.max(self.0.capacity().saturating_add(growth));
-                self.0
-                    .try_reserve_exact(capacity - self.0.len())
-                    .map_err(|_| memory())?;
-            }
-            self.0.extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-        /// Completes an in-memory write without flushing an external destination.
-        /// Completes a counting writer without allocating storage.
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
     // Serialize exactly once: stream serializers can capture source handles.
     // Fallible bounded growth avoids reallocating for every scalar or map key.
-    let result = value
-        .serialize(&mut rmp_serde::Serializer::new(Output(output)).with_struct_map())
-        .map_err(|error| CoreLinkCodecError::Encode(error.to_string()));
+    let result = serializeLinkOutput(value, &mut LinkOutput { output, count: None });
     if result.is_err() {
         output.clear();
     }
@@ -194,26 +209,10 @@ pub fn appendLink(value: impl Serialize, output: &mut Vec<u8>) -> Result<(), Cor
 /// serializer still runs once; do not use this with consuming replies or streams.
 #[allow(non_snake_case)]
 pub fn encodedLinkSize(value: impl Serialize) -> Result<usize, CoreLinkCodecError> {
-    struct Counter(usize);
-    impl std::io::Write for Counter {
-        /// Counts encoded bytes without retaining payload data.
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0 = self
-                .0
-                .checked_add(bytes.len())
-                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
-            Ok(bytes.len())
-        }
-        /// Completes a counting writer without allocating storage.
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let mut count = Counter(0);
-    value
-        .serialize(&mut rmp_serde::Serializer::new(&mut count).with_struct_map())
-        .map_err(|error| CoreLinkCodecError::Encode(error.to_string()))?;
-    Ok(count.0)
+    let mut unused = Vec::new();
+    let mut output = LinkOutput { output: &mut unused, count: Some(0) };
+    serializeLinkOutput(value, &mut output)?;
+    Ok(output.count.expect("counting Link output"))
 }
 
 /// Decodes a value from the single Link MessagePack representation.
@@ -225,7 +224,20 @@ pub fn decodeLink<T>(bytes: &[u8]) -> Result<T, CoreLinkCodecError>
 where
     T: DeserializeOwned,
 {
-    rmp_serde::from_slice(bytes).map_err(|error| CoreLinkCodecError::Decode(error.to_string()))
+    #[cfg(feature = "compact-codec")]
+    { crate::fromCoreValue(decodeLinkValue(bytes)?) }
+    #[cfg(not(feature = "compact-codec"))]
+    { rmp_serde::from_slice(bytes).map_err(|error| CoreLinkCodecError::Decode(error.to_string())) }
+}
+
+#[cfg(feature = "compact-codec")]
+#[inline(never)]
+pub(crate) fn decodeLinkValue(bytes: &[u8]) -> Result<crate::CoreValue, CoreLinkCodecError> {
+    // Reject impossible container lengths and trailing data before allocating a tree.
+    let mut cursor = FieldCursor { bytes, at: 0 };
+    cursor.skip()?;
+    if cursor.at != bytes.len() { return Err(FieldCursor::invalid()); }
+    FieldCursor { bytes, at: 0 }.value()
 }
 
 /// Decodes owned transport bytes while retaining binary fields as shared slices.
@@ -237,6 +249,10 @@ pub fn decodeLinkOwned<T: DeserializeOwned>(bytes: CoreBytes) -> Result<T, CoreL
 
 /// Retains one owned frame while a typed decoder selects its borrowed fields.
 pub(crate) fn decodeOwnedWith<T>(bytes: CoreBytes, decode: impl FnOnce(&[u8]) -> Result<T, CoreLinkCodecError>) -> Result<T, CoreLinkCodecError> {
+    withDecodeSource(bytes, decode)
+}
+
+pub(crate) fn withDecodeSource<T>(bytes: CoreBytes, decode: impl FnOnce(&[u8]) -> T) -> T {
     struct Scope(Option<CoreBytes>);
     impl Drop for Scope {
         /// Restores the previous owned decode source after this scope.
@@ -422,7 +438,130 @@ impl<'a> FieldCursor<'a> {
         })
     }
 
-    /// Skips exactly one encoded value with constant stack and no payload allocation.
+    /// Builds constrained wire values on a bounded heap stack. Nested maps and
+    /// lists do not retain one general-purpose Serde decoder frame per level.
+    #[cfg(feature = "compact-codec")]
+    fn value(&mut self) -> Result<crate::CoreValue, CoreLinkCodecError> {
+        use crate::CoreValue as Value;
+        use rmp::Marker::*;
+        enum Container {
+            List(Vec<Value>),
+            Map(std::collections::BTreeMap<String, Value>, String),
+        }
+        let mut parents = Vec::<(Container, usize)>::new();
+        loop {
+            // Map keys use Serde's String rules, including UTF-8 binary keys.
+            if let Some((Container::Map(_, key), remaining)) = parents.last_mut() {
+                if *remaining % 2 == 0 {
+                    if !matches!(self.bytes.get(self.at), Some(0xa0..=0xbf | 0xd9..=0xdb | 0xc4..=0xc6)) {
+                        return Err(Self::invalid());
+                    }
+                    *key = match self.leaf()? {
+                        Value::String(key) => key,
+                        Value::Bytes(key) => std::str::from_utf8(&key).map_err(|_| Self::invalid())?.to_owned(),
+                        _ => return Err(Self::invalid()),
+                    };
+                    *remaining -= 1;
+                }
+            }
+            let marker = self.marker()?;
+            let container = match marker {
+                FixArray(count) => Some((false, usize::from(count))),
+                Array16 => Some((false, self.number(2)?)),
+                Array32 => Some((false, self.number(4)?)),
+                FixMap(count) => Some((true, usize::from(count))),
+                Map16 => Some((true, self.number(2)?)),
+                Map32 => Some((true, self.number(4)?)),
+                _ => None,
+            };
+            let mut value = if let Some((map, count)) = container {
+                // Match rmp-serde's configured depth of 64, including empties.
+                if parents.len() >= 63 { return Err(Self::invalid()); }
+                if count == 0 {
+                    if map { Value::emptyMap() } else { Value::List(Vec::new()) }
+                } else {
+                    let container = if map { Container::Map(Default::default(), String::new()) }
+                        else { Container::List(Vec::new()) };
+                    parents.try_reserve(1).map_err(|_| Self::invalid())?;
+                    parents.push((container, count.checked_mul(if map { 2 } else { 1 }).ok_or_else(Self::invalid)?));
+                    continue;
+                }
+            } else {
+                self.at -= 1;
+                self.leaf()?
+            };
+            loop {
+                let Some((container, remaining)) = parents.last_mut() else { return Ok(value); };
+                match container {
+                    Container::List(values) => {
+                        values.try_reserve(1).map_err(|_| Self::invalid())?;
+                        values.push(value);
+                    }
+                    Container::Map(values, key) => {
+                        if values.insert(std::mem::take(key), value).is_some() { return Err(Self::invalid()); }
+                    }
+                }
+                *remaining -= 1;
+                if *remaining != 0 { break; }
+                value = match parents.pop().expect("completed container").0 {
+                    Container::List(values) => Value::List(values),
+                    Container::Map(values, _) => Value::Map(values),
+                };
+            }
+        }
+    }
+
+    #[cfg(feature = "compact-codec")]
+    fn leaf(&mut self) -> Result<crate::CoreValue, CoreLinkCodecError> {
+        use crate::CoreValue as Value;
+        use rmp::Marker::*;
+        let unsigned = |cursor: &mut Self, width| -> Result<u64, CoreLinkCodecError> {
+            let mut number = 0;
+            for byte in cursor.take(width)? { number = (number << 8) | u64::from(*byte); }
+            Ok(number)
+        };
+        let marker = self.marker()?;
+        Ok(match marker {
+            Null => Value::Null,
+            False | True => Value::Bool(marker == True),
+            FixPos(value) => Value::Unsigned(value.into()),
+            FixNeg(value) => Value::Signed(value.into()),
+            U8 | U16 | U32 | U64 => Value::Unsigned(unsigned(self, match marker { U8 => 1, U16 => 2, U32 => 4, _ => 8 })?),
+            I8 | I16 | I32 | I64 => {
+                let width = match marker { I8 => 1, I16 => 2, I32 => 4, _ => 8 };
+                let shift = 64 - width * 8;
+                let value = ((unsigned(self, width)? << shift) as i64) >> shift;
+                if value >= 0 { Value::Unsigned(value as u64) } else { Value::Signed(value) }
+            }
+            F32 => Value::Float(f32::from_bits(unsigned(self, 4)? as u32) as f64),
+            F64 => Value::Float(f64::from_bits(unsigned(self, 8)?)),
+            FixStr(_) | Str8 | Str16 | Str32 | Bin8 | Bin16 | Bin32 => {
+                let length = match marker {
+                    FixStr(length) => usize::from(length),
+                    Str8 | Bin8 => self.number(1)?,
+                    Str16 | Bin16 => self.number(2)?,
+                    _ => self.number(4)?,
+                };
+                let bytes = self.take(length)?;
+                if matches!(marker, Bin8 | Bin16 | Bin32) {
+                    Value::Bytes(retain_decoded_slice(bytes).unwrap_or_else(|| CoreBytes::copy_from_slice(bytes)))
+                } else {
+                    match std::str::from_utf8(bytes) {
+                        Ok(text) => Value::String(text.to_owned()),
+                        Err(_) => Value::Bytes(retain_decoded_slice(bytes).unwrap_or_else(|| CoreBytes::copy_from_slice(bytes))),
+                    }
+                }
+            }
+            // CoreValue supports only the established shared-buffer extension.
+            Ext8 | Ext16 | Ext32 => {
+                let length = self.number(match marker { Ext8 => 1, Ext16 => 2, _ => 4 })?;
+                let tag = self.take(1)?[0] as i8;
+                Value::Bytes(resolve_shared_bytes(tag, self.take(length)?).map_err(|_| Self::invalid())?)
+            }
+            _ => return Err(Self::invalid()),
+        })
+    }
+
     fn skip(&mut self) -> Result<(), CoreLinkCodecError> {
         use rmp::Marker::*;
         let mut remaining = 1usize;
@@ -486,6 +625,50 @@ impl<'a> FieldCursor<'a> {
 #[cfg(test)]
 mod field_scan_tests {
     use super::*;
+
+    /// Differential coverage keeps wire integer widths, UTF-8, nesting and
+    /// binary ownership aligned with the library decoder being replaced.
+    #[cfg(feature = "compact-codec")]
+    #[test]
+    fn bounded_values_match_the_reference_decoder() {
+        use crate::CoreValue as Value;
+        let mut state = 0x1234_5678_90ab_cdefu64;
+        for _ in 0..256 {
+            state ^= state << 13; state ^= state >> 7; state ^= state << 17;
+            let value = Value::Map(std::collections::BTreeMap::from([
+                ("unsigned".into(), Value::Unsigned(state)),
+                ("signed".into(), Value::Signed(state as i64)),
+                ("float".into(), Value::Float((state as i64) as f64 / 17.0)),
+                ("text".into(), Value::String("设备\n\"\\".into())),
+                ("list".into(), Value::List(vec![Value::Null, Value::Bool(state & 1 != 0), Value::Bytes(state.to_be_bytes().to_vec().into())])),
+            ]));
+            let bytes = encodeLink(value).unwrap();
+            let expected: Value = rmp_serde::from_slice(&bytes).unwrap();
+            assert_eq!(decodeLinkValue(&bytes).unwrap(), crate::fromCoreValue::<Value>(expected).unwrap());
+            for end in 0..bytes.len() { assert!(decodeLinkValue(&bytes[..end]).is_err()); }
+        }
+        for (marker, width) in [(0xcc,1), (0xcd,2), (0xce,4), (0xcf,8), (0xd0,1), (0xd1,2), (0xd2,4), (0xd3,8)] {
+            for fill in [0, 1, 0x7f, 0x80, 0xff] {
+                let bytes = [vec![marker], vec![fill; width]].concat();
+                assert_eq!(decodeLinkValue(&bytes).unwrap(), crate::fromCoreValue::<Value>(rmp_serde::from_slice::<Value>(&bytes).unwrap()).unwrap());
+            }
+        }
+        for depth in [1, 32, 63, 64, 65] {
+            let bytes = [vec![0x91; depth], vec![0xc0]].concat();
+            let mut reference = rmp_serde::Deserializer::from_read_ref(&bytes);
+            reference.set_max_depth(64);
+            let expected = <Value as serde::Deserialize>::deserialize(&mut reference);
+            assert_eq!(decodeLinkValue(&bytes).is_ok(), expected.is_ok());
+        }
+        for bytes in [vec![0x81,0xc4,1,b'x',1], vec![0x81,0xa1,0xff,1], vec![0x81,1,1], vec![0xc7,0,0x42], vec![0xa1,0xff], vec![0xd9,1,0xff]] {
+            let expected = rmp_serde::from_slice::<Value>(&bytes);
+            match (decodeLinkValue(&bytes), expected) {
+                (Ok(actual), Ok(expected)) => assert_eq!(actual, expected),
+                (Err(_), Err(_)) => {},
+                other => panic!("decoder mismatch for {bytes:?}: {other:?}"),
+            }
+        }
+    }
 
     /// Named and positional structs select the same field without decoding preceding payloads.
     #[test]

@@ -11,9 +11,11 @@ default = ["full"]
 route-catalog = []
 # Shared pairing/session engine; no ChatServiceCore, Provider or ToolPkg.
 # Networking/execution belongs to Host providers; do not enable native Tokio I/O here.
-peer-runtime = ["route-catalog", "peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "dep:spake2", "dep:url", "dep:rand_core", "tokio/time", "dep:bytes", "dep:http", "dep:http-body-util"]
+peer-runtime = ["route-catalog", "peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "dep:spake2", "dep:url", "dep:rand_core", "tokio/time"]
+# HTTP discovery directories are optional; constrained LAN endpoints use mDNS.
+peer-directory = ["peer-runtime", "dep:bytes", "dep:http", "dep:http-body-util"]
 peer-state = ["dep:url", "dep:ring", "dep:operit-store", "dep:operit-util", "dep:serde_json", "dep:base64"]
-full = ["operit-util/full", "route-catalog", "peer-runtime", "dep:operit-runtime", "dep:operit-store", "operit-store/full", "dep:operit-tools", "dep:operit-util", "dep:operit-rslink-runtime", "tokio/time"]
+full = ["operit-util/full", "route-catalog", "peer-runtime", "peer-directory", "dep:operit-runtime", "dep:operit-store", "operit-store/full", "dep:operit-tools", "dep:operit-util", "dep:operit-rslink-runtime", "tokio/time"]
 test-support = []
 
 [dependencies]

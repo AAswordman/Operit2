@@ -2,7 +2,7 @@ import {readFile, writeFile} from 'node:fs/promises';
 import {createInterface} from 'node:readline/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {editorRoot, configFile, firmwareElf, loadDeviceConfig, listSerialPorts, selectSerialPort,
+import {editorRoot, configFile, firmwareElf, firmwareDist, loadDeviceConfig, listSerialPorts, selectSerialPort,
   buildFlashPlan, executeFlashPlan, runTool} from './device-tools.mts';
 
 const debugActions = new Set(['screen', 'tree', 'tap', 'swipe', 'health', 'draft']);

@@ -1,11 +1,13 @@
 //! Discovery sources share one cache and refresh path. Records are untrusted dial hints.
 use super::*;
+#[cfg(feature = "peer-directory")]
 use crate::PeerStateStore::PeerDiscoveryConfig;
 use operit_host_api::ServiceDiscovery::{DiscoveredService, DiscoverySubscription};
 
 #[derive(Default)]
 pub(super) struct DiscoveryState {
     pub(super) records: Mutex<BTreeMap<String, CachedService>>,
+    #[cfg(feature = "peer-directory")]
     pub(super) directory: directory::Directory,
 }
 pub(super) struct CachedService {
@@ -26,6 +28,7 @@ impl HostRuntimePeerService {
             .monotonicTimeMillis()
             .map_err(|failure| error(failure.to_string()))
     }
+    #[cfg(feature = "peer-directory")]
     pub(super) fn directoryConfig(&self) -> Result<Option<PeerDiscoveryConfig>, CoreLinkError> {
         let config = self
             .state
@@ -44,8 +47,10 @@ impl HostRuntimePeerService {
         Ok(config)
     }
     pub(super) fn needsDirectoryRefresh(&self) -> bool {
-        self.directoryConfig()
-            .is_ok_and(|config| config.is_some_and(|config| !config.directoryUrl.is_empty()))
+        #[cfg(feature = "peer-directory")]
+        { self.directoryConfig().is_ok_and(|config| config.is_some_and(|config| !config.directoryUrl.is_empty())) }
+        #[cfg(not(feature = "peer-directory"))]
+        { false }
     }
     pub(super) fn rememberDiscoveryRecords(&self, records: &[DiscoveredService]) {
         let mut grouped = BTreeMap::<String, Vec<DiscoveredService>>::new();
@@ -56,6 +61,7 @@ impl HostRuntimePeerService {
         let mut known = self.state.discovery.records.lock().unwrap_or_else(|p| p.into_inner());
         for (key, records) in grouped { known.insert(key, CachedService { records, expires: None }); }
     }
+    #[cfg(feature = "peer-directory")]
     pub(super) fn rememberDirectoryRecords(&self, records: &[directory::Announcement]) -> Result<(), CoreLinkError> {
         let now = self.discoveryNow()?;
         let mut known = self.state.discovery.records.lock().unwrap_or_else(|p| p.into_inner());
@@ -87,11 +93,20 @@ impl HostRuntimePeerService {
         Ok(())
     }
     pub(super) fn discoveryRecords(&self) -> Vec<DiscoveredService> {
+        #[cfg(feature = "peer-directory")]
         let _ = self.directoryConfig();
         let now = self.discoveryNow().ok();
         let mut known = self.state.discovery.records.lock().unwrap_or_else(|p| p.into_inner());
         known.retain(|_, entry| entry.expires.is_none_or(|expires| now.is_some_and(|now| expires > now)));
-        known.values().flat_map(|entry| entry.records.iter().cloned()).collect()
+        known.values().flat_map(|entry| entry.records.iter().cloned()).filter_map(|mut record| {
+            // Filter before ranking so a restricted carrier never advertises an
+            // unusable first choice when the same peer also offers TCP.
+            let modes = record.properties.get_mut("transports")?;
+            *modes = modes.split(',').filter(|mode| parseTransport(mode)
+                .is_ok_and(|transport| self.state.link.supportsTransport(transport)))
+                .collect::<Vec<_>>().join(",");
+            (!modes.is_empty()).then_some(record)
+        }).collect()
     }
     pub(super) fn clearDiscovery(&self) {
         self.state
@@ -111,7 +126,7 @@ impl HostRuntimePeerService {
         })) {
             Ok(subscription) => Some(subscription),
             Err(error) => {
-                operit_util::AppLogger::AppLogger::w("RuntimePeerService", &format!("Automatic LAN discovery unavailable: {error}"));
+                operit_util::app_log!(w, "RuntimePeerService", &format!("Automatic LAN discovery unavailable: {error}"));
                 None
             }
         }
@@ -119,22 +134,27 @@ impl HostRuntimePeerService {
 
     /// Interactive and background callers use identical source and partial-failure semantics.
     pub(super) async fn refreshDiscovery(&self, timeoutMs: u64, retrySubscription: bool) -> DiscoveryRefresh {
+        #[cfg(feature = "peer-directory")]
         let (lan, directory) = tokio::join!(
             self.refreshLanDiscovery(timeoutMs, retrySubscription),
             self.refreshDirectory(timeoutMs)
         );
+        #[cfg(not(feature = "peer-directory"))]
+        let lan = self.refreshLanDiscovery(timeoutMs, retrySubscription).await;
+        #[allow(unused_mut)]
         let mut refresh = lan.unwrap_or_else(|failure| DiscoveryRefresh {
             subscription: None,
             scan: Err(failure),
         });
         if let Err(failure) = &refresh.scan {
-            operit_util::AppLogger::AppLogger::w("RuntimePeerService", &format!("LAN discovery unavailable: {failure}"));
+            operit_util::app_log!(w, "RuntimePeerService", &format!("LAN discovery unavailable: {failure}"));
         }
+        #[cfg(feature = "peer-directory")]
         match directory {
             Ok(true) => refresh.scan = Ok(()),
             Ok(false) => {}
             Err(failure) => {
-                operit_util::AppLogger::AppLogger::w(
+                operit_util::app_log!(w,
                     "RuntimePeerService",
                     &format!("Directory discovery failed: {failure}"),
                 );
@@ -144,6 +164,7 @@ impl HostRuntimePeerService {
             }
         }
         // Unexpired hints remain useful through a temporary directory outage.
+        #[cfg(feature = "peer-directory")]
         if refresh.scan.is_err() {
             // Prune leases before deciding whether a failed query can use cached directory hints.
             self.discoveryRecords();
@@ -181,7 +202,7 @@ impl HostRuntimePeerService {
         let records = receiver.await.map_err(|_| error("Background discovery cancelled"))?;
         let scan = records.map_err(|failure| error(failure.to_string())).map(|records| {
             self.rememberDiscoveryRecords(&records);
-            operit_util::AppLogger::AppLogger::trace_detail("RuntimePeerService", &format!(
+            operit_util::app_log!(trace_detail, "RuntimePeerService", &format!(
                 "Background LAN discovery refreshed records={}", records.len()));
         });
         Ok(DiscoveryRefresh { subscription, scan })
@@ -232,7 +253,7 @@ impl HostRuntimePeerService {
         let endpoint = OperatorEndpoint { rendered: address.into(), transport: Some(transport) };
         self.updateOutboundEndpointLocked(node, &endpoint, None)?;
         drop(_guard);
-        operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
+        operit_util::app_log!(i, "RuntimePeerService", &format!(
             "Authenticated pairing endpoint refreshed peer={node} endpoint={address}"));
         self.changed();
         Ok(())

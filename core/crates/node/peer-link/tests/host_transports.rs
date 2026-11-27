@@ -343,3 +343,46 @@ async fn automatic_http_listeners_are_independent_and_websocket_shares_resolved_
 
 #[path = "host_transports/mixed_port.rs"]
 mod mixed_port;
+
+/// A stream-only endpoint interoperates with the full Link in both directions.
+/// Installing an HTTP Host must not make its dedicated TCP listener depend on a scheduler.
+#[tokio::test]
+async fn stream_only_tcp_interoperates_with_full_link_and_enforces_frame_limit() {
+    let stream = StreamHostPeerLink::withMaxMessageBytes(512).unwrap();
+    let full = HostPeerLink::withMaxMessageBytes(4096).unwrap();
+    for streamServer in [true, false] {
+        let serverLink: &dyn PeerLink = if streamServer { &stream } else { &full };
+        let clientLink: &dyn PeerLink = if streamServer { &full } else { &stream };
+        let serverHost = if streamServer {
+            Arc::new(HostManager {
+                tcpHost: Some(Arc::new(operit_host_native_common::NativeTcpHost)),
+                httpServerHost: Some(Arc::new(NativeHttpServerHost)),
+                ..HostManager::default()
+            })
+        } else { host() };
+        let server = serverLink.listen(serverHost, PeerEndpoint {
+            nodeId: "server".into(), address: "127.0.0.1:0".into(),
+        }, PeerTransport::Tcp).await.unwrap();
+        let bind = server.localAddress().unwrap();
+        let client = clientLink.connect(host(), PeerEndpoint {
+            nodeId: "client".into(), address: String::new(),
+        }, PeerEndpoint { nodeId: "server".into(), address: format!("tcp://{bind}") },
+            PeerTransport::Tcp).await.unwrap();
+        let accepted = server.accept().await.unwrap().unwrap();
+        let message = || PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(
+            "roundtrip", "object", "method", CoreValue::String("hello".into()))));
+        client.send(message()).await.unwrap();
+        assert_eq!(accepted.receive().await.unwrap(), Some(message()));
+        accepted.send(message()).await.unwrap();
+        assert_eq!(client.receive().await.unwrap(), Some(message()));
+        let (limited, unlimited) = if streamServer { (&accepted, &client) } else { (&client, &accepted) };
+        let large = || PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(
+            "limit", "object", "method", CoreValue::String("x".repeat(1024)))));
+        assert_eq!(limited.send(large()).await.unwrap_err(), MESSAGE_TOO_LARGE_ERROR);
+        unlimited.send(large()).await.unwrap();
+        assert!(limited.receive().await.unwrap_err().starts_with("invalid peer message length:"));
+        client.close().await;
+        accepted.close().await;
+        server.close().await;
+    }
+}

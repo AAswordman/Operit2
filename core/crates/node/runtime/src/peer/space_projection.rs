@@ -356,7 +356,7 @@ mod tests {
     fn old_protocol_omission_does_not_enable_projection_references() {
         let old = serde_json::json!({"protocol": crate::PeerProtocol::PeerProtocol::current(), "version":1,"nodeId":"peer","endpoint":true,
             "authorityMode":"localReplay","maxMessageBytes":8192,"snapshotPaging":true});
-        let mut protocol: ProjectionProtocol = serde_json::from_value(old).unwrap();
+        let mut protocol: ProjectionProtocol = operit_util::SerializationSetup::fromJsonValue(old).unwrap();
         assert!(!protocol.projectionReference);
         protocol.validate("peer").unwrap();
         protocol.projectionReference = true;

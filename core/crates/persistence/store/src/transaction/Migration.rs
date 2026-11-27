@@ -167,6 +167,8 @@ type Step = dyn Fn(u32, &mut Context) -> Result<(), Error> + Send + Sync;
 #[derive(Clone)]
 pub struct Definition {
     step: Arc<Step>,
+    plain_state: Option<Arc<dyn Fn(u32, &mut Preferences) -> Result<(), Error> + Send + Sync>>,
+    state_step: fn(&Self, u32, &mut Preferences) -> Result<(), Error>,
     pub(crate) independent: bool,
 }
 impl Definition {
@@ -175,6 +177,8 @@ impl Definition {
     ) -> Self {
         Self {
             step: Arc::new(step),
+            plain_state: None,
+            state_step: Self::context_state,
             independent: false,
         }
     }
@@ -183,6 +187,26 @@ impl Definition {
     ) -> Self {
         Self::new(move |version, context| context.map_preferences(version, &step))
     }
+
+    /// Local schemas have no immutable transaction effects to translate.
+    pub(crate) fn from_node_preferences(
+        step: impl Fn(u32, &mut Preferences) -> Result<(), Error> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            step: Arc::new(|_, _| Err(Error::Message("Node-local schema has no transaction converter".into()))),
+            plain_state: Some(Arc::new(step)),
+            state_step: Self::node_state,
+            independent: false,
+        }
+    }
+
+    fn node_state(&self, version: u32, preferences: &mut Preferences) -> Result<(), Error> {
+        let mut staged = preferences.clone();
+        self.plain_state.as_ref().expect("node-local schema codec")(version, &mut staged)?;
+        preferences.values = staged.values;
+        Ok(())
+    }
+
     pub fn apply(&self, version: u32, context: &mut Context) -> Result<(), Error> {
         let mut staged = context.clone();
         (self.step)(version, &mut staged)?;
@@ -253,6 +277,11 @@ impl Definition {
         Ok(())
     }
     pub fn state(&self, version: u32, preferences: &mut Preferences) -> Result<(), Error> {
+        (self.state_step)(self, version, preferences)
+    }
+
+    // Keep the replay frame off the fixed endpoint task stack entirely.
+    fn context_state(&self, version: u32, preferences: &mut Preferences) -> Result<(), Error> {
         let owner = Owner {
             backend: super::Backend::DataStore,
             path: String::new(),
@@ -261,7 +290,7 @@ impl Definition {
         };
         let mut data = preferences
             .view
-            .clone()
+            .as_deref().cloned()
             .unwrap_or_else(|| Data::empty(owner));
         data.values = preferences
             .iterEntries()
@@ -275,7 +304,7 @@ impl Definition {
         }
         preferences.values = migrated.values;
         context.after.values.clear();
-        preferences.view = Some(context.after);
+        preferences.view = Some(Arc::new(context.after));
         Ok(())
     }
 }

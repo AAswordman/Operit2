@@ -173,7 +173,7 @@ impl<'a> Registry<'a> {
         } else {
             self.journal.skipOperations(operations).map_err(|e|e.to_string())?;
             report.skipped += operations.len();
-            operit_util::AppLogger::AppLogger::w("TransactionSync", &format!(
+            operit_util::app_log!(w, "TransactionSync", &format!(
                 "sync_apply.skipped owner={path} kind=capability count={} reason={error}", operations.len()));
         }
         report.outcomes.insert(path.to_owned(), Err(error.to_string()));
@@ -263,7 +263,7 @@ impl<'a> Registry<'a> {
                         report.aliases.extend(aliases.clone());
                         report.outcomes.insert(path.clone(), Ok(aliases));
                         if timing.elapsed().as_millis() >= 100 {
-                            operit_util::AppLogger::AppLogger::trace("CoreSyncTrace", &format!(
+                            operit_util::app_log!(trace, "CoreSyncTrace", &format!(
                                 "sync_owner.stages owner={path} operations={count} applyMs={apply_ms} totalMs={}", timing.elapsed().as_millis()));
                         }
                     }
@@ -351,7 +351,7 @@ impl<'a> Registry<'a> {
                 Err(error) => {
                     let mut manifest = snapshot.manifest()?;
                     manifest.damaged = true;
-                    operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_consistency.damaged owner={} error={error}", snapshot.data.owner.path));
+                    operit_util::app_log!(w, "TransactionSync", &format!("sync_consistency.damaged owner={} error={error}", snapshot.data.owner.path));
                     manifest
                 },
             };

@@ -33,11 +33,11 @@ class DeviceDebugTests(unittest.TestCase):
             'heapFreeBytes': 23000, 'uptimeMs': 1200})
 
     def test_audio_diagnostics_use_dedicated_local_opcode(self):
-        frame = debug.request_frame(42, 'audio', 'test')
+        frame = debug.request_frame(42, 'audio', 'record')
         self.assertEqual(frame[8:13], struct.pack('>IB', 42, 7))
-        self.assertEqual(frame[13:-4], b'test')
+        self.assertEqual(frame[13:-4], b'record')
         self.assertEqual(debug.ResponseReader(42).feed(response(42, {
-            'samples': 48000, 'rawPeak24': 1234})), {'samples': 48000, 'rawPeak24': 1234})
+            'phase': 'recording', 'busy': True})), {'phase': 'recording', 'busy': True})
 
     def test_split_noise_and_wrong_id(self):
         reader = debug.ResponseReader(99)

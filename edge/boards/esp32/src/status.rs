@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use operit_board_esp32::ESP32_2432S028_BOARD_ID;
 
 /// Snapshot published by the firmware status endpoint.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct FirmwareStatusSnapshot {
     pub boardId: String,
     pub expression: String,
@@ -119,11 +119,7 @@ impl FirmwareStatus {
 
 /// Renders firmware status as JSON for machine clients.
 pub fn renderStatusJson(snapshot: &FirmwareStatusSnapshot) -> String {
-    serde_json::json!({
-        "boardId": snapshot.boardId, "expression": snapshot.expression,
-        "wifiSsid": snapshot.wifiSsid, "ipv4": snapshot.ipv4,
-        "wifiConnected": snapshot.wifiConnected, "pairingCode": snapshot.pairingCode,
-    }).to_string()
+    serde_json::to_string(snapshot).expect("serializing firmware status")
 }
 
 #[cfg(test)]

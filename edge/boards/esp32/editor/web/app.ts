@@ -95,7 +95,7 @@ hostInput.addEventListener('input', () => {
 });
 composer.addEventListener('submit', event => {
   event.preventDefault();
-  if (!runtime || pendingSend || window.operitEditor?.isEditing()) return;
+  if (!runtime || pendingSend) return;
   try { submittedHostText = checkedDraft(hostInput.value); }
   catch (error) { hostStatus.textContent = errorMessage(error); return; }
   runtime.ccall('operit_ui_set_chat_draft', null, ['string'], [draftPreview(submittedHostText)]);
@@ -240,7 +240,6 @@ function navigate(page: 'home' | 'apps'): void {
 
 /** Handles runtime keyboard navigation outside edit mode. */
 function handleCanvasKeydown(event: KeyboardEvent): void {
-  if (window.operitEditor?.isEditing()) return;
   if (!['ArrowRight', 'ArrowLeft', 'Escape'].includes(event.key)) return;
   event.preventDefault();
   navigate(event.key === 'ArrowRight' ? 'apps' : 'home');
@@ -334,9 +333,7 @@ async function updateBuildStatus(): Promise<void> {
       manifest?.sourceHash &&
       manifest.sourceHash !== sourceHash &&
       !status.running &&
-      !status.error &&
-      !window.operitEditor?.isDirty() &&
-      !window.operitEditor?.isBusy()
+      !status.error
     ) {
       location.reload();
     }
@@ -443,7 +440,7 @@ window.setInterval(() => void updateBuildStatus(), 2000);
 // Developer automation reads and operates the actual shared renderer.
 let debugPolling = false;
 window.setInterval(async () => {
-  if (!runtime || debugPolling || window.operitEditor?.isEditing()) return;
+  if (!runtime || debugPolling) return;
   debugPolling = true;
   try {
     const response = await fetch('/api/simulator/debug/commands');

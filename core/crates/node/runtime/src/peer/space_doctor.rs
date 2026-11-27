@@ -6,7 +6,7 @@
 //! own locked entry point, after a timestamped backup, verified by a shadow
 //! reconstruction of the control command set.
 
-use operit_util::RuntimeStorageLayout::{RUNTIME_SPACE_CONTROL_PROJECTION_PATH, RUNTIME_SPACE_DOCTOR_COUNTERS_PATH};
+use operit_util::RuntimeStorageLayout::RUNTIME_SPACE_DOCTOR_COUNTERS_PATH;
 use super::*;
 use crate::PeerStateStore::PeerStateStore;
 use operit_store::NetworkControlStore::{NetworkControlCommandRecord, NETWORK_CONTROL_SYNC_DOMAIN};
@@ -18,7 +18,6 @@ use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 
-pub(crate) const CONTROL_PROJECTION_PATH: &str = RUNTIME_SPACE_CONTROL_PROJECTION_PATH;
 const COUNTERS_PATH: &str = RUNTIME_SPACE_DOCTOR_COUNTERS_PATH;
 const COUNTERS_KEY: &str = "counters";
 static COUNTERS_MUTATION: Mutex<()> = Mutex::new(());
@@ -157,7 +156,7 @@ pub(crate) fn updateCounters(
 
 /// Decodes the command envelope of one control operation, if it still can be.
 fn commandSpaceId(operation: &SyncOperation) -> Result<String, String> {
-    NetworkControlCommandRecord::deserialize(&operation.payload)
+    operit_util::SerializationSetup::fromJsonValueRef::<NetworkControlCommandRecord>(&operation.payload)
         .map(|record| record.spaceId)
         .map_err(|error| error.to_string())
 }
@@ -384,7 +383,7 @@ pub fn diagnose(service: &dyn NodeSpaceContext, repair: bool) -> Result<SpaceHea
     let mut projectionOperations = Vec::new();
     for (key, encoded) in &projectionEntries {
         if key == operit_store::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
-        match serde_json::from_value::<SyncOperation>(encoded.clone()) {
+        match operit_util::SerializationSetup::fromJsonValue::<SyncOperation>(encoded.clone()) {
             Ok(operation) => projectionOperations.push(operation),
             Err(error) => findings.push(SpaceDoctorFinding {
                 severity: "error".into(),
@@ -501,7 +500,7 @@ fn runRepair(
     let projectionStore = operit_store::NetworkControlStore::NetworkControlStore::projectionStore(service.storage());
     for (key, encoded) in projectionStore.data().map_err(|error| error.to_string())?.entries() {
         if key == operit_store::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
-        if let Ok(operation) = serde_json::from_value::<SyncOperation>(encoded) {
+        if let Ok(operation) = operit_util::SerializationSetup::fromJsonValue::<SyncOperation>(encoded) {
             shadowOperations.push(operation);
         }
     }

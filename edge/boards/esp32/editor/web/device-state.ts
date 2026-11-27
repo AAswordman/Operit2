@@ -1,3 +1,4 @@
+import type {FirmwareCheck} from '../src/firmware-check.mts';
 export interface CoreAccessState {
     pairing?: {pairingId: string; peerNodeId: string} | null;
     request?: {requestId: string; status: string; spaceName: string; error?: string | null} | null;
@@ -13,32 +14,6 @@ export interface DeviceState {
     scene?: {
         active: boolean;
         revision: number;
-    };
-    plugins?: {
-        category?: string;
-        details?: {
-            id?: string;
-            description?: string;
-            tools?: string[];
-            toolOffset?: number;
-            toolTotal?: number;
-            loading?: boolean;
-            error?: string;
-        };
-        items?: {
-            id: string;
-            name: string;
-            status?: string;
-            latencyMs?: number;
-            toolStatus?: string;
-            toolLatencyMs?: number;
-            testError?: string;
-        }[];
-        offset?: number;
-        total?: number;
-        loading?: boolean;
-        testing?: boolean;
-        error?: string | null;
     };
     speech?: {ready?: boolean; phase?: number; requestId?: string | null; resultId?: number; text?: string | null; error?: string | null};
     playback?: {type: string; id: string; audio?: string; contentType?: string}[];
@@ -57,19 +32,10 @@ export interface DeviceState {
     chatTask?: string;
     chat?: {
         connected?: boolean;
-        hasOlder?: boolean;
-        hasNewer?: boolean;
         chatId?: string;
         messages?: {
             sender: string;
             text: string;
-        }[];
-        conversationsLoading?: boolean;
-        conversationsError?: string | null;
-        conversations?: {
-            id: string;
-            title: string;
-            characterCardName?: string;
         }[];
         error?: string;
     };
@@ -81,7 +47,7 @@ export interface DeviceState {
     } | null;
 }
 /** One shared projection for browser events; native scene summaries must reach
- * the renderer just like chat/plugin state. Never include cached bytes or leases. */
+ * the renderer just like chat state. Never include cached bytes or leases. */
 export function simulatorViewState(state: {
     ready?: boolean;
     device?: DeviceState | null;
@@ -98,7 +64,7 @@ export function simulatorViewState(state: {
         chatPreview: device?.chatPreview ?? '尚未连接对话',
         speech: device?.speech, playback: device?.playback,
         scene: device?.scene,
-        plugins: device?.plugins, chat: device?.chat, chatScreen: device?.chatScreen, chatTask: device?.chatTask,
+        chat: device?.chat, chatScreen: device?.chatScreen, chatTask: device?.chatTask,
         chatSendResult: device?.chatSendResult,
     };
 }
@@ -113,6 +79,7 @@ export function simulatorConnectionLabel(device?: DeviceState | null): string {
 }
 
 export interface SimulatorStatus {
+    firmwareCheck?: FirmwareCheck;
     ready?: boolean;
     running?: boolean;
     output?: string;
@@ -120,7 +87,19 @@ export interface SimulatorStatus {
 }
 
 export function simulatorStatusLabel(state: SimulatorStatus): string {
+    if (state.firmwareCheck?.status === 'checking') return '正在校验 ESP32 固件…';
+    if (!state.ready && state.firmwareCheck?.status === 'failed') return '固件检查失败：' + state.firmwareCheck.error;
     if (!state.ready) return state.running ? '正在启动模拟设备…' : '模拟设备已停止';
     const connection = simulatorConnectionLabel(state.device);
     return state.device?.error ? `${connection} · ${state.device.error}` : connection;
+}
+
+/** Firmware checks describe this startup, separately from simulated behavior. */
+export function firmwareStatusLabel(check?: FirmwareCheck): string {
+    if (check?.status === 'checking') return '正在检查真实固件的编译、ABI 与 Flash 分区…';
+    if (check?.status === 'passed') return `编译、ABI、分区检查通过 · ${check.imageBytes} / ${check.partitionBytes} 字节`;
+    if (check?.status === 'failed') return check.overflowBytes
+        ? `应用分区超出 ${check.overflowBytes} 字节 · ${check.imageBytes} / ${check.partitionBytes} 字节`
+        : check.error ?? '固件检查失败';
+    return '未验证固件，仅用于模拟行为';
 }

@@ -311,8 +311,20 @@ mod tests {
             let (storage, control) = directory.open();
             assert_eq!(storage.readBytes("runtime/audio-fixture").unwrap(), bytes);
             assert_eq!(storage.readBytes("runtime/identity").unwrap(), b"original");
-            assert!(control.snapshot()["logicalBytes"].as_u64().unwrap() < 7000);
+            assert!(control.snapshot()["logicalBytes"].as_u64().unwrap() < codec::STORAGE_BUDGET as u64);
         }
+    }
+    #[test]
+    fn extended_logical_snapshot_survives_reboot_when_physical_capacity_allows() {
+        let directory = Directory::new();
+        let (storage, control) = directory.open();
+        let bytes = noise(8000);
+        storage.writeBytes("runtime/scene-fixture", &bytes).unwrap();
+        assert!(control.snapshot()["logicalBytes"].as_u64().unwrap() > 7000);
+        assert_eq!(storage.readBytes("runtime/scene-fixture").unwrap(), bytes);
+        drop(storage);
+        let (storage, _) = directory.open();
+        assert_eq!(storage.readBytes("runtime/scene-fixture").unwrap(), bytes);
     }
     #[test]
     fn logical_snapshot_limit_rejects_before_modifying_the_carrier() {
@@ -321,7 +333,7 @@ mod tests {
         storage.writeBytes("runtime/identity", b"original").unwrap();
         let marker = fs::read(directory.0.join("runtime/snapshot.marker")).unwrap();
         let data = fs::read(directory.0.join("runtime/snapshot.data")).unwrap();
-        let error = storage.writeBytes("runtime/oversize", &noise(7100)).unwrap_err();
+        let error = storage.writeBytes("runtime/oversize", &noise(codec::STORAGE_BUDGET + 100)).unwrap_err();
         assert!(error.message.contains("exceeds NVS budget"), "{}", error.message);
         assert_eq!(fs::read(directory.0.join("runtime/snapshot.marker")).unwrap(), marker);
         assert_eq!(fs::read(directory.0.join("runtime/snapshot.data")).unwrap(), data);

@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "operit_mini_ui.c"
+    SRCS "operit_mini_ui.c" "mini_pages.c" "mini_render.c"
     INCLUDE_DIRS "."
     REQUIRES esp_timer esp_partition spi_flash nvs_flash
 )

@@ -152,19 +152,30 @@ impl CompactTopologyV1 {
 pub struct CoreSpaceStore {
     storage: Arc<dyn RuntimeStorageHost>,
     recordSyncOperations: bool,
+    recordStoreFn: fn(Arc<dyn RuntimeStorageHost>, String) -> PreferencesDataStore,
+    replaceRecordFn: fn(&PreferencesDataStore, Preferences) -> Result<(), PreferencesDataStoreError>,
+    importTopologyFn: fn(&PreferencesDataStore, &'static str, serde_json::Value) -> Result<(), PreferencesDataStoreError>,
 }
 
 impl CoreSpaceStore {
     /// Creates a Space store over an explicit runtime storage host.
     pub fn new(storage: Arc<dyn RuntimeStorageHost>) -> Self {
-        Self { storage, recordSyncOperations: true }
+        Self { storage, recordSyncOperations: true,
+            recordStoreFn: |storage, path| PreferencesDataStore::newWithStorage(storage, path)
+                .withSchema(CORE_SPACE_RECORD_VERSION, Self::migrateRecord),
+            replaceRecordFn: PreferencesDataStore::replaceWithScope::<false>,
+            importTopologyFn: Self::importTopologyWithScope::<false> }
     }
 
     /// Keeps an endpoint's membership/profile projection without making it a
     /// Space data replica or creating business replication clocks and journals.
     #[allow(non_snake_case)]
     pub fn newNodeLocal(storage: Arc<dyn RuntimeStorageHost>) -> Self {
-        Self { storage, recordSyncOperations: false }
+        Self { storage, recordSyncOperations: false,
+            recordStoreFn: |storage, path| (*CoreNodeStateStore::newWithStorage(storage, path)
+                .withSchema(CORE_SPACE_RECORD_VERSION, Self::migrateRecord)).clone(),
+            replaceRecordFn: PreferencesDataStore::replaceWithScope::<true>,
+            importTopologyFn: Self::importTopologyWithScope::<true> }
     }
 
     /// Creates a Space store over the process-wide runtime storage host.
@@ -394,24 +405,24 @@ impl CoreSpaceStore {
             .delete().map_err(|error| error.to_string())?;
         self.writeMemberRecord(&member)?;
         if let Err(error) = self.writeDeviceProfile(&profile) {
-            operit_util::AppLogger::AppLogger::w("CoreSpaceStore", &format!("Exit Space: local profile: {error}"));
+            operit_util::app_log!(w, "CoreSpaceStore", &format!("Exit Space: local profile: {error}"));
         }
         for directory in [RUNTIME_SPACE_MEMBERS_DIR_PATH, RUNTIME_SPACE_TOPOLOGY_DIR_PATH,
             RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH, RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH] {
             let entries = match self.storage.list(directory) {
                 Ok(entries) => entries,
                 Err(error) => {
-                    operit_util::AppLogger::AppLogger::w("CoreSpaceStore", &format!("Exit Space: list {directory}: {error}"));
+                    operit_util::app_log!(w, "CoreSpaceStore", &format!("Exit Space: list {directory}: {error}"));
                     continue;
                 }
             };
             for entry in entries {
                 if entry.isDirectory || entry.path == memberPath || entry.path == profilePath
-                    || Self::preferenceSyncStore(&entry.path).is_none() {
+                    || !Self::ownsPreferencePath(&entry.path) {
                     continue;
                 }
                 if let Err(error) = CoreNodeStateStore::newWithStorage(self.storage.clone(), entry.path.clone()).delete() {
-                    operit_util::AppLogger::AppLogger::w("CoreSpaceStore", &format!("Exit Space: delete {}: {error}", entry.path));
+                    operit_util::app_log!(w, "CoreSpaceStore", &format!("Exit Space: delete {}: {error}", entry.path));
                 }
             }
         }
@@ -1190,7 +1201,7 @@ impl CoreSpaceStore {
                 Err(error) => {
                     let error = format!("Space record {}: {error}", entry.path);
                     if localPath.as_deref() == Some(entry.path.as_str()) { return Err(error); }
-                    operit_util::AppLogger::AppLogger::w("CoreSpaceStore", &error);
+                    operit_util::app_log!(w, "CoreSpaceStore", &error);
                 }
             }
         }
@@ -1210,9 +1221,7 @@ impl CoreSpaceStore {
             &stringPreferencesKey(CORE_SPACE_RECORD_KEY),
             serde_json::to_value(record).map_err(|error| error.to_string())?,
         );
-        self.syncedMemberStore(&record.nodeId)
-            .replaceRecoverably(preferences)
-            .map_err(|error| error.to_string())
+        self.replaceRecord(format!("{RUNTIME_SPACE_MEMBERS_DIR_PATH}/{}.preferences.json", record.nodeId), preferences)
     }
 
     /// Writes one complete membership projection under a shared Space identity revision.
@@ -1281,17 +1290,20 @@ impl CoreSpaceStore {
     /// to every peer and keep idle snapshots churning.
     fn importTopologyRecord(&self, record: &CoreSpaceTopologyRecord) -> Result<(), String> {
         let (key, value) = self.topologyRecordValue(record)?;
-        self.recordStore(format!(
-            "{RUNTIME_SPACE_TOPOLOGY_DIR_PATH}/{}.preferences.json",
-            record.nodeId
-        ))
-        .migrate(|preferences| -> Result<(), PreferencesDataStoreError> {
+        let store = self.recordStore(format!(
+            "{RUNTIME_SPACE_TOPOLOGY_DIR_PATH}/{}.preferences.json", record.nodeId));
+        (self.importTopologyFn)(&store, key, value).map_err(|error| error.to_string())
+    }
+
+    fn importTopologyWithScope<const NODE_LOCAL: bool>(
+        store: &PreferencesDataStore, key: &'static str, value: serde_json::Value,
+    ) -> Result<(), PreferencesDataStoreError> {
+        store.try_edit_result_internal::<NODE_LOCAL, _, _, _>(|preferences| -> Result<(), PreferencesDataStoreError> {
             preferences.remove(&stringPreferencesKey(CORE_SPACE_RECORD_KEY));
             preferences.remove(&stringPreferencesKey(COMPACT_TOPOLOGY_V1));
             preferences.set(&stringPreferencesKey(key), value);
             Ok(())
-        })
-        .map_err(|error| error.to_string())
+        }, false)
     }
 
     /// Reads every synchronized topology announcement visible to this CoreNode.
@@ -1320,7 +1332,7 @@ impl CoreSpaceStore {
             })();
             match record {
                 Ok(record) => { records.insert(record.nodeId.clone(), record); },
-                Err(error) => { operit_util::AppLogger::AppLogger::w("CoreSpaceStore", &format!("Space record {}: {error}", entry.path)); },
+                Err(error) => { operit_util::app_log!(w, "CoreSpaceStore", &format!("Space record {}: {error}", entry.path)); },
             }
         }
         Ok(records)
@@ -1343,14 +1355,12 @@ impl CoreSpaceStore {
         let (key, value) = self.topologyRecordValue(record)?;
         let mut preferences = emptyPreferences();
         preferences.set(&stringPreferencesKey(key), value);
-        self.recordStore(
+        self.replaceRecord(
             format!(
                 "{RUNTIME_SPACE_TOPOLOGY_DIR_PATH}/{}.preferences.json",
                 record.nodeId
-            ),
+            ), preferences,
         )
-        .replace(preferences)
-        .map_err(|error| error.to_string())
     }
 
     /// Writes one synchronized device availability announcement owned by its device identity.
@@ -1362,14 +1372,12 @@ impl CoreSpaceStore {
             &stringPreferencesKey(CORE_SPACE_RECORD_KEY),
             serde_json::to_value(presence).map_err(|error| error.to_string())?,
         );
-        self.recordStore(
+        self.replaceRecord(
             format!(
                 "{RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH}/{}.preferences.json",
                 presence.nodeId
-            ),
+            ), preferences,
         )
-        .replace(preferences)
-        .map_err(|error| error.to_string())
     }
 
     /// Writes one synchronized device presentation owned by its device identity.
@@ -1381,21 +1389,18 @@ impl CoreSpaceStore {
             &stringPreferencesKey(CORE_SPACE_RECORD_KEY),
             serde_json::to_value(profile).map_err(|error| error.to_string())?,
         );
-        self.recordStore(
+        self.replaceRecord(
             format!(
                 "{RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH}/{}.preferences.json",
                 profile.nodeId
-            ),
+            ), preferences,
         )
-        .replaceRecoverably(preferences)
-        .map_err(|error| error.to_string())
     }
 
-    /// Creates the synchronized preferences store for one Space member.
-    fn syncedMemberStore(&self, nodeId: &str) -> PreferencesDataStore {
-        self.recordStore(
-            format!("{RUNTIME_SPACE_MEMBERS_DIR_PATH}/{nodeId}.preferences.json"),
-        )
+    /// Preserve the constructor's scope at the publication boundary. A runtime
+    /// boolean alone keeps the complete replica recovery engine in endpoint builds.
+    fn replaceRecord(&self, path: impl Into<String>, preferences: Preferences) -> Result<(), String> {
+        (self.replaceRecordFn)(&self.recordStore(path), preferences).map_err(|error| error.to_string())
     }
 
     /// Reads a selected Space record directly through its shared schema without a generic JSON tree.
@@ -1408,23 +1413,24 @@ impl CoreSpaceStore {
 
     /// Opens versioned complete Space records using the declared storage scope.
     fn recordStore(&self, path: impl Into<String>) -> PreferencesDataStore {
-        let store = if self.recordSyncOperations {
-            PreferencesDataStore::newWithStorage(self.storage.clone(), path)
-        } else {
-            (*CoreNodeStateStore::newWithStorage(self.storage.clone(), path)).clone()
-        };
-        store.withSchema(CORE_SPACE_RECORD_VERSION, Self::migrateRecord)
+        (self.recordStoreFn)(self.storage.clone(), path.into())
+    }
+
+    /// Checks ownership without constructing a replica factory. Local departure
+    /// cleanup needs only filenames and must not retain a business sync backend.
+    fn ownsPreferencePath(path: &str) -> bool {
+        let Some((directory, name)) = path.rsplit_once('/') else { return false; };
+        if ![RUNTIME_SPACE_MEMBERS_DIR_PATH, RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH,
+            RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH, RUNTIME_SPACE_TOPOLOGY_DIR_PATH].contains(&directory) {
+            return false;
+        }
+        let Some(node) = name.strip_suffix(".preferences.json") else { return false; };
+        !node.starts_with('.') && validateNodeId(node).is_ok()
     }
 
     /// Declares the codec for complete records owned by Space, including archived string values.
     pub fn preferenceSyncStore(path: &str) -> Option<crate::PreferenceMerge::PreferenceMergeStore> {
-        let (directory, name) = path.rsplit_once('/')?;
-        if ![RUNTIME_SPACE_MEMBERS_DIR_PATH, RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH,
-            RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH, RUNTIME_SPACE_TOPOLOGY_DIR_PATH].contains(&directory) {
-            return None;
-        }
-        let node = name.strip_suffix(".preferences.json")?;
-        if node.starts_with('.') || validateNodeId(node).is_err() { return None; }
+        if !Self::ownsPreferencePath(path) { return None; }
         Some(crate::PreferenceMerge::PreferenceMergeStore::values(
             path, false, |storage, path| Self::new(storage).recordStore(path)))
     }
@@ -1439,8 +1445,8 @@ impl CoreSpaceStore {
         let key = stringPreferencesKey(CORE_SPACE_RECORD_KEY);
         if let Some(value) = values.get(&key) {
             let record: serde_json::Map<String, serde_json::Value> = match value {
-                serde_json::Value::String(encoded) => serde_json::from_str(encoded)?,
-                value => serde_json::from_value(value.clone())?,
+                serde_json::Value::String(encoded) => serde_json::from_slice((encoded).as_bytes())?,
+                value => operit_util::SerializationSetup::fromJsonValue(value.clone())?,
             };
             values.set(&key, serde_json::Value::Object(record));
         }
@@ -2042,7 +2048,7 @@ mod tests {
         assert_eq!(profile.coreVersion.as_deref(), Some("99.0.0"));
         let mut legacy = serde_json::to_value(profile).unwrap();
         legacy.as_object_mut().unwrap().remove("protocolVersion");
-        assert_eq!(serde_json::from_value::<CoreSpaceDeviceProfile>(legacy).unwrap().protocolVersion, None);
+        assert_eq!(operit_util::SerializationSetup::fromJsonValue::<CoreSpaceDeviceProfile>(legacy).unwrap().protocolVersion, None);
         store.writeLocalProtocol(4).unwrap();
         let identity = CoreNodeIdentityStore::new(store.storage.clone()).initialize().unwrap();
         assert_eq!(store.deviceProfiles().unwrap()[&identity.nodeId].protocolVersion, Some(4));
@@ -2781,9 +2787,9 @@ mod tests {
         assert!(receiverPolicy.projectControlOperations(&commands).is_err());
         assert_eq!(receiver.readBytes("runtime/link_access/space_policy.preferences.json").unwrap(), before);
         let mut forgedRoot = sourcePolicy.currentSpaceOperations().unwrap().into_iter()
-            .find(|operation| matches!(serde_json::from_value::<NetworkControlCommandRecord>(operation.payload.clone()).unwrap().command,
+            .find(|operation| matches!(operit_util::SerializationSetup::fromJsonValue::<NetworkControlCommandRecord>(operation.payload.clone()).unwrap().command,
                 NetworkControlCommand::Bootstrap { .. })).unwrap();
-        let mut forged: NetworkControlCommandRecord = serde_json::from_value(forgedRoot.payload.clone()).unwrap();
+        let mut forged: NetworkControlCommandRecord = operit_util::SerializationSetup::fromJsonValue(forgedRoot.payload.clone()).unwrap();
         forged.commandId = "forged-root".into(); forged.issuerNodeId = "projection-member".into();
         forged.command = NetworkControlCommand::Bootstrap { initialAdminNodeId: "projection-member".into() };
         forgedRoot.opId = "forged-root".into(); forgedRoot.entityId = "forged-root".into();

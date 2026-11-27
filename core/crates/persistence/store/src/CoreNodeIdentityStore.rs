@@ -138,7 +138,7 @@ impl CoreNodeIdentityStore {
                         // profile cannot fail Core startup during migration.
                         let record = match encoded {
                             serde_json::Value::String(text) => {
-                                serde_json::from_str::<serde_json::Value>(&text)?
+                                serde_json::from_slice::<serde_json::Value>(text.as_bytes())?
                             }
                             value => value,
                         };

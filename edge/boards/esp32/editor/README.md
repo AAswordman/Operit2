@@ -28,7 +28,8 @@ npm start --prefix edge/boards/esp32/editor
 | Rust 模拟器 / 共享固件模块 | 停止、启动模拟设备，Cargo 重新检查并编译 |
 | 设备配置和场景素材 | 使用设备原生接口保存，无需修改固件 |
 
-刷新网页不等于重启 Rust 进程。系统页面直接修改 `edge/boards/esp32/ui_port/operit_mini_ui.c`，
+刷新网页不等于重启 Rust 进程。`ui_port/mini_pages.c` 定义页面和触摸目标，
+`mini_render.c` 负责绘图与文字，`operit_mini_ui.c` 管理状态、交互和检查接口。
 状态与动作使用固件 Rust 模块；不要另写一套 Web 页面来模拟设备控件。
 
 ## Rust 模拟器
@@ -77,26 +78,26 @@ Rust 测试覆盖实际固件模块中的会话恢复、迟到结果隔离、独
 ```powershell
 npm run test:device-space --prefix edge/boards/esp32/editor
 npm run test:space --prefix edge/boards/esp32/editor
-npm run test:standalone --prefix edge/boards/esp32/editor
 ```
 
 `test:device-space` 覆盖发现、配对输入、保留凭据替换、取消、审批和重启恢复；
-`test:space` 覆盖远端 Core / Binding 使用；`test:standalone` 同步设备聊天配置后
-关闭 CLI，再验证设备继续请求模型及重启后恢复配置。模型服务使用确定性 HTTP fixture。
+`test:space` 覆盖 Core / Binding 文本转发、Core 执行插件以及双向语音协议。
+模型和语音服务使用确定性本地 fixture。
 可通过 `OPERIT_SIM_TEST_CLI` 指定已构建的兼容 CLI，避免每次重建 Core。
 
 一次运行固定设备预算的验收入口：
 
 ```powershell
 npm run test:device-budget --prefix edge/boards/esp32/editor
-npm run test:device-budget --prefix edge/boards/esp32/editor -- --firmware
+npm run test:device-budget --prefix edge/boards/esp32/editor -- --runtime-only
 ```
 
 入口复用上游的 256 KiB Rust 堆、16/24/20 KiB 主/异步/阻塞任务栈及 7,000 字节
 持久化预算。它先运行厂商 SDK workspace 的全功能测试及所有功能组合的依赖审计，
 再构建预览、检查 TypeScript、运行共享固件模块和编辑器测试，
-同步已有插件包并构建当前 Core CLI，然后验证配对入空间、独立聊天、额外十二轮对话及重启。
-`--firmware` 还先构建 ESP32 固件并检查 Xtensa ABI；两种入口均不会烧录设备。
+同步已有插件包并构建当前 Core CLI，然后验证配对入空间、Core 文本与语音转发及重启。
+默认入口先检查真实 ESP32 固件的编译、Xtensa ABI 和应用分区容量，再运行模拟场景。
+`--runtime-only` 只检查行为与模拟预算，其结果不包含固件验证；原 `--firmware` 参数仍兼容。两种入口均不会烧录设备。
 堆探针直接占用同一个固定分配区，制造隔开的 8 KiB 空洞，检查总空闲足够时
 12 KiB 连续分配仍会失败，释放相邻块后又能成功。栈越界在独立子进程中由保护页检测。
 构建、编辑器启动和探针共用同一份锁定的 release 模拟器产物。
@@ -171,10 +172,34 @@ ESP-IDF 前置文件，无需先手动执行一次 Cargo。
 构建产物复用固定路径：`generated/`、`edge/boards/esp32/dist/` 和当前盘根目录的 `esp32/`，
 不是每次新建一份固件历史。Rust 的增量缓存是电脑磁盘数据，不在设备 NVS 中。
 
+### 启动前的真实固件检查
+
+页面默认先用板卡的 Xtensa 工具链编译当前固件，检查 ABI，再由 `espflash` 按
+`partitions.csv` 生成应用镜像。任何一步失败都阻止默认模拟器启动，页面显示失败原因
+和实际镜像／分区字节数。每次启动都执行检查，编译复用 Cargo 的依赖缓存；不会因为
+模拟器可以运行、旧镜像存在或旧报告通过就判定当前固件有效。
+
+只检查固件时无需 Emscripten、串口或连接设备：
+
+```powershell
+npm run check:firmware --prefix edge/boards/esp32/editor
+```
+
+检查结果写入 `generated/firmware-check.json`，命令失败返回非零退出码。
+`/api/simulator/state` 的 `firmwareCheck` 报告本次启动的结果。缺少工具链同样属于失败。
+页面的「仅运行行为模拟」或启动 API 的 `{"mode":"runtime-only"}` 可单独调试协议与交互，
+页面会持续标明「未验证固件」。自动化行为测试显式使用此模式，完整预算检查默认包含真固件检查。
+
+通过编译、ABI 和分区检查表示本次固件可生成符合容量限制的镜像。桌面 Host 仍不执行
+Xtensa 指令，也不复现 ESP-IDF、无线、TLS、驱动的完整运行开销；对应行为仍需真机验证。
+
 ### 模拟器的资源限制与真实遥测边界
 
-模拟器与真机都使用 `PeerRuntimeLimits::constrained()`：消息帧上限 8 KiB，
-入站会话/待配对各 2 个、并发探测 1 个。限制由应用注入，不按桌面/ESP-IDF 编译目标分叉。
+模拟器与真机共用固件的 `src/runtime_profile.rs`：物理帧上限 2 KiB，
+空间投影逻辑载荷预算 8 KiB，入站会话/待配对各 2 个、并发探测 1 个。
+场景单包预算 8 KiB、总缓存 16 KiB。共享 Peer 的受限预设仍为 8 KiB 帧，
+通用 Scene 默认仍为单包 4 KiB、总缓存 8 KiB；本产品在装配时显式覆盖。
+限制不按桌面/ESP-IDF 编译目标分叉。
 Rust 使用固定的 256 KiB arena；主任务 16 KiB、异步 worker 24 KiB、阻塞 worker
 20 KiB，均使用固定映射和保护页。越界探针在独立进程中检查分配拒绝与栈故障。
 Host 的桌面文件与发现载体不执行业务代码；解析、压缩、空间校验仍受设备任务预算限制。
@@ -218,7 +243,7 @@ Invoke-RestMethod http://127.0.0.1:8766/api/simulator/storage-control -Method Po
 
 模拟器注册应用自有的 `operit.device.speech` Watch / Push 示例协议，可连接
 [语音处理插件](../../../../plugins/packages/examples/device_speech_processor/README.md)。
-`test:space` 使用真实 Core JavaScript 插件与加密 TCP，验证处理端断开后的重连、三轮
+`test:space` 设计为使用真实 Core JavaScript 插件与加密 TCP，覆盖处理端断开后的重连、三轮
 STT/TTS 请求、4096 字节二进制块、上传/播放背压和逐字节一致性。额外运行实际处理插件逻辑，
 通过真实加密 TCP 验证 65 秒 PCM 数据量、WAV 字节、超过 8 KiB 的分块识别文字和多段 TTS。
 共享固件和插件单元测试还验证 300 秒 PCM 数据量。测试使用确定性识别/合成供应商，
@@ -233,8 +258,43 @@ GPIO26 DAC 喇叭适配，详见[原生音频接线与自检](../README.md#nativ
 
 ## 长文本与显示窗口
 
-浏览器完整草稿最多 16384 UTF-8 字节，C 渲染器只保留最多 511 字节预览。浏览器提交时发送完整输入，不能把预览作为正文。原生输入接口没有外部草稿所有者，超过 511 字节会明确拒绝，避免悄悄发出前缀。直接模型模式继续执行原有 2048 字节输入限制；超限保留浏览器草稿并报错。
+浏览器完整草稿最多 16384 UTF-8 字节，C 渲染器只保留最多 511 字节预览。浏览器提交时发送完整输入，不能把预览作为正文。原生输入接口没有外部草稿所有者，超过 511 字节会明确拒绝，避免悄悄发出前缀。
 
 远端消息超过 2048 字节时，Edge 通过现有 Link Push / ReverseStream 向 Core 的 `sendUserMessageStream` 逐块传送，单块最多 2048 UTF-8 字节。设备当前保留有上限的临时输入字符串，完整输入不写入 NVS。Core 校验声明长度、分块上限、显式空提交包及 EOF 后，调用原有 `sendUserMessage`，复用权限、输入钩子、历史和生成逻辑。中断、缺块、提交后追加数据或 30 秒无输入都会失败，不提交已收到的前缀；不会自动重发不确定的聊天操作。需要配套的新 Core；旧 Core 缺少该方法时明确报错。
 
-聊天显示的 640 字节窗口和分页保持原有设计。长回复在 Core 保留全文，Edge 按页读取；显示窗口截短不代表正文丢失。“朗读当前显示的回复”使用该窗口中的片段，不等同于朗读 Core 中保存的完整长回复。集成测试验证超过 8 KiB 的中文/emoji 输入完整到达模型供应商并进入 Core 历史，末尾标记只提交一次。
+聊天显示只保留当前 Core 会话的最新 640 字节窗口，窗口内可滚动。长回复全文和历史管理保留在 Core。“朗读当前显示的回复”使用该窗口中的片段，不等同于朗读 Core 中保存的完整长回复。集成测试覆盖超过 8 KiB 的中文/emoji 输入完整到达模型供应商并进入 Core 历史，末尾标记只提交一次。
+
+## 单一 Edge 固件
+
+默认固件保留文本输入转发、Core 文字显示、PCM 上传和 Core 音频播放，
+以及配网、配对、Space 审批、设备偏好和通用 `edge.scene`。
+模型调用、识别、合成、上下文和插件执行由 Core 负责；独立模型模式、
+设备上的对话目录/历史翻页、插件诊断页面和 `--remote-display` 构建分支已删除。
+
+```sh
+npm run check:firmware
+npm run build:firmware
+```
+
+检查和打包均不烧录设备；产物统一位于 `../dist`。
+
+2026-11-27 完整应用镜像为 3,171,376 字节，较本轮精简前减少 252,336 字节，
+应用分区余量为 826,320 字节；距离 2 MiB 目标仍差 1,074,224 字节。
+编辑器 110 项、固件模块模拟 58 项、Core/Edge 协议 46 项测试通过。
+单独的 Windows `test:space` 在设备发起配对时以 `0xC0000005` 退出，
+未完成整条 CLI/UI 文本与语音验收。测试 CLI 使用当前源码临时关闭未用的
+原生推理引擎构建，构建后清单和锁文件已恢复。未进行烧录或实机测试。
+未启用的网页草稿设计器、AI 编辑和部署面板已移除，二次开发直接修改上述源码入口。
+
+真实 TCP 场景回归使用生产 Core runtime、共享配对和显式 Space 批准，在板卡的
+2 KiB 物理帧预算下上传插件提交的全部六套原猫素材，校验分块、哈希、素材切换、
+3 倍整数缩放的原生条带渲染，以及顶部导航区域保留。临时任务画面不写 NVS，
+模拟重启后配对和 Space 归属保留，过期画面不自动恢复。此测试不运行插件的
+任务状态订阅，也不能替代真机连接 Core 后的完整验收。
+
+在仓库根目录运行。启用完整 Core 的依赖要求 Rust 1.95.0 或更新版本；
+以下命令使用已安装的 1.95.0 桌面工具链：
+
+```sh
+cargo +1.95.0 test --locked --release --manifest-path edge/boards/esp32/editor/simulator/Cargo.toml --features core-integration-tests --test space_admission -- --test-threads=1
+```

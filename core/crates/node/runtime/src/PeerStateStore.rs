@@ -151,8 +151,8 @@ impl PeerStateStore {
                         if key == PREFERENCES_SCHEMA_VERSION_KEY_NAME {
                             continue;
                         }
-                        let encoded = serde_json::from_value::<String>(value)?;
-                        let record: Value = serde_json::from_str(&encoded)?;
+                        let encoded = operit_util::SerializationSetup::fromJsonValue::<String>(value)?;
+                        let record: Value = serde_json::from_slice((&encoded).as_bytes())?;
                         preferences.set(&stringPreferencesKey(&key), record);
                     }
                     Ok(())
@@ -206,7 +206,7 @@ impl PeerStateStore {
                             key.name
                         ))
                     })?;
-                    preferences.set(&key, serde_json::from_str::<Value>(&encoded)?);
+                    preferences.set(&key, serde_json::from_slice::<Value>((&encoded).as_bytes())?);
                 }
                 decodeHostConfig(preferences).map_err(PreferencesDataStoreError::Message)?;
                 Ok(())
@@ -250,9 +250,9 @@ impl PeerStateStore {
                     if key == PREFERENCES_SCHEMA_VERSION_KEY_NAME {
                         continue;
                     }
-                    let encoded = serde_json::from_value::<String>(value)?;
-                    let record: Value = serde_json::from_str(&encoded)?;
-                    serde_json::from_value::<StoredOutbound>(record.clone())?;
+                    let encoded = operit_util::SerializationSetup::fromJsonValue::<String>(value)?;
+                    let record: Value = serde_json::from_slice((&encoded).as_bytes())?;
+                    operit_util::SerializationSetup::fromJsonValue::<StoredOutbound>(record.clone())?;
                     preferences.set(&stringPreferencesKey(&key), record);
                 }
                 Ok(())
@@ -270,7 +270,7 @@ impl PeerStateStore {
                 continue;
             }
             let mut record: Value =
-                serde_json::from_str(&serde_json::from_value::<String>(encoded)?)?;
+                serde_json::from_slice((&operit_util::SerializationSetup::fromJsonValue::<String>(encoded)?).as_bytes())?;
             let fields = record.as_object_mut().ok_or_else(|| {
                 PreferencesDataStoreError::Message(format!("Invalid outbound record: {name}"))
             })?;
@@ -291,7 +291,7 @@ impl PeerStateStore {
             fields
                 .entry("transport")
                 .or_insert_with(|| Value::String("http".into()));
-            serde_json::from_value::<StoredOutbound>(record.clone())?;
+            operit_util::SerializationSetup::fromJsonValue::<StoredOutbound>(record.clone())?;
             preferences.set(
                 &stringPreferencesKey(&name),
                 serde_json::to_string(&record)?,
@@ -313,15 +313,13 @@ impl PeerStateStore {
         if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
     }
 
-    /// Reads only the requested record; another broken request has no bearing on this one.
-
     /// Read-only enumeration isolates malformed rows. Security cleanup uses the strict reader below.
     pub(crate) fn independentRecords<T: DeserializeOwned>(&self, path: &str) -> Result<BTreeMap<String, T>, String> {
         let mut records = BTreeMap::new();
         self.store(path).visitEncodedEntries(|name, encoded| {
-            match serde_json::from_str(encoded.get()) {
+            match serde_json::from_slice((encoded.get()).as_bytes()) {
                 Ok(record) => { records.insert(name.to_owned(), record); },
-                Err(error) => { operit_util::AppLogger::AppLogger::w("PeerStateStore",
+                Err(error) => { operit_util::app_log!(w, "PeerStateStore",
                     &format!("Invalid peer state record at {path}, key {name}: {error}")); },
             }
             Ok(())
@@ -336,13 +334,6 @@ impl PeerStateStore {
         self.store(path).typedEntries::<T>()
             .map(|entries| entries.into_iter().collect())
             .map_err(|error| format!("Invalid peer state records at {path}: {error}"))
-    }
-
-    /// Decode a scan without the oversized tree nodes of large typed records.
-    pub(crate) fn recordValues<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, String> {
-        self.store(path).typedEntries::<T>()
-            .map(|entries| entries.into_iter().map(|(_, record)| record).collect())
-            .map_err(|error| error.to_string())
     }
 
     /// Re-read one authorization from the current snapshot without decoding
@@ -405,7 +396,7 @@ impl PeerStateStore {
                     if name == PREFERENCES_SCHEMA_VERSION_KEY_NAME {
                         continue;
                     }
-                    if let Ok(header) = Header::deserialize(record) {
+                    if let Ok(header) = operit_util::SerializationSetup::fromJsonValueRef::<Header>(record) {
                         if header.version == PAIRING_SERVICE_VERSION && header.expires <= now {
                             expired.push(name.to_owned());
                             continue;
@@ -453,7 +444,7 @@ impl PeerStateStore {
                             if name == PREFERENCES_SCHEMA_VERSION_KEY_NAME {
                                 return None;
                             }
-                            let header = Header::deserialize(record).ok()?;
+                            let header = operit_util::SerializationSetup::fromJsonValueRef::<Header>(record).ok()?;
                             (header.version == Some(PAIRING_SERVICE_VERSION))
                                 .then(|| name.to_owned())
                         })
@@ -506,7 +497,7 @@ impl PeerStateStore {
                 let encoded = preferences.get(&key).ok_or_else(|| {
                     PreferencesDataStoreError::Message("Node identity is missing".into())
                 })?;
-                let mut record: Value = serde_json::from_value(encoded.clone())?;
+                let mut record: Value = operit_util::SerializationSetup::fromJsonValue(encoded.clone())?;
                 if record.get("deviceId").and_then(Value::as_str) != Some(identity.nodeId.as_str())
                 {
                     return Err(PreferencesDataStoreError::Message(
@@ -516,7 +507,7 @@ impl PeerStateStore {
                 let persisted = record
                     .get("deviceInfo")
                     .cloned()
-                    .map(serde_json::from_value::<LinkDeviceInfo>)
+                    .map(operit_util::SerializationSetup::fromJsonValue::<LinkDeviceInfo>)
                     .transpose()?;
                 let mut current = supplied.clone();
                 if !replace {
@@ -569,7 +560,7 @@ impl PeerStateStore {
             Ok(Some(generation)) => info.pairingIncarnation = Some(generation),
             Ok(None) => {}
             Err(error) => {
-                operit_util::AppLogger::AppLogger::w(
+                operit_util::app_log!(w,
                     "PeerStateStore",
                     &format!("Pairing generation read failed error={error}"),
                 );
@@ -624,7 +615,7 @@ impl PeerStateStore {
                 let encoded = preferences.get(&key).ok_or_else(|| {
                     PreferencesDataStoreError::Message("Node identity is missing".into())
                 })?;
-                let mut record: Value = serde_json::from_value(encoded.clone())?;
+                let mut record: Value = operit_util::SerializationSetup::fromJsonValue(encoded.clone())?;
                 if record.get("deviceId").and_then(Value::as_str) != Some(identity.nodeId.as_str())
                 {
                     return Err(PreferencesDataStoreError::Message(
@@ -664,7 +655,12 @@ impl PeerStateStore {
     }
     /// Saves explicit listener settings without removing unrelated preference keys.
     pub fn saveHostConfig(&self, config: &PeerHostConfig) -> Result<(), String> {
-        if let Some(discovery) = &config.discovery { discovery.validate()?; }
+        if config.discovery.is_some() {
+            #[cfg(feature = "peer-directory")]
+            config.discovery.as_ref().unwrap().validate()?;
+            #[cfg(not(feature = "peer-directory"))]
+            return Err("HTTP discovery directories are not enabled in this build".into());
+        }
         self.store(RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH)
             .try_edit_result(|preferences| writeHostConfigPreferences(preferences, config))
             .map_err(|error: PreferencesDataStoreError| error.to_string())
@@ -760,17 +756,7 @@ impl PeerStateStore {
         Ok(())
     }
 
-    /// Reads pending records without bypassing pairing-code confirmation.
-    /// 不向 UI 返回这些原始数据：旧出站状态可能包含临时密钥。
-    pub(crate) fn pendingRecords(
-        &self,
-        direction: StoredDirection,
-    ) -> Result<BTreeMap<String, Value>, String> {
-        self.records(match direction {
-            StoredDirection::Inbound => RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH,
-            StoredDirection::Outbound => RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH,
-        })
-    }
+
 }
 /// Writes listener fields into the existing node-local preference snapshot.
 fn writeHostConfigPreferences(
@@ -806,7 +792,7 @@ fn decodeHostConfig(preferences: &Preferences) -> Result<PeerHostConfig, String>
         fields.insert(key.to_owned(), value.clone());
     }
     fields.insert("discovery".into(), preferences.get(&stringPreferencesKey("networkDiscovery")).cloned().unwrap_or(Value::Null));
-    serde_json::from_value(Value::Object(fields)).map_err(|error| error.to_string())
+    operit_util::SerializationSetup::fromJsonValue(Value::Object(fields)).map_err(|error| error.to_string())
 }
 
 fn validateCredential(version: u32, secret: &str) -> Result<(), String> {
@@ -940,13 +926,12 @@ mod tests {
             store.putRecord(path, &id.to_string(),
                 &serde_json::json!({"id": id, "payload": {"evidence": ["x".repeat(2048)]}})).unwrap();
         }
-        let mut records = store.recordValues::<Projection>(path).unwrap();
-        records.sort_by_key(|record| record.id);
+        let records = store.records::<Projection>(path).unwrap().into_values().collect::<Vec<_>>();
         assert_eq!(records, (0..8).map(|id| Projection { id }).collect::<Vec<_>>());
-        assert!(store.recordValues::<FullRecord>(path).is_err());
+        assert!(store.records::<FullRecord>(path).is_err());
         store.putRecord(path, "z-broken", &serde_json::json!({"payload": "evidence"})).unwrap();
         let before = storage.0.lock().unwrap().clone();
-        assert!(store.recordValues::<Projection>(path).is_err());
+        assert!(store.records::<Projection>(path).is_err());
         assert_eq!(*storage.0.lock().unwrap(), before);
     }
 
@@ -1780,6 +1765,17 @@ mod tests {
                 .unwrap(),
             "keep"
         );
+        config.discovery = Some(PeerDiscoveryConfig {
+            directoryUrl: "http://127.0.0.1:37196".into(),
+            groupKey: "discovery-test-group".into(),
+            ..PeerDiscoveryConfig::default()
+        });
+        let before = storage.0.lock().unwrap().clone();
+        let saved = store.saveHostConfig(&config);
+        assert_eq!(saved.is_ok(), cfg!(feature = "peer-directory"));
+        if !cfg!(feature = "peer-directory") {
+            assert_eq!(before, *storage.0.lock().unwrap(), "unsupported settings must not modify storage");
+        }
     }
     #[test]
     fn original_directional_records_do_not_create_reverse_authorization() {
@@ -1983,16 +1979,7 @@ mod tests {
         CoreNodeStateStore::newWithStorage(storage.clone(), RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH)
             .replace(p)
             .unwrap();
-        for (direction, path) in [
-            (
-                StoredDirection::Inbound,
-                RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH,
-            ),
-            (
-                StoredDirection::Outbound,
-                RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH,
-            ),
-        ] {
+        for path in [RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH, RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH] {
             writeRecord(
                 &store,
                 path,
@@ -2000,7 +1987,7 @@ mod tests {
                 serde_json::json!({"old-state":"retained"}),
             );
             assert_eq!(
-                store.pendingRecords(direction).unwrap()["pending"]["old-state"],
+                store.records::<Value>(path).unwrap()["pending"]["old-state"],
                 "retained"
             );
         }

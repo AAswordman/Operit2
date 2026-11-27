@@ -1,4 +1,4 @@
-//! Device chat UI: native direct execution, with optional remote Core sessions.
+//! Bounded text display and forwarding over the authenticated Core session.
 #![allow(non_snake_case)]
 
 use operit_edge_sdk::contract::chat_display::ChatDisplayEvent;
@@ -92,99 +92,34 @@ async fn nextUiEvent(
     }
 }
 
-// Lossless, volatile list cache. Each element retains the original Link value
-// encoding. A nested delta decodes only its addressed element, never the whole
-// transcript/history tree; the same generic delta engine handles nested paths.
-#[derive(Default)]
-struct UiValue {
-    encoded: Vec<Vec<u8>>,
-    display: serde_json::Value,
-}
-impl UiValue {
-    fn replace(&mut self, value: CoreValue) -> Result<(), String> {
-        let CoreValue::List(items) = value else { return Err("Expected a UI list snapshot".into()); };
-        let mut encoded = Vec::with_capacity(items.len());
-        for mut item in items {
-            boundCoreValue(&mut item, 0);
-            encoded.push(operit_link::encodeLink(item).map_err(|error| error.to_string())?);
-        }
-        self.encoded = encoded;
-        Ok(())
-    }
-    fn update(&mut self, event: operit_link::CoreEvent) -> Result<(), String> {
-        if event.kind != CoreEventKind::Delta { return self.replace(event.value); }
-        let CoreValue::Map(fields) = event.value else { return Err("Expected incremental delta map".into()); };
-        let Some(CoreValue::List(operations)) = fields.get("$coreDelta") else { return Err("Missing incremental delta marker".into()); };
-        // Only compact bytes are cloned for rollback, never the large map tree.
-        let mut next = Self { encoded: self.encoded.clone(), display: serde_json::Value::Null };
-        for operation in operations {
-            let CoreValue::Map(fields) = operation else { return Err("Expected incremental operation map".into()); };
-            let Some(CoreValue::String(op)) = fields.get("op") else { return Err("Missing incremental operation".into()); };
-            let Some(CoreValue::List(path)) = fields.get("path") else { return Err("Missing incremental path".into()); };
-            if path.is_empty() {
-                if op != "set" { return Err("Cannot remove UI list root".into()); }
-                next.replace(fields.get("value").cloned().ok_or("Missing incremental value")?)?;
-                continue;
-            }
-            let CoreValue::Unsigned(index) = path[0] else { return Err("Expected unsigned UI list index".into()); };
-            let index = usize::try_from(index).map_err(|_| "UI list index exceeds platform limit")?;
-            if path.len() == 1 && op == "remove" {
-                if index >= next.encoded.len() { return Err("Invalid UI list removal index".into()); }
-                next.encoded.remove(index);
-                continue;
-            }
-            if index > next.encoded.len() || (index == next.encoded.len() && (path.len() != 1 || op != "set")) {
-                return Err("Invalid UI list delta index".into());
-            }
-            let base = if index < next.encoded.len() {
-                operit_link::decodeLink::<CoreValue>(&next.encoded[index]).map_err(|error| error.to_string())?
-            } else { CoreValue::Null };
-            let mut operation = fields.clone();
-            operation.insert("path".into(), CoreValue::List(path[1..].to_vec()));
-            let delta = CoreValue::Map(BTreeMap::from([("$coreDelta".into(), CoreValue::List(vec![CoreValue::Map(operation)]))]));
-            let mut item = base.intoIncrementalDelta(&delta)?;
-            boundCoreValue(&mut item, 0);
-            if index == next.encoded.len() { next.encoded.push(Vec::new()); }
-            operit_link::encodeLinkInto(item, &mut next.encoded[index]).map_err(|error| error.to_string())?;
-        }
-        self.encoded = next.encoded;
-        Ok(())
-    }
-    fn forEachLast(&self, count: usize, mut project: impl FnMut(CoreValue)) -> Result<(), String> {
-        let start = self.encoded.len().saturating_sub(count);
-        for bytes in &self.encoded[start..] {
-            project(operit_link::decodeLink(bytes).map_err(|error| error.to_string())?);
-        }
-        Ok(())
-    }
-    #[cfg(test)]
-    fn decode(&self) -> Result<CoreValue, String> {
-        let mut items = Vec::new();
-        self.forEachLast(self.encoded.len(), |item| items.push(item))?;
-        Ok(CoreValue::List(items))
-    }
+#[derive(Clone, Default, serde::Serialize)]
+pub struct ChatMessage {
+    pub sender: String,
+    pub text: String,
+    #[serde(skip)]
+    streamId: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PageCursor { timestamp: i64, offset: u32 }
+#[derive(Default, serde::Serialize)]
+pub struct ChatSnapshot {
+    pub connected: bool,
+    pub chatId: String,
+    pub initializing: bool,
+    pub sending: bool,
+    pub generating: bool,
+    pub messages: Vec<ChatMessage>,
+    pub error: Option<String>,
+}
 
 struct ChatSession {
     client: Arc<dyn CoreLinkSharedClient + Send + Sync>,
     services: NodeServices,
-    histories: Mutex<UiValue>,
-    conversationsTask: Mutex<Option<NodeUiTask>>,
-    conversationsRequested: AtomicBool,
-    conversationsLoading: AtomicBool,
-    conversationsError: Mutex<Option<String>>,
     tasks: Mutex<Vec<NodeUiTask>>,
     chatId: String,
     ready: AtomicBool,
     retired: AtomicBool,
     needsReconnect: AtomicBool,
-    messages: Mutex<UiValue>,
-    window: tokio::sync::watch::Sender<Option<PageCursor>>,
-    older: Mutex<Option<PageCursor>>,
-    windowHistory: Mutex<Vec<Option<PageCursor>>>,
+    messages: Mutex<Vec<ChatMessage>>,
     error: Mutex<Option<String>>,
     executionError: Mutex<Option<String>>,
     generating: AtomicBool,
@@ -193,15 +128,40 @@ struct ChatSession {
     subscriptionsClosed: AtomicBool,
     streams: Mutex<BTreeMap<String, StreamText>>,
     streamTasks: Mutex<BTreeMap<String, NodeUiTask>>,
-    plugins: Mutex<PluginUiState>,
 }
 
 impl ChatSession {
+    fn finishSend(&self, result: Result<(), String>) {
+        if let Err(error) = &result { *self.error.lock().unwrap() = Some(error.clone()); }
+        *self.sendResult.lock().unwrap() = Some(result);
+        self.sending.store(false, Ordering::Release);
+        UI_REVISION.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn addTask(&self, task: NodeUiTask) {
         let mut tasks = self.tasks.lock().unwrap();
         if self.retired.load(Ordering::Acquire) { task.abort(); }
         else { tasks.push(task); }
     }
+}
+
+fn beginSend() -> Result<Arc<ChatSession>, String> {
+    let session = currentChat()
+        .ok_or("设备尚未连接")?;
+    if session
+        .services
+        .peers()
+        .activePeerNodeIds()
+        .unwrap_or_default()
+        .is_empty()
+    {
+        return Err("设备已离线".into());
+    }
+    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
+    if session.sending.swap(true, Ordering::AcqRel) {
+        return Err("请等待当前操作完成".into());
+    }
+    Ok(session)
 }
 
 /// Reconnects the volatile UI even when entry replacement happens between polls.
@@ -217,11 +177,7 @@ pub struct SpaceChatRoute {
 impl SpaceChatRoute {
     pub fn reset(&mut self) { clear(); *self = Self::default(); }
     pub fn poll(&mut self, services: NodeServices) {
-        if crate::standalone_chat::active() {
-            if self.installed { clear(); self.installed = false; }
-            return;
-        }
-        let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone();
+        let session = currentChat();
         if self.installed {
             if let Some(session) = &session {
                 self.chatId = session.chatId.clone();
@@ -273,13 +229,12 @@ impl Drop for SubscriptionLifetime {
 async fn watchChatMessages(
     client: &Arc<dyn CoreLinkSharedClient + Send + Sync>,
     chatId: &str,
-    cursor: Option<PageCursor>,
 ) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {
     client.watch(CoreWatchRequest::new(
         "edge-ui-messages",
         CORE_INTERNAL_TARGET,
         "chatMessagesWindowFlow",
-        windowArgs(chatId, cursor),
+        windowArgs(chatId),
     )).await
 }
 
@@ -293,17 +248,11 @@ fn chatFields(chatId: &str) -> BTreeMap<String, CoreValue> {
 }
 fn chatArgs(chatId: &str) -> CoreValue { CoreValue::Map(chatFields(chatId)) }
 #[inline(never)]
-fn pluginPageArgs(chatId: &str, offset: u32, category: &str) -> CoreValue {
-    let mut args = chatFields(chatId);
-    args.insert("offset".into(), CoreValue::Unsigned(offset as u64));
-    args.insert("category".into(), CoreValue::String(category.into()));
-    CoreValue::Map(args)
-}
 /// Encodes the device's fixed byte and line budget for one display page.
-fn windowArgs(chatId: &str, cursor: Option<PageCursor>) -> CoreValue {
+fn windowArgs(chatId: &str) -> CoreValue {
     let mut args = chatFields(chatId);
-    args.insert("beforeTimestamp".into(), cursor.map(|c| CoreValue::Signed(c.timestamp)).unwrap_or(CoreValue::Null));
-    args.insert("beforeTextOffset".into(), cursor.map(|c| CoreValue::Unsigned(c.offset as u64)).unwrap_or(CoreValue::Null));
+    args.insert("beforeTimestamp".into(), CoreValue::Null);
+    args.insert("beforeTextOffset".into(), CoreValue::Null);
     args.insert("textBytes".into(), CoreValue::Unsigned(MAX_CHAT_STRING_BYTES as u64));
     args.insert("textLines".into(), CoreValue::Unsigned(MAX_CHAT_LINES as u64));
     CoreValue::Map(args)
@@ -444,7 +393,7 @@ fn openMessageStreams(session: &Arc<ChatSession>, descriptors: Vec<operit_link::
             );
             args.insert(
                 operit_link::CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT.into(),
-                windowArgs(&session.chatId, *session.window.borrow()),
+                windowArgs(&session.chatId),
             );
             let result = openUiSubscription(&cancelled, || session
                 .client
@@ -504,10 +453,13 @@ fn openMessageStreams(session: &Arc<ChatSession>, descriptors: Vec<operit_link::
 
 static UI_REVISION: AtomicU32 = AtomicU32::new(1);
 static SESSION: OnceLock<Mutex<Option<Arc<ChatSession>>>> = OnceLock::new();
+
+fn currentChat() -> Option<Arc<ChatSession>> {
+    SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone()
+}
 // Display capacity follows the physical renderer. Encoded protocol state still
 // retains all list positions so subsequent deltas are never rebased/truncated.
 const MAX_CHAT_MESSAGES: usize = 12;
-const MAX_CONVERSATIONS: usize = 24;
 // Approximately three 320x240 chat viewports; all updates stay volatile.
 const MAX_CHAT_STRING_BYTES: usize = 640;
 const MAX_CHAT_LINES: usize = 15; // Three five-line chat viewports; 640 UTF-8 bytes also bound wrapped paragraphs.
@@ -590,17 +542,6 @@ fn mapString<'a>(fields: &'a BTreeMap<String, CoreValue>, key: &str) -> &'a str 
     }
 }
 
-fn simpleJson(value: Option<&CoreValue>) -> serde_json::Value {
-    match value {
-        Some(CoreValue::String(value)) => boundedText(value).into(),
-        Some(CoreValue::Bool(value)) => (*value).into(),
-        Some(CoreValue::Signed(value)) => (*value).into(),
-        Some(CoreValue::Unsigned(value)) => (*value).into(),
-        Some(CoreValue::Float(value)) => (*value).into(),
-        _ => serde_json::Value::Null,
-    }
-}
-
 /// Called on the authenticated Link runtime after Space provisions the chat.
 pub fn install(
     client: Arc<dyn CoreLinkSharedClient + Send + Sync>,
@@ -617,7 +558,6 @@ fn installSession(
     chatId: String, provision: bool,
 ) {
     clear();
-    let (window, _) = tokio::sync::watch::channel(None);
     let session = Arc::new(ChatSession {
         client,
         services,
@@ -625,14 +565,8 @@ fn installSession(
         ready: AtomicBool::new(!provision),
         retired: AtomicBool::new(false),
         needsReconnect: AtomicBool::new(false),
-        histories: Mutex::new(UiValue::default()),
-        conversationsTask: Mutex::new(None),
-        conversationsRequested: AtomicBool::new(false),
-        conversationsLoading: AtomicBool::new(false),
-        conversationsError: Mutex::new(None),
         tasks: Mutex::new(Vec::new()),
-        messages: Mutex::new(UiValue::default()),
-        window, older: Mutex::new(None), windowHistory: Mutex::new(Vec::new()),
+        messages: Mutex::new(Vec::new()),
         error: Mutex::new(None),
         executionError: Mutex::new(None),
         generating: AtomicBool::new(false),
@@ -641,7 +575,6 @@ fn installSession(
         subscriptionsClosed: AtomicBool::new(false),
         streams: Mutex::new(BTreeMap::new()),
         streamTasks: Mutex::new(BTreeMap::new()),
-        plugins: Mutex::new(PluginUiState::default()),
     });
     *SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(session.clone());
     if provision {
@@ -672,70 +605,53 @@ fn installSession(
 }
 
 fn startSubscriptions(session: Arc<ChatSession>) {
-    if PLUGINS_REQUESTED.load(Ordering::Acquire) { let _ = pluginsAction("edge_plugins_refresh"); }
-    let mut pageChanges = session.window.subscribe();
     let owner = session.clone();
     let stateSession = session.clone();
     let task = spawnNodeUiSubscription(move |mut cancelled| async move {
         let _lifetime = SubscriptionLifetime { session: session.clone(), cancelled: cancelled.clone() };
+        let result = openUiSubscription(&cancelled, || watchChatMessages(&session.client, &session.chatId)).await;
+        let mut stream = match result {
+            Ok(None) => return,
+            Ok(Some(stream)) => stream,
+            Err(error) => { *session.error.lock().unwrap() = Some(error.to_string()); UI_REVISION.fetch_add(1, Ordering::Relaxed); return; }
+        };
+        let mut page = CoreValue::Null;
         loop {
-            let cursor = *pageChanges.borrow_and_update();
-            let result = openUiSubscription(&cancelled, || watchChatMessages(&session.client, &session.chatId, cursor)).await;
-            let mut stream = match result {
-                Ok(None) => return,
-                Ok(Some(stream)) => stream,
-                Err(error) => { *session.error.lock().unwrap() = Some(error.to_string()); UI_REVISION.fetch_add(1, Ordering::Relaxed); return; }
-            };
-            if *pageChanges.borrow() != cursor { drop(stream); continue; }
-            let mut page = CoreValue::Null;
-            let mut switched = false;
-            loop {
-                let event = tokio::select! {
-                    biased;
-                    _ = pageChanges.changed() => { switched = true; None }
-                    event = nextUiEvent(&mut stream, &mut cancelled) => event,
-                };
-                let Some(event) = event else { break; };
-                if event.kind == CoreEventKind::Completed { break; }
-                let next = if event.kind == CoreEventKind::Delta {
-                    std::mem::replace(&mut page, CoreValue::Null).intoIncrementalDelta(&event.value)
-                } else { Ok(event.value) };
-                let result = next.and_then(|value| {
-                    page = value;
-                    let CoreValue::Map(fields) = &page else { return Err("Expected a bounded chat window".into()); };
-                    if let Some(CoreValue::String(error)) = fields.get("error") { return Err(error.clone()); }
-                    let Some(CoreValue::List(items)) = fields.get("messages") else { return Err("Missing chat window messages".into()); };
-                    if items.len() > MAX_CHAT_MESSAGES { return Err("Chat window exceeds the negotiated row limit".into()); }
-                    let older = fields.get("older").and_then(|value| {
-                        let value: serde_json::Value = operit_link::fromCoreValue(value.clone()).ok()?;
-                        Some(PageCursor { timestamp:value["timestamp"].as_i64()?, offset:value["offset"].as_u64()?.try_into().ok()? })
-                    });
-                    *session.older.lock().unwrap() = older;
-                    let mut messages = session.messages.lock().unwrap();
-                    messages.replace(fields.get("messages").cloned().ok_or("Missing chat window messages")?)?;
-                    let mut rows = Vec::new(); let mut descriptors = Vec::new();
-                    messages.forEachLast(MAX_CHAT_MESSAGES, |item| {
-                        collectMessageStreams(&item, &mut descriptors);
-                        if let serde_json::Value::Array(mut projected) = projectMessages(&CoreValue::List(vec![item])) { rows.append(&mut projected); }
-                    })?;
-                    messages.display = serde_json::Value::Array(rows);
-                    openMessageStreams(&session, descriptors);
-                    *session.error.lock().unwrap() = None;
-                    Ok(())
-                });
-                if let Err(error) = result {
-                    *session.error.lock().unwrap() = Some(error); UI_REVISION.fetch_add(1, Ordering::Relaxed); return;
+            let Some(event) = nextUiEvent(&mut stream, &mut cancelled).await else { break; };
+            if event.kind == CoreEventKind::Completed { break; }
+            let next = if event.kind == CoreEventKind::Delta {
+                std::mem::replace(&mut page, CoreValue::Null).intoIncrementalDelta(&event.value)
+            } else { Ok(event.value) };
+            let result = next.and_then(|value| {
+                page = value;
+                let CoreValue::Map(fields) = &page else { return Err("Expected a bounded chat window".into()); };
+                if let Some(CoreValue::String(error)) = fields.get("error") { return Err(error.clone()); }
+                let Some(CoreValue::List(items)) = fields.get("messages") else { return Err("Missing chat window messages".into()); };
+                if items.len() > MAX_CHAT_MESSAGES { return Err("Chat window exceeds the negotiated row limit".into()); }
+                let mut rows = Vec::new(); let mut descriptors = Vec::new();
+                for item in items {
+                    let mut item = item.clone();
+                    boundCoreValue(&mut item, 0);
+                    collectMessageStreams(&item, &mut descriptors);
+                    rows.extend(projectMessages(&CoreValue::List(vec![item])));
                 }
-                UI_REVISION.fetch_add(1, Ordering::Relaxed);
+                *session.messages.lock().unwrap() = rows;
+                openMessageStreams(&session, descriptors);
+                *session.error.lock().unwrap() = None;
+                Ok(())
+            });
+            if let Err(error) = result {
+                *session.error.lock().unwrap() = Some(error); UI_REVISION.fetch_add(1, Ordering::Relaxed); return;
             }
-            drop(stream);
-            for (_, task) in std::mem::take(&mut *session.streamTasks.lock().unwrap()) { task.abort(); }
-            session.streams.lock().unwrap().clear();
-            if !switched {
-                recordSubscriptionEnd(&session.subscriptionsClosed, &cancelled);
-                if !*cancelled.borrow() { *session.error.lock().unwrap() = Some("聊天连接已断开，请等待重新连接".into()); UI_REVISION.fetch_add(1, Ordering::Relaxed); }
-                return;
-            }
+            UI_REVISION.fetch_add(1, Ordering::Relaxed);
+        }
+        drop(stream);
+        for (_, task) in std::mem::take(&mut *session.streamTasks.lock().unwrap()) { task.abort(); }
+        session.streams.lock().unwrap().clear();
+        recordSubscriptionEnd(&session.subscriptionsClosed, &cancelled);
+        if !*cancelled.borrow() {
+            *session.error.lock().unwrap() = Some("聊天连接已断开，请等待重新连接".into());
+            UI_REVISION.fetch_add(1, Ordering::Relaxed);
         }
     });
     owner.addTask(task);
@@ -806,16 +722,9 @@ fn recordSubscriptionEnd(closed: &AtomicBool, cancelled: &tokio::sync::watch::Re
     if !*cancelled.borrow() { closed.store(true, Ordering::Release); }
 }
 
-pub fn needsReconnect() -> bool {
-    SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().as_ref()
-        .is_some_and(|session| session.needsReconnect.load(Ordering::Acquire)
-            || session.subscriptionsClosed.load(Ordering::Acquire))
-}
-
 /// Returns the live Space route state, rather than whether the pairing
 /// listener is enabled.
 pub fn isConnected() -> bool {
-    if crate::standalone_chat::active() { return true; }
     SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().as_ref()
         .is_some_and(|session| !session.subscriptionsClosed.load(Ordering::Acquire)
             && session.services.peers().spaceConnection().is_some())
@@ -823,7 +732,7 @@ pub fn isConnected() -> bool {
 
 /// Returns a monotonic version for display consumers that repaint on change.
 pub fn revision() -> u32 {
-    UI_REVISION.load(Ordering::Relaxed).wrapping_add(crate::standalone_chat::revision())
+    UI_REVISION.load(Ordering::Relaxed)
 }
 
 /// Drops the local chat route and display state. Pairing credentials are
@@ -837,7 +746,6 @@ pub fn clear() {
         .and_then(|mut session| session.take());
     if let Some(session) = session {
         session.retired.store(true, Ordering::Release);
-        if let Some(task) = session.conversationsTask.lock().unwrap().take() { task.abort(); }
         for task in std::mem::take(&mut *session.tasks.lock().unwrap()) {
             task.abort();
         }
@@ -847,507 +755,31 @@ pub fn clear() {
     }
 }
 
-static PLUGINS_REQUESTED: AtomicBool = AtomicBool::new(false);
-static PLUGINS_EXCLUSIVE: AtomicBool = AtomicBool::new(false);
-
-#[derive(Default)]
-struct PluginUiState {
-    items: Vec<serde_json::Value>, total: u32, offset: u32,
-    loading: bool, error: Option<String>, generation: u64,
-    testing: bool, batchId: String, tested: u32, failed: u32,
-    details: serde_json::Value, detailGeneration: u64,
-}
-
-pub fn pluginsSnapshot() -> serde_json::Value {
-    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone();
-    let Some(session) = session.filter(|s| s.ready.load(Ordering::Acquire)) else {
-        return serde_json::json!({"items":[],"total":0,"offset":0,"loading":false,"error":"等待 Core 连接","category":if PLUGINS_EXCLUSIVE.load(Ordering::Acquire){"exclusive"}else{"general"}});
-    };
-    let state = session.plugins.lock().unwrap();
-    serde_json::json!({"items":state.items,"total":state.total,"offset":state.offset,"loading":state.loading,"error":state.error,
-        "testing":state.testing,"tested":state.tested,"failed":state.failed,
-        "category":if PLUGINS_EXCLUSIVE.load(Ordering::Acquire) {"exclusive"} else {"general"},"details":state.details})
-}
-
-// All execution still goes to the selected chat's Core Binding. Only the two
-// fixed plugin diagnostic functions are reachable, not arbitrary tool invokes.
-pub fn pluginsAction(action: &str) -> Result<(), String> {
-    PLUGINS_REQUESTED.store(true, Ordering::Release);
-    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone()
-        .filter(|s| s.ready.load(Ordering::Acquire)).ok_or("等待 Core 连接")?;
-    if let Some(id) = action.strip_prefix("edge_plugin_open:") {
-        if !session.plugins.lock().unwrap().items.iter().any(|item| item["id"] == id) {
-            return Err("插件列表已变化，请刷新".into());
-        }
-        return startPluginDetails(session, id.to_owned(), 0);
-    }
-    if action == "edge_plugin_close" {
-        let mut state = session.plugins.lock().unwrap();
-        state.detailGeneration += 1; state.details = serde_json::Value::Null;
-        UI_REVISION.fetch_add(1, Ordering::Relaxed);
-        return Ok(());
-    }
-    if action == "edge_plugin_tools_next" || action == "edge_plugin_tools_prev" {
-        let (id, offset) = {
-            let state = session.plugins.lock().unwrap();
-            if state.details["loading"] == true { return Ok(()); }
-            let id = state.details["id"].as_str().ok_or("请重新打开插件")?.to_owned();
-            let current = state.details["toolOffset"].as_u64().unwrap_or(0) as u32;
-            let total = state.details["toolTotal"].as_u64().unwrap_or(0) as u32;
-            (id, if action.ends_with("next") { if current + 3 < total {current + 3} else {current} } else {current.saturating_sub(3)})
-        };
-        return startPluginDetails(session, id, offset);
-    }
-    if action == "edge_plugins_test_all" { return startPluginBatch(session); }
-    if let Some(id) = action.strip_prefix("edge_plugin_probe:") {
-        return startPluginTest(session, id, false);
-    }
-    if let Some(id) = action.strip_prefix("edge_plugin_tool_test:") {
-        return startPluginTest(session, id, true);
-    }
-    let (offset, generation) = {
-        let mut state = session.plugins.lock().unwrap();
-        if state.loading || state.testing { return Ok(()); }
-        let offset = match action {
-            "edge_plugins_next" => if state.offset + 6 < state.total { state.offset + 6 } else { state.offset },
-            "edge_plugins_prev" => state.offset.saturating_sub(6),
-            "edge_plugins_refresh" => state.offset,
-            "edge_plugins_exclusive" | "edge_plugins_general" => {
-                PLUGINS_EXCLUSIVE.store(action == "edge_plugins_exclusive", Ordering::Release); 0
-            }
-            _ => return Err("Unknown plugin page action".into()),
-        };
-        state.loading = true; state.error = None; state.generation += 1;
-        state.details = serde_json::Value::Null; state.detailGeneration += 1;
-        (offset, state.generation)
-    };
-    let category = if PLUGINS_EXCLUSIVE.load(Ordering::Acquire) {"exclusive"} else {"general"};
-    UI_REVISION.fetch_add(1, Ordering::Relaxed);
-    let deadlineSession = session.clone();
-    spawnNodeUiSubscription(move |_| async move {
-        tokio::time::sleep(std::time::Duration::from_secs(8)).await;
-        if !currentSession(&deadlineSession) { return; }
-        let mut state = deadlineSession.plugins.lock().unwrap();
-        if state.generation == generation && state.loading {
-            state.loading = false; state.error = Some("插件列表读取超时，请刷新".into());
-            state.generation += 1; UI_REVISION.fetch_add(1, Ordering::Relaxed);
-        }
-    });
-    spawnNodeUiSubscription(move |_| async move {
-        let result = session.client.call(CoreCallRequest::new(
-            operit_link::nextCoreRouteRequestId("chatAvailablePlugins"), CORE_INTERNAL_TARGET,
-            "chatAvailablePlugins", pluginPageArgs(&session.chatId, offset, category),
-        )).await.result;
-        if !currentSession(&session) { return; }
-        let mut state = session.plugins.lock().unwrap();
-        if state.generation != generation { return; }
-        state.loading = false;
-        match result {
-            Ok(value) => {
-                let value = serde_json::to_value(value).unwrap_or_default();
-                state.total = value["total"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
-                state.offset = offset;
-                state.items = value["items"].as_array().into_iter().flatten().take(6).filter_map(|item| {
-                    let id = item["id"].as_str()?;
-                    if id.len() > 108 { return None; }
-                    let text = item["name"].as_str().unwrap_or(id);
-                    let mut end = text.len().min(42);
-                    while !text.is_char_boundary(end) { end -= 1; }
-                    Some(serde_json::json!({"id":id,"name":text[..end],
-                        "available":item["available"] == true,"status":"untested","latencyMs":null,
-                        "toolStatus":"untested","toolLatencyMs":null,"testError":""}))
-                }).collect();
-            }
-            Err(error) => { state.items.clear(); state.error = Some(boundedText(&error.to_string())); }
-        }
-        UI_REVISION.fetch_add(1, Ordering::Relaxed);
-    });
-    Ok(())
-}
-// Single selected, bounded metadata projection. Closing/changing tabs invalidates
-// old replies; deadline drains the underlying Link call just like diagnostics.
-fn startPluginDetails(session: Arc<ChatSession>, id: String, offset: u32) -> Result<(), String> {
-    let generation = {
-        let mut state = session.plugins.lock().unwrap();
-        if state.loading || !state.items.iter().any(|item| item["id"] == id) { return Err("插件列表已变化".into()); }
-        state.detailGeneration += 1;
-        state.details = serde_json::json!({"id":id,"loading":true,"tools":[],"toolTotal":0,"toolOffset":offset});
-        state.detailGeneration
-    };
-    UI_REVISION.fetch_add(1, Ordering::Relaxed);
-    spawnNodeUiSubscription(move |_| async move {
-        let reply = pluginCallDeadline(&session, CoreCallRequest::new(
-            operit_link::nextCoreRouteRequestId("chatPluginDetails"), CORE_INTERNAL_TARGET,"chatPluginDetails",
-            {
-                let mut args = chatFields(&session.chatId);
-                args.insert("packageName".into(), CoreValue::String(id.clone()));
-                args.insert("toolOffset".into(), CoreValue::Unsigned(offset as u64));
-                CoreValue::Map(args)
-            },
-        )).await;
-        if !currentSession(&session) {return;}
-        let mut state = session.plugins.lock().unwrap();
-        if state.detailGeneration != generation {return;}
-        let value = match reply {
-            Ok(value) => serde_json::to_value(value).unwrap_or_default(),
-            Err(_) => serde_json::json!({"error":"插件详情读取失败或超时"}),
-        };
-        let text = |text: &str, max: usize| {
-            let clean: String = text.chars().filter(|c| !c.is_control()).collect();
-            let mut end = clean.len().min(max);
-            while !clean.is_char_boundary(end) {end -= 1;}
-            clean[..end].to_owned()
-        };
-        state.details = serde_json::json!({"id":id,"loading":false,
-            "description":text(value["description"].as_str().unwrap_or(""),192),
-            "tools":value["tools"].as_array().into_iter().flatten().take(3)
-                .filter_map(|tool| tool.as_str().map(|s|text(s,64))).collect::<Vec<_>>(),
-            "toolOffset":value["toolOffset"].as_u64().unwrap_or(offset as u64).min(u32::MAX as u64),
-            "toolTotal":value["toolTotal"].as_u64().unwrap_or(0).min(u32::MAX as u64),
-            "error":text(value["error"].as_str().unwrap_or(""),80)});
-        UI_REVISION.fetch_add(1, Ordering::Relaxed);
-    });
-    Ok(())
-}
-fn preparePluginTest(session: &Arc<ChatSession>, id: &str, probeId: &str, tool: bool) {
-    let mut state = session.plugins.lock().unwrap();
-    if let Some(item) = state.items.iter_mut().find(|item| item["id"] == id) {
-        let (status, request, latency) = if tool { ("toolStatus", "toolProbeId", "toolLatencyMs") } else { ("status", "probeId", "latencyMs") };
-        item[status] = "probing".into(); item[request] = probeId.into();
-        item[latency] = serde_json::Value::Null; item["testError"] = "".into();
-        UI_REVISION.fetch_add(1, Ordering::Relaxed);
-    }
-}
-async fn pluginCallDeadline(session: &Arc<ChatSession>, request: CoreCallRequest) -> Result<CoreValue, String> {
-    pluginCallDeadlineWithLimit(session, request, std::time::Duration::from_secs(8)).await
-}
-async fn pluginCallDeadlineWithLimit(session: &Arc<ChatSession>, request: CoreCallRequest, limit: std::time::Duration) -> Result<CoreValue, String> {
-    let client = session.client.clone();
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    // A UI deadline must never drop an ambiguous in-flight Link transaction:
-    // Duplex deliberately closes the session if that happens. Drain its ack
-    // on a separate task; timed-out results cannot mutate a newer UI attempt.
-    spawnNodeUiSubscription(move |_| async move {
-        let response = client.call(request).await;
-        let _ = sender.send(response.result);
-    });
-    match tokio::time::timeout(limit, receiver).await {
-        Ok(Ok(result)) => result.map_err(|e| e.to_string()),
-        Ok(Err(_)) => Err("插件测试连接已关闭".into()),
-        Err(_) => Err("插件测试超时".into()),
-    }
-}
-async fn callPluginTest(session: &Arc<ChatSession>, id: &str, probeId: &str, tool: bool) -> (bool, u64, String) {
-    let started = std::time::Instant::now();
-    let result = pluginCallDeadline(session, CoreCallRequest::new(
-        probeId, CORE_INTERNAL_TARGET, "chatPluginStatus",
-        {
-            let mut args = chatFields(&session.chatId);
-            args.insert("packageName".into(), CoreValue::String(id.into()));
-            args.insert("testKind".into(), CoreValue::String(if tool { "tool" } else { "connection" }.into()));
-            CoreValue::Map(args)
-        },
-    )).await;
-    let (ok, error) = match result {
-        Ok(value) => {
-            let value = serde_json::to_value(value).unwrap_or_default();
-            (value["success"] == true, value["message"].as_str().unwrap_or("插件测试结果无效").to_owned())
-        },
-        Err(error) => (false, error),
-    };
-    (ok, started.elapsed().as_millis().min(99999) as u64, error)
-}
-fn startPluginTest(session: Arc<ChatSession>, id: &str, tool: bool) -> Result<(), String> {
-    let generation;
-    {
-        let state = session.plugins.lock().unwrap();
-        if state.testing || state.loading { return Ok(()); }
-        let item = state.items.iter().find(|item| item["id"] == id).ok_or("插件列表已变化，请刷新")?;
-        if item["status"] == "probing" || item["toolStatus"] == "probing" { return Ok(()); }
-        generation = state.generation;
-    }
-    let id = id.to_owned(); let probeId = operit_link::nextCoreRouteRequestId("chatPluginStatus");
-    preparePluginTest(&session, &id, &probeId, tool);
-    spawnNodeUiSubscription(move |_| async move {
-        let (ok, ms, error) = callPluginTest(&session, &id, &probeId, tool).await;
-        finishPluginTest(&session, generation, &id, &probeId, tool, ok, ms, &error);
-    });
-    Ok(())
-}
-fn finishPluginTest(session: &Arc<ChatSession>, generation: u64, id: &str, probeId: &str, tool: bool, ok: bool, ms: u64, error: &str) {
-    if !currentSession(session) { return; }
-    let mut state = session.plugins.lock().unwrap();
-    if state.generation != generation { return; }
-    let (status, request, latency) = if tool { ("toolStatus", "toolProbeId", "toolLatencyMs") } else { ("status", "probeId", "latencyMs") };
-    if let Some(item) = state.items.iter_mut().find(|item| item["id"] == id && item[status] == "probing" && item[request] == probeId) {
-        item[status] = if ok { "success" } else { "failure" }.into();
-        item[latency] = ms.into(); item["testError"] = boundedText(error).into();
-        if !tool { item["error"] = boundedText(error).into(); }
-        UI_REVISION.fetch_add(1, Ordering::Relaxed);
-    }
-}
-#[cfg(test)]
-fn finishPluginProbe(session: &Arc<ChatSession>, generation: u64, id: &str, probeId: &str, ok: bool, ms: u64, error: &str) {
-    finishPluginTest(session, generation, id, probeId, false, ok, ms, error);
-}
-fn startPluginBatch(session: Arc<ChatSession>) -> Result<(), String> {
-    let category = if PLUGINS_EXCLUSIVE.load(Ordering::Acquire) {"exclusive"} else {"general"};
-    let (generation, batchId) = {
-        let mut state = session.plugins.lock().unwrap();
-        if state.testing || state.loading { return Ok(()); }
-        if state.items.iter().any(|item| item["status"] == "probing" || item["toolStatus"] == "probing") {
-            return Err("请等待当前测试完成".into());
-        }
-        state.testing = true; state.tested = 0; state.failed = 0; state.error = None;
-        state.batchId = operit_link::nextCoreRouteRequestId("pluginBatch");
-        (state.generation, state.batchId.clone())
-    };
-    UI_REVISION.fetch_add(1, Ordering::Relaxed);
-    spawnNodeUiSubscription(move |_| async move {
-        let mut offset = 0;
-        let mut error = None;
-        // Fetch one bounded page at a time, never retain the complete package catalog.
-        'pages: loop {
-            if !pluginBatchCurrent(&session, generation, &batchId) { return; }
-            let reply = pluginCallDeadline(&session, CoreCallRequest::new(
-                operit_link::nextCoreRouteRequestId("chatAvailablePlugins"), CORE_INTERNAL_TARGET, "chatAvailablePlugins",
-                pluginPageArgs(&session.chatId, offset, category),
-            )).await;
-            let page = match reply {
-                Ok(value) => serde_json::to_value(value).unwrap_or_default(),
-                Err(e) => { error = Some(boundedText(&e)); break; }
-            };
-            let items = page["items"].as_array().map(Vec::as_slice).unwrap_or(&[]);
-            if items.is_empty() { break; }
-            for item in items.iter().take(6) {
-                if !pluginBatchCurrent(&session, generation, &batchId) { return; }
-                let Some(id) = item["id"].as_str().filter(|id| id.len() <= 108) else {
-                    error = Some("插件标识超出设备限制".into()); break 'pages;
-                };
-                let probeId = operit_link::nextCoreRouteRequestId("chatPluginStatus");
-                preparePluginTest(&session, id, &probeId, false);
-                let (ok, ms, message) = callPluginTest(&session, id, &probeId, false).await;
-                if !pluginBatchCurrent(&session, generation, &batchId) { return; }
-                finishPluginTest(&session, generation, id, &probeId, false, ok, ms, &message);
-                let mut state = session.plugins.lock().unwrap();
-                state.tested += 1; if !ok { state.failed += 1; }
-                UI_REVISION.fetch_add(1, Ordering::Relaxed);
-            }
-            offset += items.len().min(6) as u32;
-            if offset >= page["total"].as_u64().unwrap_or(0) as u32 { break; }
-        }
-        if !pluginBatchCurrent(&session, generation, &batchId) { return; }
-        let mut state = session.plugins.lock().unwrap(); state.testing = false; state.error = error;
-        UI_REVISION.fetch_add(1, Ordering::Relaxed);
-    });
-    Ok(())
-}
-fn pluginBatchCurrent(session: &Arc<ChatSession>, generation: u64, batchId: &str) -> bool {
-    if !currentSession(session) { return false; }
-    let state = session.plugins.lock().unwrap();
-    state.generation == generation && state.testing && state.batchId == batchId
-}
-
-pub fn snapshot() -> serde_json::Value {
-    if crate::standalone_chat::active() { return crate::standalone_chat::snapshot(); }
-    let session = SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone();
+pub fn snapshot() -> ChatSnapshot {
+    let session = currentChat();
     match session {
         Some(session) => {
             // Do not hold UI state locks while serializing or acquiring another
             // lock: the single-threaded network runtime also updates this state.
-            let conversations = session.histories.lock().unwrap().display.clone();
-            let rows = session.messages.lock().unwrap().display.clone();
+            let rows = session.messages.lock().unwrap().clone();
             let messages = renderMessages(rows, &session.streams.lock().unwrap());
             let error = session.error.lock().unwrap().clone()
                 .or_else(|| session.executionError.lock().unwrap().clone());
-            serde_json::json!({
-                "connected": session.services.peers().spaceConnection().is_some(), "chatId": session.chatId,
-                "initializing": !session.ready.load(Ordering::Acquire),
-                "conversations": conversations,
-                "conversationsLoading": session.conversationsLoading.load(Ordering::Acquire),
-                "conversationsError": session.conversationsError.lock().unwrap().clone(),
-                "hasOlder": session.older.lock().unwrap().is_some(),
-                "hasNewer": !session.windowHistory.lock().unwrap().is_empty(),
-                "sending": session.sending.load(Ordering::Acquire),
-                "generating": session.generating.load(Ordering::Acquire),
-                "messages": messages, "error": error,
-            })
-        }
-        None => {
-            serde_json::json!({"connected": false, "messages": [], "error": "等待同一 Space 的 Core 建立聊天连接"})
-        }
-    }
-}
-
-/// Reads the title from the existing display snapshot without constructing another message tree.
-pub fn previewFromSnapshot(value: &serde_json::Value) -> String {
-    activeConversation(value)
-        .and_then(|chat| chat["characterCardName"].as_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or("Operit")
-        .to_string()
-}
-
-/// Selects only the active conversation metadata from a display snapshot.
-fn activeConversation(value: &serde_json::Value) -> Option<&serde_json::Value> {
-    value["conversations"]
-        .as_array()?
-        .iter()
-        .find(|chat| chat["id"] == value["chatId"])
-}
-
-/// Opens the optional metadata watch when this device browses conversations.
-/// List failures never reset the active chat or authenticated Space session.
-pub fn conversationsAction() -> Result<(), String> {
-    if crate::standalone_chat::active() { return Ok(()); }
-    // Also acknowledge a rejected browse on the native UI thread so its
-    // loading state can settle and the user can retry after initialization.
-    UI_REVISION.fetch_add(1, Ordering::Relaxed);
-    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone().ok_or("设备尚未连接")?;
-    if session.services.peers().spaceConnection().is_none() { return Err("设备已离线".into()); }
-    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
-    if session.sending.load(Ordering::Acquire) { return Err("请等待消息发送完成".into()); }
-    if session.conversationsRequested.swap(true, Ordering::AcqRel) { return Ok(()); }
-    session.conversationsLoading.store(true, Ordering::Release);
-    *session.conversationsError.lock().unwrap() = None;
-    let owner = session.clone();
-    let task = spawnNodeUiSubscription(move |mut cancelled| async move {
-        let result = openUiSubscription(&cancelled, || session.client.watch(CoreWatchRequest::new(
-            operit_link::nextCoreRouteRequestId("edge-chat-list"), CORE_INTERNAL_TARGET,
-            "routedChatListFlow", chatArgs(&session.chatId),
-        ))).await;
-        let error = match result {
-            Ok(None) => return,
-            Ok(Some(mut stream)) => {
-                let mut failure = None;
-                while let Some(event) = nextUiEvent(&mut stream, &mut cancelled).await {
-                    if event.kind == CoreEventKind::Completed { break; }
-                    if let Err(error) = updateConversations(&mut session.histories.lock().unwrap(), event) {
-                        failure = Some(error); break;
-                    }
-                    session.conversationsLoading.store(false, Ordering::Release);
-                    UI_REVISION.fetch_add(1, Ordering::Relaxed);
-                }
-                if *cancelled.borrow() { return; }
-                failure.unwrap_or_else(|| "对话列表连接已结束，请刷新".into())
+            ChatSnapshot {
+                connected: session.services.peers().spaceConnection().is_some(), chatId: session.chatId.clone(),
+                initializing: !session.ready.load(Ordering::Acquire),
+                sending: session.sending.load(Ordering::Acquire),
+                generating: session.generating.load(Ordering::Acquire), messages, error,
             }
-            Err(error) => format!("对话列表加载失败：{error}"),
-        };
-        *session.conversationsError.lock().unwrap() = Some(error);
-        session.conversationsLoading.store(false, Ordering::Release);
-        session.conversationsRequested.store(false, Ordering::Release);
-        UI_REVISION.fetch_add(1, Ordering::Relaxed);
-    });
-    // Retrying a failed optional watch replaces its handle rather than
-    // accumulating completed tasks in the lifetime of the active chat.
-    let mut active = owner.conversationsTask.lock().unwrap();
-    if owner.retired.load(Ordering::Acquire) { task.abort(); }
-    else if let Some(previous) = active.replace(task) { previous.abort(); }
-    Ok(())
-}
-fn conversationText(value: &str) -> String {
-    let mut end = value.len().min(192);while !value.is_char_boundary(end) { end -= 1; }
-    value[..end].to_string()
-}
-fn updateConversations(cache: &mut UiValue, event: operit_link::CoreEvent) -> Result<(), String> {
-    let mut next = UiValue { encoded: cache.encoded.clone(), display: serde_json::Value::Null };
-    next.update(event)?;
-    if next.encoded.len() > MAX_CONVERSATIONS { return Err("对话列表超过设备限制".into()); }
-    let mut rows = Vec::new();let mut invalidId = false;
-    next.forEachLast(MAX_CONVERSATIONS, |item| {
-        if let CoreValue::Map(fields) = &item {
-            let id = mapString(fields, "id");
-            if id.is_empty() || id.len() > 96 || id.contains('\0') { invalidId = true; return; }
-        } else { invalidId = true; return; }
-        if let serde_json::Value::Array(mut projected) = displayConversations(&CoreValue::List(vec![item])) { rows.append(&mut projected); }
-    })?;
-    if invalidId { return Err("对话标识超出设备限制".into()); }
-    next.display = serde_json::Value::Array(rows);*cache = next;Ok(())
-}
-
-/// Changes only this device's view; the full Core continues owning the chat.
-pub fn selectChat(id: &str) -> Result<(), String> {
-    if crate::standalone_chat::active() { return Ok(()); }
-    let session = SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("设备尚未连接")?;
-    if session
-        .services
-        .peers()
-        .activePeerNodeIds()
-        .unwrap_or_default()
-        .is_empty()
-    {
-        return Err("设备已离线".into());
+        }
+        None => ChatSnapshot { error: Some("等待同一 Space 的 Core 建立聊天连接".into()), ..ChatSnapshot::default() },
     }
-    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
-    if session.sending.load(Ordering::Acquire) { return Err("请等待消息发送完成".into()); }
-    if id == session.chatId { return Ok(()); }
-    let exists = session.histories.lock().unwrap().display.as_array()
-        .is_some_and(|items| items.iter().any(|item| item["id"] == id));
-    if !exists {
-        return Err("对话已不存在，请刷新列表".into());
-    }
-    install(
-        session.client.clone(),
-        session.services.clone(),
-        id.to_string(),
-    );
-    Ok(())
-}
-
-/// Move between bounded display pages. Only tiny cursors survive page eviction.
-pub fn moveHistory(older: bool) -> Result<(), String> {
-    if crate::standalone_chat::active() { return Ok(()); }
-    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone().ok_or("设备尚未连接")?;
-    let mut history = session.windowHistory.lock().unwrap();
-    let cursor = if older {
-        let Some(cursor) = *session.older.lock().unwrap() else { return Ok(()); };
-        let current = *session.window.borrow();
-        if current == Some(cursor) { return Ok(()); }
-        if history.len() == 32 { history.remove(0); }
-        history.push(current); Some(cursor)
-    } else { history.pop().unwrap_or(None) };
-    if *session.window.borrow() != cursor { session.window.send_replace(cursor); }
-    Ok(())
 }
 
 pub fn newChat() -> Result<(), String> {
-    if crate::standalone_chat::active() { return crate::standalone_chat::newChat(); }
-    let session = SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("设备尚未连接")?;
-    if session
-        .services
-        .peers()
-        .activePeerNodeIds()
-        .unwrap_or_default()
-        .is_empty()
-    {
-        return Err("设备已离线".into());
-    }
-    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
-    if session.sending.swap(true, Ordering::AcqRel) {
-        return Err("请等待当前操作完成".into());
-    }
-    let current = session.histories.lock().unwrap().display.as_array()
-        .and_then(|items| items.iter().find(|item| item["id"] == session.chatId))
-        .cloned().unwrap_or_default();
+    let session = beginSend()?;
     spawnNodeUiTask(move || async move {
-        let mut args = chatFields(&session.chatId);
-        for key in ["characterCardName", "group", "characterGroupId"] {
-            args.insert(key.into(), operit_link::toCoreValue(&current[key]).unwrap());
-        }
+        let args = chatFields(&session.chatId);
         let response = session
             .client
             .call(CoreCallRequest::new(
@@ -1382,12 +814,7 @@ pub fn newChat() -> Result<(), String> {
 
 /// Returns a compact state label for the 320x240 task rail.
 pub fn taskStatus() -> String {
-    if crate::standalone_chat::active() { return crate::standalone_chat::status(); }
-    let session = SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone();
+    let session = currentChat();
     let Some(session) = session else {
         return "离线".into();
     };
@@ -1420,34 +847,23 @@ pub fn taskStatus() -> String {
 }
 
 /// Reads empty and error display text from the already materialized chat snapshot.
-pub fn screenTextFromSnapshot(value: &serde_json::Value) -> String {
-    if let Some(error) = value["error"].as_str() {
-        return error.to_string();
-    }
-    if value["messages"]
-        .as_array()
-        .is_some_and(|items| !items.is_empty())
-    {
-        return String::new();
-    }
-    if isConnected() {
-        "输入消息开始对话".into()
-    } else {
-        "已离线，等待重新连接".into()
-    }
+pub fn screenTextFromSnapshot(value: &ChatSnapshot) -> &str {
+    if let Some(error) = value.error.as_deref() { return error; }
+    if !value.messages.is_empty() { return ""; }
+    if isConnected() { "输入消息开始对话" } else { "已离线，等待重新连接" }
 }
 
 #[cfg(test)]
-fn displayMessages(value: &CoreValue, streams: &BTreeMap<String, StreamText>) -> serde_json::Value {
+fn displayMessages(value: &CoreValue, streams: &BTreeMap<String, StreamText>) -> Vec<ChatMessage> {
     renderMessages(projectMessages(value), streams)
 }
 
 // Cache only display rows for the UI thread. It must not decode a second full
 // message tree concurrently with the UART reader on this small device.
 /// Copies presentation rows without parsing message markup or tool metadata.
-fn projectMessages(value: &CoreValue) -> serde_json::Value {
+fn projectMessages(value: &CoreValue) -> Vec<ChatMessage> {
     let CoreValue::List(items) = value else {
-        return serde_json::json!([]);
+        return Vec::new();
     };
     let start = items.len().saturating_sub(MAX_CHAT_MESSAGES);
     let mut result = Vec::with_capacity(items.len() - start);
@@ -1467,98 +883,51 @@ fn projectMessages(value: &CoreValue) -> serde_json::Value {
         if text.trim().is_empty() && streamId.is_empty() {
             continue;
         }
-        result.push(serde_json::json!({
-            "sender": mapString(fields, "sender"),
-            "text": text,
-            "streamId": streamId,
-        }));
+        result.push(ChatMessage { sender: mapString(fields, "sender").into(), text, streamId: streamId.into() });
     }
-    serde_json::Value::Array(result)
+    result
 }
 
 /// Combines the latest snapshot and stream tail within one shared display budget.
-fn renderMessages(mut rows: serde_json::Value, streams: &BTreeMap<String, StreamText>) -> serde_json::Value {
-    let Some(items) = rows.as_array_mut() else { return serde_json::json!([]); };
-    for row in items.iter_mut() {
-        if let Some(stream) = row["streamId"].as_str().and_then(|id| streams.get(id)) {
+fn renderMessages(mut rows: Vec<ChatMessage>, streams: &BTreeMap<String, StreamText>) -> Vec<ChatMessage> {
+    for row in &mut rows {
+        if let Some(stream) = streams.get(&row.streamId) {
             if !stream.completed && !stream.text.is_empty() {
-                let text = boundedText(&stream.text);
-                row["text"] = serde_json::Value::String(text);
+                row.text = boundedText(&stream.text);
             }
         }
-        if let Some(fields) = row.as_object_mut() { fields.remove("streamId"); }
     }
-    items.retain(|row| !row["text"].as_str().unwrap_or("").trim().is_empty());
+    rows.retain(|row| !row.text.trim().is_empty());
     // A live tail replaces its snapshot text, so reapply the total window
     // budget across all rows rather than allowing each stream another window.
     let (mut bytes, mut lines) = (MAX_CHAT_STRING_BYTES, MAX_CHAT_LINES);
-    let mut first = items.len();
-    for index in (0..items.len()).rev() {
+    let mut first = rows.len();
+    for index in (0..rows.len()).rev() {
         if bytes == 0 || lines == 0 { break; }
-        let text = items[index]["text"].as_str().unwrap_or("");
+        let text = &rows[index].text;
         let lineStart = text.match_indices('\n').rev().nth(lines - 1).map(|(at, _)| at + 1).unwrap_or(0);
         let mut start = text.len().saturating_sub(bytes).max(lineStart);
         while !text.is_char_boundary(start) { start += 1; }
         let tail = &text[start..];
         bytes = bytes.saturating_sub(tail.len());
         lines = lines.saturating_sub(1 + tail.matches('\n').count());
-        if start > 0 { items[index]["text"] = tail.to_owned().into(); }
+        if start > 0 { rows[index].text.drain(..start); }
         first = index;
     }
-    items.drain(..first);
+    rows.drain(..first);
     rows
-}
-
-fn displayConversations(value: &CoreValue) -> serde_json::Value {
-    let CoreValue::List(items) = value else {
-        return serde_json::json!([]);
-    };
-    let start = items.len().saturating_sub(MAX_CONVERSATIONS);
-    let mut result = Vec::with_capacity(items.len() - start);
-    for item in &items[start..] {
-        let CoreValue::Map(fields) = item else {
-            continue;
-        };
-        result.push(serde_json::json!({
-            "id": mapString(fields, "id"),
-            "title": conversationText(mapString(fields, "title")),
-            "characterCardName": boundedText(mapString(fields, "characterCardName")),
-            "group": simpleJson(fields.get("group")),
-            "characterGroupId": simpleJson(fields.get("characterGroupId")),
-        }));
-    }
-    serde_json::Value::Array(result)
 }
 
 /// Uploads one already bounded image as binary Link data, then sends its Core-owned media link.
 #[cfg(not(target_os = "espidf"))]
 pub fn sendImage(bytes: Vec<u8>, mime: String) -> Result<(), String> {
-    if crate::standalone_chat::active() { return Err("本机直连聊天暂不支持图片".into()); }
     if bytes.is_empty()
         || bytes.len() > 512 * 1024
         || !matches!(mime.as_str(), "image/png" | "image/jpeg")
     {
         return Err("只支持小于 512 KiB 的 PNG/JPEG 图片".into());
     }
-    let session = SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("设备尚未连接")?;
-    if session
-        .services
-        .peers()
-        .activePeerNodeIds()
-        .unwrap_or_default()
-        .is_empty()
-    {
-        return Err("设备已离线".into());
-    }
-    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
-    if session.sending.swap(true, Ordering::AcqRel) {
-        return Err("请等待当前消息发送完成".into());
-    }
+    let session = beginSend()?;
     spawnNodeUiTask(move || async move {
         let result = async {
             let args = operit_link::CoreValue::Map(std::collections::BTreeMap::from([
@@ -1582,59 +951,30 @@ pub fn sendImage(bytes: Vec<u8>, mime: String) -> Result<(), String> {
             if !link.starts_with("<link type=\"image\" id=\"") {
                 return Err("Core 返回了无效图片引用".into());
             }
-            sendImageMessage(&session, link).await
+            sendMessageToCore(&session, link).await
         }
         .await;
-        if let Err(error) = &result {
-            *session.error.lock().unwrap() = Some(error.clone());
-        }
-        *session.sendResult.lock().unwrap() = Some(result);
-        session.sending.store(false, Ordering::Release);
-        UI_REVISION.fetch_add(1, Ordering::Relaxed);
+        session.finishSend(result);
     });
     Ok(())
 }
 
 /// Bridges a synchronous firmware callback to its existing Link runtime.
 pub fn send(text: String) -> Result<(), String> {
-    if crate::standalone_chat::active() { return crate::standalone_chat::send(text); }
     if text.trim().is_empty() {
         return Err("消息不能为空".into());
     }
     if text.len() > 16384 { return Err("消息超过 16384 字节，请拆分发送".into()); }
-    let session = SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or_else(|| "设备尚未连接 Space".to_string())?;
-    if session
-        .services
-        .peers()
-        .activePeerNodeIds()
-        .unwrap_or_default()
-        .is_empty()
-    {
-        return Err("设备已离线".into());
-    }
-    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
-    if session.sending.swap(true, Ordering::AcqRel) {
-        return Err("上一条消息仍在发送".into());
-    }
+    let session = beginSend()?;
     *session.error.lock().unwrap() = None;
     spawnNodeUiTask(move || async move {
-        let result = sendImageMessage(&session, text).await;
-        if let Err(error) = &result {
-            *session.error.lock().unwrap() = Some(error.clone());
-        }
-        *session.sendResult.lock().unwrap() = Some(result);
-        session.sending.store(false, Ordering::Release);
-        UI_REVISION.fetch_add(1, Ordering::Relaxed);
+        let result = sendMessageToCore(&session, text).await;
+        session.finishSend(result);
     });
     Ok(())
 }
 
-async fn sendImageMessage(session: &ChatSession, text: String) -> Result<(), String> {
+async fn sendMessageToCore(session: &ChatSession, text: String) -> Result<(), String> {
     // Construct Link values directly: avoid duplicating the input through a
     // JSON value tree on the device, and keep the firmware serializer small.
     let mut args = BTreeMap::new();
@@ -1694,7 +1034,7 @@ mod tests {
         text.applyValue(&serde_json::json!({"type":"chunk","value":"最新的结束标记"}));
         assert!(text.text.ends_with("最新的结束标记"));
         assert!(text.text.is_char_boundary(text.text.len()));
-        let CoreValue::Map(args)=windowArgs("chat",Some(PageCursor{timestamp:123,offset:456})) else {panic!()};
+        let CoreValue::Map(args)=windowArgs("chat") else {panic!()};
         assert_eq!(args["textBytes"],CoreValue::Unsigned(MAX_CHAT_STRING_BYTES as u64));
         assert_eq!(args["textLines"],CoreValue::Unsigned(MAX_CHAT_LINES as u64));
         for n in 0..100 {
@@ -1716,55 +1056,6 @@ mod tests {
         assert!(!closed.load(Ordering::Acquire));
     }
 
-    fn uiEvent(kind: CoreEventKind, value: CoreValue) -> operit_link::CoreEvent {
-        operit_link::CoreEvent { requestId: None, target: "chat".into(),
-            propertyName: "messages".into(), kind, value }
-    }
-
-    #[test]
-    fn encoded_ui_state_preserves_successive_nested_delta_paths() {
-        let value = |count| CoreValue::List((0..count).map(|index| CoreValue::Map(BTreeMap::from([
-            ("id".into(), CoreValue::Unsigned(index)),
-            ("parts".into(), CoreValue::List(vec![CoreValue::Map(BTreeMap::from([
-                ("content".into(), CoreValue::String(format!("reply-{index}"))),
-                ("unusedMetadata".into(), CoreValue::Null),
-            ]))])),
-        ]))).collect());
-        let mut cache = UiValue::default();
-        let mut previous = None;
-        for count in [2, 5, 12, 3, 0, 1] {
-            let expected = value(count);
-            let (kind, delta) = CoreValue::incrementalEvent(&mut previous, expected.clone());
-            cache.update(uiEvent(kind, delta)).unwrap();
-            assert_eq!(cache.decode().unwrap(), expected);
-        }
-    }
-
-    #[test]
-    fn item_cache_nested_updates_and_invalid_later_paths_are_transactional() {
-        let mut cache = UiValue::default();
-        let base = CoreValue::List(vec![CoreValue::Map(BTreeMap::from([
-            ("parts".into(), CoreValue::List(vec![CoreValue::String("old".into())])),
-            ("untouched".into(), CoreValue::String("same".into())),
-        ]))]);
-        cache.update(uiEvent(CoreEventKind::Snapshot, base.clone())).unwrap();
-        let mut expected = base.clone();
-        let CoreValue::List(items) = &mut expected else { panic!("list") };
-        let CoreValue::Map(fields) = &mut items[0] else { panic!("map") };
-        fields.insert("parts".into(), CoreValue::List(vec![CoreValue::String("new".into()), CoreValue::Null]));
-        let mut previous = Some(base);
-        let (kind, delta) = CoreValue::incrementalEvent(&mut previous, expected.clone());
-        cache.update(uiEvent(kind, delta)).unwrap();
-        assert_eq!(cache.decode().unwrap(), expected);
-        let operation = |index| CoreValue::Map(BTreeMap::from([
-            ("op".into(), CoreValue::String("remove".into())),
-            ("path".into(), CoreValue::List(vec![CoreValue::Unsigned(index)])),
-        ]));
-        let delta = CoreValue::Map(BTreeMap::from([("$coreDelta".into(), CoreValue::List(vec![operation(0), operation(99)]))]));
-        assert!(cache.update(uiEvent(CoreEventKind::Delta, delta)).is_err());
-        assert_eq!(cache.decode().unwrap(), expected, "no partial update may be published");
-    }
-
     #[test]
     fn cached_display_renders_live_stream_without_decoding_full_state() {
         let messages = CoreValue::List(vec![CoreValue::Map(BTreeMap::from([
@@ -1777,40 +1068,28 @@ mod tests {
             ]))),
         ]))]);
         let projected = projectMessages(&messages);
-        assert!(renderMessages(projected.clone(), &BTreeMap::new()).as_array().unwrap().is_empty());
+        assert!(renderMessages(projected.clone(), &BTreeMap::new()).is_empty());
         let streams = BTreeMap::from([("live".into(), StreamText {
             text: "live reply".into(), ..StreamText::default()
         })]);
         let rows = renderMessages(projected, &streams);
-        assert_eq!(rows[0]["text"], "live reply");
-        assert!(rows[0].get("streamId").is_none(), "private projection metadata must not leak to UI API");
+        assert_eq!(rows[0].text, "live reply");
+        assert!(serde_json::to_value(&rows[0]).unwrap().get("streamId").is_none(), "private projection metadata must not leak to UI API");
     }
 
     #[test]
     fn live_stream_and_snapshot_share_one_total_display_budget() {
-        let rows = serde_json::json!([
-            {"sender":"user", "text":"旧历史\n".repeat(120), "images":[], "streamId":""},
-            {"sender":"ai", "text":"", "images":[], "streamId":"live"},
-        ]);
+        let rows = vec![
+            ChatMessage { sender: "user".into(), text: "旧历史\n".repeat(120), ..ChatMessage::default() },
+            ChatMessage { sender: "ai".into(), streamId: "live".into(), ..ChatMessage::default() },
+        ];
         let mut stream = StreamText::default();
         stream.applyValue(&serde_json::json!({"type":"chunk", "value":"新的回复\n".repeat(120)+"最新终点"}));
         let rows = renderMessages(rows, &BTreeMap::from([("live".into(), stream)]));
-        let rows = rows.as_array().unwrap();
-        let bytes: usize = rows.iter().map(|r| r["text"].as_str().unwrap().len()).sum();
-        let lines: usize = rows.iter().map(|r| 1+r["text"].as_str().unwrap().matches('\n').count()).sum();
+        let bytes: usize = rows.iter().map(|r| r.text.len()).sum();
+        let lines: usize = rows.iter().map(|r| 1+r.text.matches('\n').count()).sum();
         assert!(bytes <= MAX_CHAT_STRING_BYTES); assert!(lines <= MAX_CHAT_LINES);
-        assert!(rows.last().unwrap()["text"].as_str().unwrap().ends_with("最新终点"));
-    }
-
-    #[test]
-    fn invalid_ui_delta_keeps_last_encoded_value() {
-        let mut cache = UiValue::default();
-        let expected = CoreValue::List(vec![CoreValue::String("kept".into())]);
-        cache.update(uiEvent(CoreEventKind::Snapshot, expected.clone())).unwrap();
-        let encoded = cache.encoded.clone();
-        assert!(cache.update(uiEvent(CoreEventKind::Delta, CoreValue::Null)).is_err());
-        assert_eq!(cache.encoded, encoded);
-        assert_eq!(cache.decode().unwrap(), expected);
+        assert!(rows.last().unwrap().text.ends_with("最新终点"));
     }
 
     #[tokio::test]
@@ -1885,9 +1164,11 @@ mod tests {
             "isLoading": false, "inputProcessingState": {"Error": {"message": "401 Unauthorized"}}
         })).unwrap();
         assert_eq!(executionStatus(&failure), (false, Some("401 Unauthorized".into())));
-        assert_eq!(screenTextFromSnapshot(&serde_json::json!({
-            "error": executionStatus(&failure).1, "messages": [{"text":"sent"}]
-        })), "401 Unauthorized");
+        assert_eq!(screenTextFromSnapshot(&ChatSnapshot {
+            error: executionStatus(&failure).1,
+            messages: vec![ChatMessage { text: "sent".into(), ..ChatMessage::default() }],
+            ..ChatSnapshot::default()
+        }), "401 Unauthorized");
         let loading = operit_link::toCoreValue(serde_json::json!({
             "isLoading": true, "inputProcessingState": {"Connecting": {"message":"connecting"}}
         })).unwrap();
@@ -1918,18 +1199,13 @@ mod tests {
         }]))
         .unwrap();
         let displayed = displayMessages(&messages, &BTreeMap::from([("s".into(), text)]));
-        assert_eq!(displayed[0]["text"], "你好，世界");
+        assert_eq!(displayed[0].text, "你好，世界");
     }
 }
 
 /// Acknowledge the remote send, not merely admission to the local queue.
 pub fn takeSendResult() -> Option<Result<(), String>> {
-    if crate::standalone_chat::active() { return crate::standalone_chat::takeResult(); }
-    let session = SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone()?;
+    let session = currentChat()?;
     let result = session.sendResult.lock().unwrap().take();
     result
 }
@@ -1937,36 +1213,3 @@ pub fn takeSendResult() -> Option<Result<(), String>> {
 #[cfg(all(test, not(target_os = "espidf")))]
 #[path = "edge_chat_session_tests.rs"]
 mod session_tests;
-
-#[cfg(test)]
-mod conversation_tests {
-    use super::*;
-    fn event(kind: CoreEventKind, value: CoreValue) -> operit_link::CoreEvent {
-        operit_link::CoreEvent {requestId:None,target:CORE_INTERNAL_TARGET.into(),propertyName:"routedChatListFlow".into(),kind,value}
-    }
-    fn rows(ids: &[&str]) -> CoreValue {
-        operit_link::toCoreValue(serde_json::json!(ids.iter().map(|id|serde_json::json!({"id":id,"title":"中文标题".repeat(80)})).collect::<Vec<_>>())).unwrap()
-    }
-    #[test]
-    fn list_deltas_preserve_exact_ids_and_bound_metadata_without_losing_positions() {
-        let mut cache=UiValue::default();let mut previous=None;
-        for ids in [vec!["one","two","three"],vec!["three","one"],vec!["one"],vec![]] {
-            let (kind,value)=CoreValue::incrementalEvent(&mut previous,rows(&ids));
-            updateConversations(&mut cache,event(kind,value)).unwrap();
-            let display=cache.display.as_array().unwrap();assert_eq!(display.len(),ids.len());
-            for (row,id) in display.iter().zip(ids) {
-                assert_eq!(row["id"],id);let title=row["title"].as_str().unwrap();assert!(title.len()<=192);assert!(!title.contains('\u{fffd}'));
-            }
-        }
-    }
-    #[test]
-    fn oversized_lists_and_invalid_ids_leave_last_valid_page_intact() {
-        let mut cache=UiValue::default();updateConversations(&mut cache,event(CoreEventKind::Snapshot,rows(&["safe"]))).unwrap();
-        let encoded=cache.encoded.clone();let display=cache.display.clone();
-        let long="x".repeat(97);
-        for invalid in [rows(&[""]),rows(&[&long]),rows(&["bad\0id"]),rows(&vec!["safe";25])] {
-            assert!(updateConversations(&mut cache,event(CoreEventKind::Snapshot,invalid)).is_err());
-            assert_eq!(cache.encoded,encoded);assert_eq!(cache.display,display);
-        }
-    }
-}

@@ -62,12 +62,9 @@ pub mod native {
     }
     #[repr(C)]
     pub struct CaptureBlock {
-        pub nonzero: u32,
-        pub peak: u32,
-        pub rightPeak: u32,
         pub samples: [i16; 256],
     }
-    const _: () = assert!(std::mem::size_of::<CaptureBlock>() == 524);
+    const _: () = assert!(std::mem::size_of::<CaptureBlock>() == 512);
     pub struct Microphone(*mut c_void);
     // Each handle is exclusively owned by one scheduler task; no concurrent calls.
     unsafe impl Send for Microphone {}
@@ -79,9 +76,6 @@ pub mod native {
         }
         pub fn read(&mut self) -> Result<CaptureBlock, String> {
             let mut block = CaptureBlock {
-                nonzero: 0,
-                peak: 0,
-                rightPeak: 0,
                 samples: [0; 256],
             };
             let mut read = 0;

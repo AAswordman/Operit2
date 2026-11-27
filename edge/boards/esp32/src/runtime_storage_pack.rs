@@ -1,7 +1,6 @@
 //! Small bounded LZSS records for the ESP32 virtual storage cache.
 //! Records and range-read history are bounded; no whole-database decompression.
 use operit_host_api::{HostError, HostResult};
-use std::io::{self, Write};
 
 pub const MAX_RECORD_SIZE: usize = 16 * 1024;
 const WINDOW: usize = 4096;
@@ -51,16 +50,85 @@ fn match_at(input: &[u8], at: usize) -> (usize, usize) {
     }
     best
 }
+// A bounded hash chain skips positions that cannot match three bytes. Keep
+// every candidate, newest first, so persisted output and tie-breaking stay exact.
+struct MatchIndex {
+    heads: [u16; 64],
+    previous: Vec<u8>,
+    next: usize,
+}
+impl MatchIndex {
+    fn new(length: usize) -> HostResult<Self> {
+        let size = if length < 512 { 0 } else { WINDOW.min(DICTIONARY.len() + length) };
+        let mut previous = Vec::new();
+        previous.try_reserve_exact(size).map_err(|_| allocation(size))?;
+        previous.resize(size, 0);
+        Ok(Self { heads: [u16::MAX; 64], previous, next: 0 })
+    }
+    fn reset(&mut self) { self.heads.fill(u16::MAX); self.next = 0; }
+    fn byte(input: &[u8], index: usize) -> u8 {
+        if index < DICTIONARY.len() { DICTIONARY[index] }
+        else { input[index - DICTIONARY.len()] }
+    }
+    fn hash(input: &[u8], index: usize) -> usize {
+        (Self::byte(input, index) as usize * 31 * 31
+            + Self::byte(input, index + 1) as usize * 31
+            + Self::byte(input, index + 2) as usize) & 63
+    }
+    fn find(&mut self, input: &[u8], at: usize) -> (usize, usize) {
+        if self.previous.is_empty() { return match_at(input, at); }
+        if input.len() - at < 3 { return (0, 0); }
+        let position = DICTIONARY.len() + at;
+        while self.next < position {
+            let hash = Self::hash(input, self.next);
+            let slot = self.next % self.previous.len();
+            self.previous[slot] = if self.heads[hash] == u16::MAX { 0 }
+                else { (self.next - self.heads[hash] as usize).min(255) as u8 };
+            self.heads[hash] = self.next as u16;
+            self.next += 1;
+        }
+        let mut candidate = self.heads[Self::hash(input, position)];
+        let mut best = (0, 0);
+        while candidate != u16::MAX {
+            let previous = candidate as usize;
+            if position - previous > WINDOW { break; }
+            let mut length = 0;
+            while length < 18 && at + length < input.len()
+                && Self::byte(input, previous + length) == input[at + length] {
+                length += 1;
+            }
+            if length >= 3 && length > best.1 { best = (position - previous, length); }
+            if length == 18 { break; }
+            let gap = self.previous[previous % self.previous.len()] as usize;
+            candidate = match gap {
+                0 => u16::MAX,
+                255 => {
+                    let hash = Self::hash(input, previous);
+                    (position.saturating_sub(WINDOW)..=previous - 255).rev()
+                        .find(|index| Self::hash(input, *index) == hash)
+                        .map_or(u16::MAX, |index| index as u16)
+                }
+                _ => (previous - gap) as u16,
+            };
+        }
+        best
+    }
+}
+// Both passes use one encoder: count first, then fill the exactly reserved Vec.
+// A generic io::Write sink duplicated the encoder and retained unused I/O errors
+// in Flash even though these in-memory sinks cannot produce an I/O failure.
 #[inline(never)]
-fn compress(input: &[u8], mut output: impl Write) -> io::Result<()> {
+fn compress(input: &[u8], mut output: Option<&mut Vec<u8>>, index: &mut MatchIndex) -> usize {
+    index.reset();
     let mut at = 0;
+    let mut size = 0;
     while at < input.len() {
         let mut flags = 0u8;
         let mut group = [0u8; 16];
         let mut used = 0;
         for bit in 0..8 {
             if at == input.len() { break; }
-            let (distance, length) = match_at(input, at);
+            let (distance, length) = index.find(input, at);
             if length >= 3 {
                 flags |= 1 << bit;
                 let code = (((distance - 1) << 4) | (length - 3)) as u16;
@@ -73,20 +141,13 @@ fn compress(input: &[u8], mut output: impl Write) -> io::Result<()> {
                 at += 1;
             }
         }
-        output.write_all(&[flags])?;
-        output.write_all(&group[..used])?;
+        if let Some(bytes) = output.as_deref_mut() {
+            bytes.push(flags);
+            bytes.extend_from_slice(&group[..used]);
+        }
+        size += 1 + used;
     }
-    Ok(())
-}
-struct Counter(usize);
-impl Write for Counter {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0 += bytes.len();
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
+    size
 }
 /// Two passes reserve the compressed size, not the expanded JSON record size.
 #[inline(never)]
@@ -96,15 +157,15 @@ pub fn pack(input: &[u8]) -> HostResult<Vec<u8>> {
             "ESP32 runtime record exceeds expanded size budget",
         ));
     }
-    let mut count = Counter(0);
-    compress(input, &mut count).map_err(|e| HostError::new(e.to_string()))?;
-    let compressed = count.0 < input.len();
-    let size = 3 + if compressed { count.0 } else { input.len() };
+    let mut index = MatchIndex::new(input.len())?;
+    let count = compress(input, None, &mut index);
+    let compressed = count < input.len();
+    let size = 3 + if compressed { count } else { input.len() };
     let mut output = Vec::new();
     output.try_reserve_exact(size).map_err(|_| allocation(size))?;
     output.push(if compressed { 2 } else { 0 });
     output.extend_from_slice(&(input.len() as u16).to_le_bytes());
-    if compressed { compress(input, &mut output).map_err(|e| HostError::new(e.to_string()))?; }
+    if compressed { compress(input, Some(&mut output), &mut index); }
     else { output.extend_from_slice(input); }
     Ok(output)
 }
@@ -176,6 +237,27 @@ pub fn unpack_range(input: &[u8], offset: u64, requested: usize) -> HostResult<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn indexed_matching_preserves_all_legacy_candidates_across_window_wraps() {
+        assert!(DICTIONARY.len() + MAX_RECORD_SIZE < u16::MAX as usize);
+        let mut random = 123456789u32;
+        let mut binary = Vec::new();
+        for _ in 0..MAX_RECORD_SIZE {
+            random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+            binary.push(random as u8);
+        }
+        for bytes in [binary, vec![b'x'; MAX_RECORD_SIZE], DICTIONARY.repeat(12),
+            (0..MAX_RECORD_SIZE).map(|i| (i % 127) as u8).collect()] {
+            let mut index = MatchIndex::new(bytes.len()).unwrap();
+            for at in 0..bytes.len() {
+                assert_eq!(index.find(&bytes, at), match_at(&bytes, at), "offset {at}");
+            }
+            index.reset();
+            for at in (0..bytes.len()).step_by(17) {
+                assert_eq!(index.find(&bytes, at), match_at(&bytes, at), "stride offset {at}");
+            }
+        }
+    }
     #[test]
     fn round_trip_empty_repetitive_and_binary_records() {
         let mut random = 123456789u32;

@@ -111,42 +111,6 @@ impl<C: FaceCanvas> Esp32RobotFaceHost<C> {
         self.uiActive.store(true, Ordering::Release);
     }
 
-    /// Paints the empty plugin shelf over the face canvas.
-    pub fn paintPluginShelf(&self) -> HostResult<()> {
-        let mut canvas = self
-            .canvas
-            .lock()
-            .map_err(|error| HostError::new(format!("robot face canvas lock poisoned: {error}")))?;
-        crate::shell::paintPluginShelf(&mut *canvas)
-    }
-
-    /// Paints the launcher home surface over the face canvas.
-    pub fn paintHome(&self) -> HostResult<()> {
-        let mut canvas = self
-            .canvas
-            .lock()
-            .map_err(|error| HostError::new(format!("robot face canvas lock poisoned: {error}")))?;
-        crate::shell::paintHome(&mut *canvas)
-    }
-
-    /// Paints the settings app surface.
-    pub fn paintSettings(&self) -> HostResult<()> {
-        let mut canvas = self
-            .canvas
-            .lock()
-            .map_err(|error| HostError::new(format!("robot face canvas lock poisoned: {error}")))?;
-        crate::shell::paintSettings(&mut *canvas)
-    }
-
-    /// Paints the terminal app surface.
-    pub fn paintTerminal(&self) -> HostResult<()> {
-        let mut canvas = self
-            .canvas
-            .lock()
-            .map_err(|error| HostError::new(format!("robot face canvas lock poisoned: {error}")))?;
-        crate::shell::paintTerminal(&mut *canvas)
-    }
-
     /// Sends one self-drawn UI partial framebuffer region through the board canvas.
     pub fn flushRgb565(&self, rect: FaceRect, pixels: &[u8]) -> HostResult<()> {
         let mut canvas = self
@@ -248,16 +212,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn paintsPluginShelfWithoutChangingExpression() {
-        let host =
-            Esp32RobotFaceHost::withMemoryCanvas(240, 320).expect("memory face host must start");
-        host.paintPluginShelf().expect("plugin shelf must paint");
-        assert_eq!(
-            host.getExpression()
-                .expect("face expression must stay committed")
-                .expression,
-            INITIAL_EXPRESSION
-        );
-    }
 }

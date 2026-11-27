@@ -438,8 +438,9 @@ impl<'de> Visitor<'de> for CoreValueVisitor {
     where
         A: SeqAccess<'de>,
     {
-        let mut values = Vec::with_capacity(sequence.size_hint().unwrap_or(0));
+        let mut values = Vec::new();
         while let Some(value) = sequence.next_element()? {
+            values.try_reserve(1).map_err(serde::de::Error::custom)?;
             values.push(value);
         }
         Ok(CoreValue::List(values))
@@ -452,7 +453,9 @@ impl<'de> Visitor<'de> for CoreValueVisitor {
     {
         let mut values = BTreeMap::new();
         while let Some((key, value)) = entries.next_entry::<String, CoreValue>()? {
-            values.insert(key, value);
+            if values.insert(key, value).is_some() && cfg!(feature = "compact-codec") {
+                return Err(serde::de::Error::custom("Duplicate Link map key"));
+            }
         }
         Ok(CoreValue::Map(values))
     }
@@ -470,6 +473,7 @@ impl<'de> Deserialize<'de> for CoreValue {
 
 /// Converts a serializable Rust value into the Link value model.
 #[allow(non_snake_case)]
+#[inline(never)]
 pub fn toCoreValue(value: impl Serialize) -> Result<CoreValue, crate::codec::CoreLinkCodecError> {
     crate::value_codec::to_value(value)
         .map_err(|e| crate::codec::CoreLinkCodecError::Encode(e.to_string()))
@@ -477,6 +481,7 @@ pub fn toCoreValue(value: impl Serialize) -> Result<CoreValue, crate::codec::Cor
 
 /// Converts a Link value into a typed Rust value.
 #[allow(non_snake_case)]
+#[inline(never)]
 pub fn fromCoreValue<T>(value: CoreValue) -> Result<T, crate::codec::CoreLinkCodecError>
 where
     T: serde::de::DeserializeOwned,

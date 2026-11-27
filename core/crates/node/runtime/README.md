@@ -85,6 +85,12 @@ Metadata-only builds still need the annotation sources in this repository at
 build time. They do not compile those sources as an application dependency.
 There is no separately maintained Edge route or permission table.
 
+`PeerRuntimeLimits` separates the physical negotiated frame limit from the
+logical Space projection budget. Defaults retain the existing full-node limit;
+the shared constrained preset retains 8 KiB for both. Product composition roots
+may inject smaller physical frames without changing pairing credentials or the
+session format. ESP32 selects its own limits in its board runtime profile.
+
 ## Edge integration
 
 `PeerRouter` is the shared authenticated execution boundary. Full Core adapts

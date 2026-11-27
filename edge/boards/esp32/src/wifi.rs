@@ -78,7 +78,6 @@ impl Esp32Wifi {
             if let Ok(()) = tryStation(&mut wifi, config) {
                 return Ok((Self { wifi }, Esp32WifiMode::Station));
             }
-            log::warn!("operit-esp32 station connect failed; switching to setup AP");
             let _ = wifi.stop();
             configureAccessPoint(&mut wifi)?;
             wifi.start()
@@ -118,19 +117,6 @@ fn tryStation(
         .map_err(|error| HostError::new(format!("wifi config: {error}")))?;
     wifi.start()
         .map_err(|error| HostError::new(format!("wifi start: {error}")))?;
-    match wifi.scan() {
-        Ok(networks) => {
-            for network in networks {
-                log::info!(
-                    "operit-esp32 Wi-Fi scan: ssid={:?} auth={:?} signal={}",
-                    network.ssid,
-                    network.auth_method,
-                    network.signal_strength
-                );
-            }
-        }
-        Err(error) => log::warn!("operit-esp32 Wi-Fi scan failed: {error}"),
-    }
     wifi.connect()
         .map_err(|error| HostError::new(format!("wifi connect: {error}")))?;
     wifi.wait_netif_up()

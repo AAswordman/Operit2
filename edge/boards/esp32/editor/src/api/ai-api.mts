@@ -17,14 +17,11 @@ export const editableSources = [
   'edge/boards/esp32/editor/src/layout/routes.mts',
   'edge/boards/esp32/editor/src/layout/layout-model.mts',
   'edge/boards/esp32/editor/src/layout/project-model.mts',
-  'edge/boards/esp32/editor/web/editor.ts',
   'edge/boards/esp32/editor/web/index.html',
   'edge/boards/esp32/editor/web/style.css',
   'edge/boards/esp32/editor/web/app.ts',
-  'edge/boards/esp32/editor/web/pages.ts',
   'edge/boards/esp32/src/ui_capabilities.rs',
   'edge/boards/esp32/editor/src/layout/package-layout.mts',
-  'edge/boards/esp32/editor/web/deploy.ts',
 ] as const;
 
 export type EditableSource = (typeof editableSources)[number];

@@ -1,7 +1,6 @@
 //! Connection discovery is separate from liveness, which belongs to authenticated channels.
 use super::*;
 use futures_util::{future::LocalBoxFuture, stream::FuturesUnordered, StreamExt};
-use operit_store::NetworkControlStore::NetworkControlStore;
 use tokio::sync::oneshot;
 
 const DISCOVERY_INTERVAL_MS: u64 = 3_000;
@@ -46,12 +45,7 @@ impl HostRuntimePeerService {
     pub(super) fn requirePeerConnectionAllowed(&self, node: &str) -> Result<(), CoreLinkError> {
         let storage = self.state.host.runtimeStorageHost.clone()
             .ok_or_else(|| error("Runtime storage Host is not installed"))?;
-        let control = if self.router()?.nodeLocalControlProjection() {
-            NetworkControlStore::newNodeLocal(storage)
-        } else {
-            NetworkControlStore::new(storage)
-        }.map_err(error)?;
-        if control.nodeIsDisconnected(node).map_err(error)? {
+        if self.router()?.peerConnectionRevoked(storage, node).map_err(error)? {
             return Err(CoreLinkError::new("PEER_CONNECTION_REVOKED", "Peer is disconnected by current Space policy"));
         }
         Ok(())
@@ -90,7 +84,7 @@ impl HostRuntimePeerService {
                             None => None,
                         };
                         if let Some(failure) = failure {
-                            operit_util::AppLogger::AppLogger::w("RuntimePeerService", &format!(
+                            operit_util::app_log!(w, "RuntimePeerService", &format!(
                                 "Background LAN discovery refresh failed: {failure}"));
                         }
                     }
@@ -104,7 +98,7 @@ impl HostRuntimePeerService {
                                 if let Some(state) = state.upgrade() {
                                     HostRuntimePeerService { state }.refreshPeerAvailability(&node);
                                 }
-                                operit_util::AppLogger::AppLogger::v_with_level("RuntimePeerService", &format!("Peer connection attempt failed peer={node} error={error}"), operit_util::AppLogger::VERBOSE_LEVEL_3);
+                                operit_util::app_log!(v_with_level, "RuntimePeerService", &format!("Peer connection attempt failed peer={node} error={error}"), operit_util::AppLogger::VERBOSE_LEVEL_3);
                             }
                         }
                     }
@@ -115,7 +109,7 @@ impl HostRuntimePeerService {
                         let peers = match service.pairedPeers() {
                             Ok(peers) => peers,
                             Err(error) => {
-                                operit_util::AppLogger::AppLogger::w("RuntimePeerService", &error.to_string());
+                                operit_util::app_log!(w, "RuntimePeerService", &error.to_string());
                                 continue;
                             }
                         };

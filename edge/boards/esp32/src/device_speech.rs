@@ -1,5 +1,5 @@
-//! Optional speech offload protocol owned by the device application, not Edge runtime.
-//! A capable device can use its own recognizer/synthesizer instead of opening this endpoint.
+//! Device audio transport: upload PCM to Core and receive text or playback audio.
+//! Recognition, synthesis and model execution belong to Core.
 #![allow(non_snake_case)]
 use operit_link::{
     CoreEvent, CoreEventKind, CoreEventStream, CoreLinkError, CoreLinkPushSession, CorePushRequest,

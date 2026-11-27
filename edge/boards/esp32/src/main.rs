@@ -1,11 +1,9 @@
 #![allow(non_snake_case)]
 
 mod config;
+mod runtime_profile;
 mod edge_chat;
-mod standalone_chat;
 mod device_preferences;
-#[cfg(target_os = "espidf")]
-mod device_http;
 mod device_speech;
 #[cfg(target_os = "espidf")]
 mod audio;
@@ -65,7 +63,7 @@ fn initializeAllocationDiagnostic() {
 /// Starts the ESP32-2432S028 Operit Edge firmware.
 #[cfg(target_os = "espidf")]
 fn main() {
-    if let Err(error) = runFirmware(None) {
+    if let Err(error) = runFirmware() {
         // Startup has not handed UART to Link yet. Use the ROM formatter rather
         // than linking Rust's buffered stderr solely for this fatal diagnostic.
         unsafe { esp_idf_hal::sys::esp_rom_printf(
@@ -87,9 +85,7 @@ fn main() {
 }
 
 #[cfg(target_os = "espidf")]
-fn runFirmware(
-    nodeServices: Option<operit_edge_sdk::runtime::NodeServices::NodeServices>,
-) -> operit_host_api::HostResult<()> {
+fn runFirmware() -> operit_host_api::HostResult<()> {
     use std::sync::Arc;
 
     use crate::config::Esp32FirmwareConfig;
@@ -108,17 +104,11 @@ fn runFirmware(
     use operit_edge_sdk::device::PeerRouter::EdgePeerRouter;
     use operit_edge_sdk::runtime::NodeServices::NodeServices;
     use operit_edge_sdk::runtime::PeerStateStore::PeerStateStore;
+    use operit_edge_sdk::runtime::RuntimePeerService::RuntimePeerService;
     use operit_edge_sdk::storage::CoreNodeIdentityStore::CoreNodeIdentityStore;
 
     esp_idf_svc::sys::link_patches();
     initializeAllocationDiagnostic();
-    esp_idf_svc::log::EspLogger::initialize_default();
-    operit_util::AppLogger::AppLogger::set_retain_entries(false);
-    log::info!(
-        "operit-esp32 stability diagnostics v1; reset_reason={}",
-        unsafe { esp_idf_svc::sys::esp_reset_reason() }
-    );
-    logRuntimeHealth("boot");
 
     // Mio/Tokio wake their device executors through eventfd. ESP-IDF returns
     // EACCES until its EventFD VFS is registered; keep the mount alive for the
@@ -169,16 +159,14 @@ fn runFirmware(
     let serialDebug = serialHost.debug_io();
     let faceHost = board.robotFaceHost();
     board.activateUi();
-    // The physical TFT is the only display sink in the firmware. Release the
-    // optional diagnostic framebuffer so pairing and chat retain heap headroom.
-    board.screenMirror().disablePixelMirror();
     let mut ui = Esp32Ui::new(&board)?;
     let scheduler =
         Arc::new(operit_host_native_scheduler::LocalHostRuntimeTaskSchedulerHost::new()?);
     operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(scheduler.clone());
     let runtimeStorage = Esp32RuntimeStorageHost::new(nvsPartition.clone())?;
-    let sceneService = Arc::new(operit_edge_sdk::scene::SceneService::new(320, 240, 24, true)
-        .with_storage(runtimeStorage.clone()).map_err(HostError::new)?);
+    let sceneService = Arc::new(operit_edge_sdk::scene::SceneService::new_with_limits(
+        320, 240, 24, true, runtime_profile::SCENE_LIMITS,
+    ).map_err(HostError::new)?.with_storage(runtimeStorage.clone()).map_err(HostError::new)?);
     ui.attachScene(Arc::clone(&sceneService));
     let identity = CoreNodeIdentityStore::new(runtimeStorage.clone())
         .initialize()
@@ -199,8 +187,8 @@ fn runFirmware(
         .installIntoHostManager()
         .withSerialPortHost(serialHost)
         .withRuntimeStorageHost(runtimeStorage.clone())
-        .withHttpHost(Arc::new(device_http::DeviceHttpHost::default()))
         .withHostRuntimeTaskSchedulerHost(scheduler.clone());
+
     let status = Arc::new(FirmwareStatus::new(INITIAL_EXPRESSION));
     let setExpression = |expression: &str| -> operit_host_api::HostResult<()> {
         let state = faceHost.setExpression(operit_host_api::RobotFaceExpressionRequest {
@@ -217,7 +205,6 @@ fn runFirmware(
     // Show the launcher even if the configured network is unavailable.
     ui.pump(1);
     let (_wifi, wifiMode) = Esp32Wifi::connectOrSetup(modem, &config, nvsPartition.clone())?;
-    logRuntimeHealth("wifi-ready");
     status.setWifiConnected(wifiMode == crate::wifi::Esp32WifiMode::Station && _wifi.stationConnected());
     let peerTransports = Esp32FirmwareConfig::peerTransports(wifiMode == crate::wifi::Esp32WifiMode::Station);
     let _sntp = if wifiMode == crate::wifi::Esp32WifiMode::Station {
@@ -225,7 +212,6 @@ fn runFirmware(
     } else {
         None
     };
-    logRuntimeHealth("sntp-ready");
     let _setupServer = match wifiMode {
         crate::wifi::Esp32WifiMode::Station => {
             let ip = _wifi.ipv4()?;
@@ -236,7 +222,6 @@ fn runFirmware(
                 pin: LED_GREEN_PIN,
                 level: true,
             })?;
-            log::info!("operit-esp32 online at http://{ip}/");
             None
         }
         crate::wifi::Esp32WifiMode::SetupAccessPoint => {
@@ -247,7 +232,6 @@ fn runFirmware(
                 pin: LED_RED_PIN,
                 level: true,
             })?;
-            log::info!("operit-esp32 setup AP ready: Operit-ESP32-Setup / http://192.168.4.1/");
             Some(Esp32SetupServer::start(
                 Arc::clone(&status),
                 Arc::clone(&settingsStore),
@@ -255,7 +239,6 @@ fn runFirmware(
             )?)
         }
     };
-    logRuntimeHealth("network-start-complete");
 
     // ESP-IDF mDNS must be initialized after the Wi-Fi netif is up. Keep the
     // same HostManager and inject this host capability before constructing the
@@ -264,33 +247,21 @@ fn runFirmware(
     hostManager.serviceDiscoveryHost = Some(discovery);
     // AP/offline boots have no wall clock: previous-boot uptime deadlines cannot
     // expire safely. Invalidate only unfinished pairings, not identities/peers.
-    let discardedPairings = PeerStateStore::new(runtimeStorage.clone())
+    PeerStateStore::new(runtimeStorage.clone())
         .discardPendingPairingsForUnsynchronizedClock(currentTimeMillis())
         .map_err(HostError::new)?;
-    if discardedPairings > 0 {
-        log::info!("operit-esp32 discarded {discardedPairings} unfinished pairings after unsynchronized clock reset");
-    }
     let edgeRouter = EdgePeerRouter::new(identity.nodeId.clone());
-    let injectedServices = nodeServices;
-    let peerService = match injectedServices.as_ref() {
-        Some(services) => services.peers(),
-        None => operit_edge_sdk::device::peer::createPeerService(
-            Arc::new(hostManager.clone()),
-            &edgeRouter,
-            deviceInfo.clone(),
-                operit_edge_sdk::runtime::HostRuntimePeerService::PeerRuntimeLimits::constrained(),
-        )
-        .map_err(HostError::new)?,
-    };
-    if injectedServices.is_none() {
-        let peers = PeerStateStore::new(runtimeStorage.clone());
-        let mut saved = peers.hostConfig().map_err(HostError::new)?
-            .ok_or_else(|| HostError::new("Node listener preferences are not initialized"))?;
-        if saved.transports != peerTransports {
-            saved.transports = peerTransports.clone();
-            saved.updatedAt = currentTimeMillis();
-            peers.saveHostConfig(&saved).map_err(HostError::new)?;
-        }
+    let peerService = runtime_profile::create_peer_service(
+        Arc::new(hostManager.clone()), &edgeRouter, deviceInfo.clone(),
+        runtime_profile::peer_limits(),
+    ).map_err(HostError::new)?;
+    let peers = PeerStateStore::new(runtimeStorage.clone());
+    let mut saved = peers.hostConfig().map_err(HostError::new)?
+        .ok_or_else(|| HostError::new("Node listener preferences are not initialized"))?;
+    if saved.transports != peerTransports {
+        saved.transports = peerTransports.clone();
+        saved.updatedAt = currentTimeMillis();
+        peers.saveHostConfig(&saved).map_err(HostError::new)?;
     }
     let spaceService = operit_edge_sdk::runtime::NodeSpaceService::NodeSpaceService::new(
         runtimeStorage.clone(),
@@ -316,9 +287,12 @@ fn runFirmware(
     let mut deviceSpaceUi = crate::device_space_ui::DeviceSpaceUi::new(
         NodeServices::new(peerService.clone()), spaceService.clone(), scheduler.clone(),
     );
-    let speech = Arc::new(device_speech::DeviceSpeech::default());
-    audio::install(scheduler.clone(),speech.clone());
-    let (speechOutput, speechInput) = speech.handlers();
+
+    let speech = {
+        let speech = Arc::new(device_speech::DeviceSpeech::default());
+        audio::install(scheduler.clone(), speech.clone());
+        speech
+    };
     let preferenceSpace = spaceService.clone();
     scheduler.scheduleHostRuntimeAsyncTask("device-preferences", Box::new(move || Box::pin(async move {
         loop {
@@ -337,18 +311,20 @@ fn runFirmware(
             native(request).await
         })
     });
-    let mut edgeNode = operit_edge_sdk::device::EdgeNode::fromHostManager(hostManager.clone())
-        .withCallHandler(handler)
-        .withStreamHandlers(speechOutput, speechInput);
-    edgeNode = edgeNode.withNodeServices(NodeServices::new(peerService.clone()));
-    let edgeNode = Arc::new(edgeNode);
-    edgeRouter
-        .install(edgeNode.clone())
-        .map_err(HostError::new)?;
+    let nodeServices = NodeServices::new(peerService.clone());
+
+    {
+        let (speechOutput, speechInput) = speech.handlers();
+        let edgeNode = operit_edge_sdk::device::EdgeNode::fromHostManager(hostManager.clone())
+            .withCallHandler(handler)
+            .withStreamHandlers(speechOutput, speechInput)
+            .withNodeServices(nodeServices.clone());
+        edgeRouter.install(Arc::new(edgeNode)).map_err(HostError::new)?;
+    }
     let mut peerChanges = peerService.subscribePeerChanges();
     let mut pairingCodeSelection = crate::status::PairingCodeSelection::default();
     let mut pairingState = || -> Result<(bool, String), String> {
-        let services = edgeNode.nodeServices().map_err(|error| error.message)?;
+        let services = nodeServices.clone();
         let paired = !services
             .peers()
             .pairedPeers()
@@ -364,7 +340,6 @@ fn runFirmware(
     // initialization, which looks like the board disappears during discovery.
     // After boot UART0 belongs to framed Link/debug traffic. Console writers
     // do not share its frame lock; diagnostics use explicit health/UI requests.
-    operit_util::AppLogger::AppLogger::set_enable_console_logging(false);
     log::set_max_level(log::LevelFilter::Off);
     unsafe { esp_idf_hal::sys::esp_log_level_set(b"*\0".as_ptr().cast(), esp_idf_hal::sys::esp_log_level_t_ESP_LOG_NONE); }
     let listenService = peerService.clone();
@@ -374,15 +349,7 @@ fn runFirmware(
             "peer-listen-start",
             Box::new(move || {
                 Box::pin(async move {
-                    match listenService
-                        .startListening(&initialTransports)
-                        .await
-                    {
-                        Ok(()) => log::info!(
-                            "operit-esp32 configured shared Link listeners ready"
-                        ),
-                        Err(error) => log::error!("operit-esp32 peer listener: {}", error),
-                    }
+                    let _ = listenService.startListening(&initialTransports).await;
                 })
             }),
         )
@@ -397,33 +364,26 @@ fn runFirmware(
         }
         Err(_) => false,
     };
-    updateStatus(&mut ui, &status, crate::edge_chat::isConnected(), paired);
+    updateStatus(&mut ui, &status, false, paired);
     ui.pump(1);
     let mut lastSpeechResult=0;
     let mut pendingSpeechResult = None;
     let mut lastExpression = status.snapshot().expression;
     let mut lastStatusRevision = status.revision();
-    let mut lastEdgeReady = crate::edge_chat::isConnected();
+    let mut lastEdgeReady = false;
     let mut lastPaired = paired;
     let mut nextPairingPoll = std::time::Instant::now();
     let mut nextWifiPoll = std::time::Instant::now();
-    logRuntimeHealth("ready");
     let mut lastChatRevision = u32::MAX;
     let mut lastChatConnected = false;
     let mut chatRoute = crate::edge_chat::SpaceChatRoute::default();
-    let mut nextChatRoutePoll = std::time::Instant::now();
+    let mut nextRoutePoll = std::time::Instant::now();
     loop {
         if std::time::Instant::now() >= nextWifiPoll {
             status.setWifiConnected(wifiMode == crate::wifi::Esp32WifiMode::Station && _wifi.stationConnected());
             nextWifiPoll = std::time::Instant::now() + std::time::Duration::from_secs(1);
         }
-        let point = match board.pollTouch() {
-            Ok(point) => point,
-            Err(error) => {
-                log::warn!("operit-esp32 touch: {}", error.message);
-                None
-            }
-        };
+        let point = board.pollTouch().unwrap_or(None);
         // The shared UI runtime receives the sampled touch directly.
         ui.setTouch(point.map(|sample| (sample.x, sample.y)));
         ui.pump(20);
@@ -465,135 +425,84 @@ fn runFirmware(
                 "face_neutral" => {
                     setExpression("neutral")?;
                 }
-                "run_node" | "edge_search" | "edge_pair" => {
+                "run_node" | "edge_search" | "edge_pair" | "edge_unpair" => {
+                    let unpair = action == "edge_unpair";
                     let result = (|| -> Result<(), String> {
-                        let services = edgeNode.nodeServices().map_err(|error| error.message)?;
+                        let services = nodeServices.clone();
                         let (sender, receiver) = std::sync::mpsc::channel();
-                        let transports = peerTransports.clone();
-                        scheduler
-                            .scheduleHostRuntimeAsyncTask(
-                                "edge-listen-ui",
-                                Box::new(move || {
-                                    Box::pin(async move {
-                                        let result = services
-                                            .peers()
-                                            .startListening(&transports)
-                                            .await
-                                            .map_err(|error| error.to_string());
-                                        let _ = sender.send(result);
-                                    })
-                                }),
-                            )
-                            .map_err(|error| error.to_string())?;
-                        receiver
-                            .recv_timeout(std::time::Duration::from_secs(5))
-                            .map_err(|error| format!("Host task timeout: {error}"))?
-                    })();
-                    match result {
-                        Ok(()) => {
-                            setExpression("listening")?;
-                        }
-                        Err(error) => ui.actionError(&error),
-                    }
-                }
-                "edge_unpair" => {
-                    let result = (|| -> Result<(), String> {
-                        let services = edgeNode.nodeServices().map_err(|error| error.message)?;
-                        let (sender, receiver) = std::sync::mpsc::channel();
-                        scheduler
-                            .scheduleHostRuntimeAsyncTask(
-                                "edge-unpair-ui",
-                                Box::new(move || {
-                                    Box::pin(async move {
-                                        let result = async {
-                                            for peer in services
-                                                .peers()
-                                                .pairedPeers()
-                                                .map_err(|error| error.to_string())?
-                                            {
-                                                services
-                                                    .peers()
-                                                    .removePairedPeer(&peer.nodeId)
-                                                    .await
-                                                    .map_err(|error| error.to_string())?;
-                                            }
-                                            Ok::<_, String>(())
+                        let transports = if unpair { Vec::new() } else { peerTransports.clone() };
+                        scheduler.scheduleHostRuntimeAsyncTask("edge-peer-ui", Box::new(move || {
+                            Box::pin(async move {
+                                let result = async {
+                                    let peers = services.peers();
+                                    if unpair {
+                                        for peer in peers.pairedPeers().map_err(|error| error.to_string())? {
+                                            peers.removePairedPeer(&peer.nodeId).await
+                                                .map_err(|error| error.to_string())?;
                                         }
-                                        .await;
-                                        let _ = sender.send(result);
-                                    })
-                                }),
-                            )
-                            .map_err(|error| error.to_string())?;
-                        receiver
-                            .recv_timeout(std::time::Duration::from_secs(5))
+                                    } else {
+                                        peers.startListening(&transports).await
+                                            .map_err(|error| error.to_string())?;
+                                    }
+                                    Ok::<_, String>(())
+                                }.await;
+                                let _ = sender.send(result);
+                            })
+                        })).map_err(|error| error.to_string())?;
+                        receiver.recv_timeout(std::time::Duration::from_secs(5))
                             .map_err(|error| format!("Host task timeout: {error}"))?
                     })();
                     match result {
-                        Ok(()) => {
+                        Ok(()) if unpair => {
                             deviceSpaceUi.reset();
                             chatRoute.reset();
                             status.setPairingCode("");
                             setExpression("neutral")?;
                         }
+                        Ok(()) => setExpression("listening")?,
                         Err(error) => ui.actionError(&error),
                     }
                 }
-                action if action.starts_with("edge_plugins_") || action.starts_with("edge_plugin_") => {
-                    if let Err(error) = crate::edge_chat::pluginsAction(action) { ui.actionError(&error); }
-                }
                 "edge_chat" => {}
-                "edge_history_older" | "edge_history_newer" => {
-                    if let Err(error) = crate::edge_chat::moveHistory(action == "edge_history_older") { ui.actionError(&error); }
-                }
-                "edge_conversations_refresh" => {
-                    if let Err(error) = crate::edge_chat::conversationsAction() { ui.actionError(&error); }
-                }
                 "edge_new" => {
                     if let Err(error) = crate::edge_chat::newChat() {
-                        ui.actionError(&error);
-                    }
-                }
-                action if action.starts_with("edge_select:") => {
-                    if let Err(error) = crate::edge_chat::selectChat(&action[12..]) {
                         ui.actionError(&error);
                     }
                 }
                 "edge_voice" => {
                     if let Err(error)=audio::toggleRecording() {ui.actionError(&error);}
                 }
-                "edge_audio_test" => {
-                    if let Err(error)=audio::test() {ui.actionError(&error);}
-                }
                 "edge_send" => {
                     let draft = ui.chatDraft();
                     if let Err(error) = crate::edge_chat::send(draft) {
-                        log::warn!("operit-esp32 chat send: {error}");
                         ui.chatSendResult(Err(error));
                     }
                 }
-                _ => log::debug!("operit-esp32 UI action: {action}"),
+                _ => {}
             }
         }
-        audio::pump();
-        if let Some(result)=audio::takeResult() {
-            if let Err(error)=result {ui.actionError(&error);}
-        }
-        // Scalar speech state remains responsive while native audio owns the
-        // device work guard. Defer chat materialization until that guard releases.
-        let (phase, result) = speech.takeNativeUpdate(&mut lastSpeechResult);
-        ui.setSpeechState(phase);
-        if result.is_some() { pendingSpeechResult = result; }
-        if !spaceJoinUi.isBusy() && !deviceSpaceUi.isBusy() {
-            if let Some(result)=pendingSpeechResult.take() {
-                match result {
-                    Ok(text)=>if let Err(error)=crate::edge_chat::send(text) {ui.actionError(&error);},
-                    Err(error)=>ui.actionError(&error),
+
+        {
+            audio::pump();
+            if let Some(result)=audio::takeResult() {
+                if let Err(error)=result {ui.actionError(&error);}
+            }
+            // Scalar speech state remains responsive while native audio owns the
+            // device work guard. Defer chat materialization until that guard releases.
+            let (phase, result) = speech.takeNativeUpdate(&mut lastSpeechResult);
+            ui.setSpeechState(phase);
+            if result.is_some() { pendingSpeechResult = result; }
+            if !spaceJoinUi.isBusy() && !deviceSpaceUi.isBusy() {
+                if let Some(result)=pendingSpeechResult.take() {
+                    match result {
+                        Ok(text)=>if let Err(error)=crate::edge_chat::send(text) {ui.actionError(&error);},
+                        Err(error)=>ui.actionError(&error),
+                    }
                 }
             }
-        }
-        if let Some(result) = crate::edge_chat::takeSendResult() {
-            ui.chatSendResult(result);
+            if let Some(result) = crate::edge_chat::takeSendResult() {
+                ui.chatSendResult(result);
+            }
         }
         if let Ok(face) = faceHost.getExpression() {
             if face.expression != lastExpression {
@@ -611,27 +520,10 @@ fn runFirmware(
         // Keep the previous indicators until the shared operation completes.
         // Poll first so a newly accepted Core carrier is reflected on the
         // display in the same loop iteration.
-        if !spaceStateBusy && std::time::Instant::now() >= nextChatRoutePoll {
-            nextChatRoutePoll = std::time::Instant::now() + std::time::Duration::from_millis(500);
-            let settings = (|| {
-                let scope = operit_edge_sdk::runtime::NodeSpaceService::NodeSpaceContext::spaceStore(spaceService.as_ref())
-                    .space().map_err(|error| error.to_string())?;
-                let preferences = operit_edge_sdk::storage::DevicePreferencesStore::DevicePreferencesStore::new(runtimeStorage.clone())
-                    .read(&scope.spaceId, &identity.nodeId).map_err(|error| error.to_string())?;
-                Ok::<_, String>((scope.spaceId, preferences))
-            })();
-            match settings {
-                Ok((spaceId, preferences)) => {
-                    if let Err(error) = standalone_chat::configure(hostManager.httpHost.clone(), &spaceId, preferences.values().get("chat")) {
-                        ui.actionError(&error);
-                    }
-                }
-                Err(error) => {
-                    standalone_chat::reset();
-                    ui.actionError(&error);
-                }
-            }
-            chatRoute.poll(NodeServices::new(peerService.clone()));
+        if !spaceStateBusy && std::time::Instant::now() >= nextRoutePoll {
+            nextRoutePoll = std::time::Instant::now() + std::time::Duration::from_millis(500);
+
+            chatRoute.poll(nodeServices.clone());
             edgeReady = crate::edge_chat::isConnected();
         }
         let mut pairingChanged = false;
@@ -653,8 +545,7 @@ fn runFirmware(
                     status.setPairingCode(codes);
                     paired
                 }
-                Err(error) => {
-                    log::warn!("operit-esp32 pairing status: {error}");
+                Err(_) => {
                     status.setPairingCode("");
                     lastPaired
                 }
@@ -672,16 +563,18 @@ fn runFirmware(
             lastEdgeReady = edgeReady;
             lastPaired = paired;
         }
-        let chatRevision = crate::edge_chat::revision();
-        let chatConnected = edgeReady;
-        if chatRevision != lastChatRevision || chatConnected != lastChatConnected {
-            let chatState = crate::edge_chat::snapshot();
-            ui.setChatState(&chatState);
-            ui.setPlugins(&crate::edge_chat::pluginsSnapshot());
-            ui.setChatScreen(&crate::edge_chat::screenTextFromSnapshot(&chatState));
-            ui.setChatTask(&crate::edge_chat::taskStatus());
-            lastChatRevision = chatRevision;
-            lastChatConnected = chatConnected;
+
+        {
+            let chatRevision = crate::edge_chat::revision();
+            let chatConnected = edgeReady;
+            if chatRevision != lastChatRevision || chatConnected != lastChatConnected {
+                let chatState = crate::edge_chat::snapshot();
+                ui.setChatState(&chatState);
+                ui.setChatScreen(crate::edge_chat::screenTextFromSnapshot(&chatState));
+                ui.setChatTask(&crate::edge_chat::taskStatus());
+                lastChatRevision = chatRevision;
+                lastChatConnected = chatConnected;
+            }
         }
         // Health is now polled via the UART mailbox under the Link write lock.
         // Unsolicited console telemetry can interleave with a binary OPS1 frame.
@@ -714,32 +607,5 @@ pub(crate) fn runtimeHealthSnapshot() -> serde_json::Value {
             "serialFrameCounters": operit_peer_link::serialFrameCounters(),
             "peerSessionError": operit_edge_sdk::runtime::HostRuntimePeerService::peerSessionDiagnostic(),
         })
-    }
-}
-
-#[cfg(target_os = "espidf")]
-pub(crate) fn logRuntimeHealth(stage: &str) {
-    use esp_idf_svc::sys;
-    unsafe {
-        log::info!(
-            "health {stage}: heap_free={} heap_min={} largest_8bit={} main_stack_free={}",
-            sys::esp_get_free_heap_size(),
-            sys::esp_get_minimum_free_heap_size(),
-            sys::heap_caps_get_largest_free_block(sys::MALLOC_CAP_8BIT),
-            sys::uxTaskGetStackHighWaterMark(std::ptr::null_mut()),
-        );
-        let mut stats = sys::nvs_stats_t::default();
-        let result = sys::nvs_get_stats(std::ptr::null(), &mut stats);
-        if result == sys::ESP_OK as i32 {
-            log::info!(
-                "health {stage}: nvs_used={} nvs_free={} nvs_available={} nvs_total={}",
-                stats.used_entries,
-                stats.free_entries,
-                stats.available_entries,
-                stats.total_entries,
-            );
-        } else {
-            log::warn!("health {stage}: NVS stats failed ({result})");
-        }
     }
 }

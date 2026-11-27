@@ -8,6 +8,7 @@ import {
   readdir,
   readFile,
   rm,
+  stat,
   unlink,
   utimes,
   writeFile,
@@ -16,6 +17,8 @@ import {existsSync, rmSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {loadDeviceConfig, xtensaCompilerEnvironment} from './device-tools.mts';
+import {appPartitionBytes, firmwareReportPrefix} from './firmware-check.mts';
+import type {FirmwareCheck} from './firmware-check.mts';
 
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 const here = fileURLToPath(new URL('../', import.meta.url));
@@ -25,15 +28,18 @@ const firmwareTarget = 'xtensa-esp32-espidf';
 const firmwareRoot = path.join(root, 'edge/boards/esp32');
 const shortTargetDir = path.join(path.parse(root).root, 'esp32');
 const firmwareTargetDir = path.resolve(shortTargetDir);
-const firmware = process.argv.includes('--firmware');
+const firmwareOnly = process.argv.includes('--firmware-check');
+const firmware = firmwareOnly || process.argv.includes('--firmware');
+const firmwareCheck: FirmwareCheck = {status: 'checking', stage: 'compile',
+  profile: 'edge-relay'};
 if (process.argv.includes('--lvgl') || process.argv.includes('--minimal-ui')) {
   throw new Error('UI 后端切换参数已移除；默认使用唯一的自绘 UI');
 }
 const localConfig = await loadDeviceConfig();
 const idfSetting = flagValue('--idf') ?? process.env.IDF_PATH ?? localConfig.idf;
 const emsdkSetting = flagValue('--emsdk') ?? process.env.EMSDK ?? localConfig.emsdk;
-if (!emsdkSetting) throw new Error('未配置 Emscripten 4.0.14 SDK；运行 npm run device:setup -- --emsdk <路径>，或设置 EMSDK');
-const emsdk = path.resolve(emsdkSetting);
+if (!emsdkSetting && !firmwareOnly) throw new Error('未配置 Emscripten 4.0.14 SDK；运行 npm run device:setup -- --emsdk <路径>，或设置 EMSDK');
+const emsdk = path.resolve(emsdkSetting ?? '.');
 
 const exports = [
   '_simulator_init',
@@ -63,18 +69,8 @@ const exports = [
   '_operit_ui_set_chat_identity',
   '_operit_ui_set_message',
   '_operit_emoji_color_available',
-  '_operit_ui_set_chat_history',
   '_operit_ui_finish_messages',
-  '_operit_ui_set_conversation',
-  '_operit_ui_finish_conversations',
-  '_operit_ui_set_conversations_state',
   '_operit_ui_set_device_space_state',
-  '_operit_ui_set_plugin',
-  '_operit_ui_set_plugin_test',
-  '_operit_ui_set_plugin_testing',
-  '_operit_ui_set_plugin_category',
-  '_operit_ui_set_plugin_details',
-  '_operit_ui_finish_plugins',
   '_operit_ui_action_error',
 
   '_operit_ui_set_chat_task',
@@ -235,7 +231,7 @@ async function buildFirmware(): Promise<string> {
   }
   const logPath = path.join(out, 'firmware-build.log');
   const compilerEnv = await xtensaCompilerEnvironment(firmwareRoot);
-  const cargo = await run(['cargo', 'build', '--release'], {
+  const cargo = await run(['cargo', 'build', '--locked', '--release'], {
     cwd: firmwareRoot,
     env: {...process.env, ...compilerEnv, ...(idfSetting ? {IDF_PATH: path.resolve(idfSetting)} : {}),
       CARGO_TARGET_DIR: firmwareTargetDir, CARGO_WORKSPACE_DIR: firmwareRoot},
@@ -246,8 +242,11 @@ async function buildFirmware(): Promise<string> {
   await writeFile(logPath, log.subarray(Math.max(0, log.length - 256 * 1024)));
   if (cargo.code !== 0) throw new Error('Firmware failed; see generated/firmware-build.log');
   const firmwareElf = path.join(firmwareTargetDir, firmwareTarget, 'release', 'operit-esp32');
+  firmwareCheck.compilePassed = true;
+  firmwareCheck.stage = 'abi';
   const abiCheck = await run(['python', path.join(here, 'check-xtensa-tokio.py'), firmwareElf]);
   if (abiCheck.code !== 0) throw new Error(`ESP32 ABI check failed: ${abiCheck.stdout}${abiCheck.stderr}`);
+  firmwareCheck.abiPassed = true;
   await writeFile(stampPath, uiHash);
   console.log(abiCheck.stdout.trim());
   return firmwareElf;
@@ -258,8 +257,71 @@ const faceHeaderPath = path.join(ui, 'mini_face.h');
 if (!existsSync(faceHeaderPath) || await readFile(faceHeaderPath, 'utf8') !== faceHeader) {
   await writeFile(faceHeaderPath, faceHeader);
 }
+/** Use the same partition table, bootloader and image generator as flashing. */
+function saveFirmwareImage(elf: string, destination: string, merge = false): ReturnType<typeof run> {
+  return run(['espflash', 'save-image', '--chip', 'esp32', '--flash-mode', 'dio', '--flash-size', '4mb',
+    '--skip-update-check', '--bootloader', path.join(path.dirname(elf), 'bootloader.bin'),
+    '--partition-table', path.join(firmwareRoot, 'partitions.csv'),
+    ...(merge ? ['--merge'] : []), elf, destination], {capture: true});
+}
+
+/** This check does not need Emscripten, a serial port or a connected board. */
+async function checkedFirmware(): Promise<string> {
+  await mkdir(out, {recursive: true});
+  let temporary: string | undefined;
+  try {
+    firmwareCheck.partitionBytes = appPartitionBytes(await readFile(path.join(firmwareRoot, 'partitions.csv'), 'utf8'));
+    const elf = await buildFirmware();
+    firmwareCheck.stage = 'partition';
+    temporary = await mkdtemp(path.join(out, '.firmware-check-'));
+    const imagePath = path.join(temporary, 'application.bin');
+    const image = await saveFirmwareImage(elf, imagePath);
+    if (image.code !== 0) {
+      const size = /Supplied ELF image of\s+(\d+)B/.exec(image.stdout + image.stderr);
+      if (size) {
+        firmwareCheck.imageBytes = Number(size[1]);
+        firmwareCheck.overflowBytes = Math.max(0, firmwareCheck.imageBytes - firmwareCheck.partitionBytes);
+      }
+      if (firmwareCheck.overflowBytes) throw new Error(`固件超出应用分区 ${firmwareCheck.overflowBytes} 字节（镜像 ${firmwareCheck.imageBytes} / 分区 ${firmwareCheck.partitionBytes}）`);
+      throw new Error('固件镜像生成失败：' + (image.stderr || image.stdout).slice(-1200));
+    }
+    firmwareCheck.imageBytes = (await stat(imagePath)).size;
+    firmwareCheck.overflowBytes = Math.max(0, firmwareCheck.imageBytes - firmwareCheck.partitionBytes);
+    if (firmwareCheck.overflowBytes) throw new Error(`固件超出应用分区 ${firmwareCheck.overflowBytes} 字节`);
+    firmwareCheck.elfSha256 = sha256(await readFile(elf));
+    firmwareCheck.partitionPassed = true;
+    firmwareCheck.status = 'passed';
+    return elf;
+  } catch (error) {
+    firmwareCheck.status = 'failed';
+    firmwareCheck.error = error instanceof Error ? error.message : String(error);
+    throw error;
+  } finally {
+    firmwareCheck.checkedAt = new Date().toISOString();
+    await writeFile(path.join(out, 'firmware-check.json'), JSON.stringify(firmwareCheck, null, 2));
+    console.log(firmwareReportPrefix + JSON.stringify(firmwareCheck));
+    if (temporary) await rm(temporary, {recursive: true, force: true});
+  }
+}
+
+/** Package the checked firmware and its fixed flash layout. */
+async function packageFirmware(elf: string, dist: string): Promise<void> {
+  await mkdir(dist, {recursive: true});
+  const image = await saveFirmwareImage(elf, path.join(dist, 'operit-esp32.bin'));
+  if (image.code !== 0) throw new Error('espflash save-image failed: ' + image.stderr);
+  const merged = await saveFirmwareImage(elf, path.join(dist, 'operit-esp32-4mb-full.bin'), true);
+  if (merged.code !== 0) throw new Error('espflash merge failed');
+  for (const name of ['bootloader.bin', 'partition-table.bin']) {
+    await copyFile(path.join(path.dirname(elf), name), path.join(dist, name));
+  }
+  await writeFile(path.join(dist, 'firmware-check.json'), JSON.stringify(firmwareCheck, null, 2));
+}
+
+const builtFirmwareElf = firmware ? await checkedFirmware() : undefined;
+if (firmwareOnly) {
+  process.exit(0);
+}
 const emcc = emccCommand(emsdk);
-const builtFirmwareElf = firmware ? await buildFirmware() : undefined;
 await mkdir(out, {recursive: true});
 const staging = await mkdtemp(path.join(out, '.build-'));
 process.on('exit', () => {
@@ -280,7 +342,7 @@ const env = {
 const flags = ['-O2', '-I' + path.join(here, 'wasm'), '-I' + ui];
 const configHash = sha256(flags.join(' '));
 const sources = [
-  path.join(ui, 'operit_mini_ui.c'), path.join(here, 'wasm/bridge.c'),
+  ...await filesWithSuffix(ui, '.c'), path.join(here, 'wasm/bridge.c'),
 ];
 const objdir = path.join(out, 'objects');
 await mkdir(objdir, {recursive: true});
@@ -369,33 +431,10 @@ if (firmware) {
   if (!builtFirmwareElf) throw new Error('Firmware was not built');
   const firmwareElf = builtFirmwareElf;
   manifest.firmwareBuilt = true;
+  manifest.firmwareCheck = firmwareCheck;
   manifest.firmwareElf = firmwareElf;
   manifest.firmwareSha256 = sha256(await readFile(firmwareElf));
-  const release = path.dirname(firmwareElf);
-  const dist = path.join(root, 'edge/boards/esp32/dist');
-  await mkdir(dist, {recursive: true});
-  const flash = [
-    'espflash',
-    'save-image',
-    '--chip',
-    'esp32',
-    '--flash-mode',
-    'dio',
-    '--flash-size',
-    '4mb',
-    '--skip-update-check',
-    '--bootloader',
-    path.join(release, 'bootloader.bin'),
-    '--partition-table',
-    path.join(root, 'edge/boards/esp32/partitions.csv'),
-  ];
-  const image = await run([...flash, firmwareElf, path.join(dist, 'operit-esp32.bin')]);
-  if (image.code !== 0) throw new Error('espflash save-image failed');
-  const merged = await run([...flash, '--merge', firmwareElf, path.join(dist, 'operit-esp32-4mb-full.bin')]);
-  if (merged.code !== 0) throw new Error('espflash merge failed');
-  for (const name of ['bootloader.bin', 'partition-table.bin']) {
-    await copyFile(path.join(release, name), path.join(dist, name));
-  }
+  await packageFirmware(firmwareElf, path.join(firmwareRoot, 'dist'));
 }
 
 if (sourceHash !== await sharedHash()) {

@@ -10,7 +10,7 @@ use esp_idf_hal::spi::{SPI2, SPI3};
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::{DeviceIoHost, HostResult, RobotFaceHost};
 
-use crate::display::{Esp32Ili9341, Esp32ScreenMirror};
+use crate::display::Esp32Ili9341;
 use crate::face::FaceRect;
 use crate::gpio::Esp32GpioHost;
 use crate::pins::{LED_BLUE_PIN, LED_GREEN_PIN, LED_RED_PIN};
@@ -22,7 +22,6 @@ use crate::{createRuntimeHostManager, esp32_2432s028HostEnvironment};
 pub struct Esp32Board {
     gpioHost: Arc<Esp32GpioHost>,
     robotFaceHost: Arc<Esp32RobotFaceHost<Esp32Ili9341>>,
-    screenMirror: Arc<Esp32ScreenMirror>,
     touch: Esp32Touch,
 }
 
@@ -56,7 +55,6 @@ impl Esp32Board {
         let display =
             Esp32Ili9341::new(spi2, tftSclk, tftMosi, tftMiso, tftCs, tftDc, tftBacklight)?;
         log::info!("esp32 board: TFT initialized");
-        let screenMirror = display.screenMirror();
         log::info!("esp32 board: creating face host");
         let robotFaceHost = Arc::new(Esp32RobotFaceHost::new(display)?);
         log::info!("esp32 board: face host ready");
@@ -66,14 +64,8 @@ impl Esp32Board {
         Ok(Self {
             gpioHost,
             robotFaceHost,
-            screenMirror,
             touch,
         })
-    }
-
-    /// Returns the board-owned framebuffer mirror used by the Wi-Fi preview.
-    pub fn screenMirror(&self) -> Arc<Esp32ScreenMirror> {
-        Arc::clone(&self.screenMirror)
     }
 
     /// Returns the board-owned digital I/O host.
@@ -86,26 +78,6 @@ impl Esp32Board {
         self.robotFaceHost.clone()
     }
 
-    /// Paints the empty plugin shelf on the board display.
-    pub fn paintPluginShelf(&self) -> HostResult<()> {
-        self.robotFaceHost.paintPluginShelf()
-    }
-
-    /// Paints the launcher home on the board display.
-    pub fn paintHome(&self) -> HostResult<()> {
-        self.robotFaceHost.paintHome()
-    }
-
-    /// Paints the settings app on the board display.
-    pub fn paintSettings(&self) -> HostResult<()> {
-        self.robotFaceHost.paintSettings()
-    }
-
-    /// Paints the terminal app on the board display.
-    pub fn paintTerminal(&self) -> HostResult<()> {
-        self.robotFaceHost.paintTerminal()
-    }
-
     /// Flushes a self-drawn UI RGB565 region to the physical display.
     pub fn flushUi(&self, rect: FaceRect, pixels: &[u8]) -> HostResult<()> {
         self.robotFaceHost.flushRgb565(rect, pixels)
@@ -113,7 +85,6 @@ impl Esp32Board {
 
     /// Switches the physical panel to self-drawn UI ownership after board startup.
     pub fn activateUi(&self) {
-        self.screenMirror.activateUi();
         self.robotFaceHost.activateUi();
     }
 

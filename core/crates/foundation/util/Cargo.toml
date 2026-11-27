@@ -11,6 +11,10 @@ documentation = "https://docs.rs/operit-util"
 
 [features]
 default = ["full"]
+# Explicit opt-out for products that expose diagnostics through another channel.
+no-app-logging = []
+# Reuse typed slice decoders for already materialized JSON on small products.
+compact-json = []
 full = ["dep:regex", "dep:zip"]
 
 [dependencies]

@@ -8,7 +8,7 @@ use operit_link::{CoreLinkRequest, CoreLinkResponse};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 mod transport;
-pub use transport::HostPeerLink;
+pub use transport::{HostPeerLink, StreamHostPeerLink};
 
 /// Default encoded physical-frame ceiling; authenticated runtimes may reassemble larger logical messages.
 pub const DEFAULT_MAX_PEER_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
@@ -126,6 +126,14 @@ pub trait PeerListener: Send + Sync {
 /// 传输契约；I/O 使用显式传入的 Host。
 #[async_trait]
 pub trait PeerLink: Send + Sync {
+    /// Carrier availability for dialing and discovery, independent of remote permission.
+    fn supportsTransport(&self, _transport: PeerTransport) -> bool { true }
+
+    /// The selected carrier implementation may expose fewer listeners than the Host.
+    fn listenerCapabilities(&self, host: &HostManager) -> PeerListenerCapabilities {
+        HostPeerLink::listenerCapabilities(host)
+    }
+
     async fn connect(
         &self,
         host: Arc<HostManager>,
