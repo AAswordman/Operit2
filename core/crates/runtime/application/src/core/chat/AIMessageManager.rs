@@ -1123,11 +1123,12 @@ impl AIMessageManager {
             .lock()
             .expect("last active chat key mutex poisoned")
             .clone();
-        Self::cancelOperation(chatKey).await
+        Self::cancelOperation(chatKey).await.map(|_| ())
     }
 
+    /// Cancels the chat's registered send, reporting whether an operation was found.
     #[allow(non_snake_case)]
-    pub async fn cancelOperation(chatId: String) -> Result<(), AiServiceError> {
+    pub async fn cancelOperation(chatId: String) -> Result<bool, AiServiceError> {
         let chatKey = if chatId.trim().is_empty() {
             DEFAULT_CHAT_KEY.to_string()
         } else {
@@ -1137,7 +1138,8 @@ impl AIMessageManager {
     }
 
     /// Takes ownership of the service before anything can close the response stream.
-    async fn cancelOperationForId(chatKey: &str, expectedOperationId: Option<u64>) -> Result<(), AiServiceError> {
+    /// Returns whether a registered operation was found and cancelled.
+    async fn cancelOperationForId(chatKey: &str, expectedOperationId: Option<u64>) -> Result<bool, AiServiceError> {
         let operation = {
             let mut operations = activeChatOperations()
                 .lock()
@@ -1150,7 +1152,7 @@ impl AIMessageManager {
             }
         };
         let Some((operationId, mut operation)) = operation else {
-            return Ok(());
+            return Ok(false);
         };
         // Close the per-send gate immediately, including a send that has not yet
         // entered the provider or registered its execution context.
@@ -1179,7 +1181,7 @@ impl AIMessageManager {
                 ("operationId", operationId.to_string()),
             ],
         );
-        usageResult
+        usageResult.map(|()| true)
     }
 
     #[allow(non_snake_case)]
@@ -2031,6 +2033,14 @@ mod cancellation_tests {
         assert_eq!(registry.take("second"), Some((secondId, "second-service")));
         assert!(registry.snapshot().is_empty());
     }
+
+    /// An empty registry reports "not found" so the caller can fall back to the turn's service.
+    #[tokio::test]
+    async fn cancel_operation_reports_missing_registration() {
+        let chatId = format!("missing-operation-{}", uuid::Uuid::new_v4());
+        assert!(!AIMessageManager::cancelOperation(chatId).await.unwrap());
+    }
+
     #[test]
     fn output_attachment_uses_its_saved_vfs_locator_in_ai_metadata() {
         let mut attachment = AttachmentInfo::new("/device-a/output/report.md".into(), "report.md".into(), "text/markdown".into(), 12);

@@ -341,6 +341,7 @@ pub struct ChatRuntime {
     pub tokenUsage: TurnTokenUsage,
     pub sendJob: Option<String>,
     pub responseStream: Option<SharedAiResponseStream>,
+    pub enhancedAiService: Option<EnhancedAIService>,
     pub guidanceInbox: Option<ChatGuidanceInbox>,
     pub streamCollectionJob: Option<String>,
     pub stateCollectionJob: Option<String>,
@@ -363,6 +364,7 @@ impl ChatRuntime {
             tokenUsage: TurnTokenUsage::default(),
             sendJob: None,
             responseStream: None,
+            enhancedAiService: None,
             guidanceInbox: None,
             streamCollectionJob: None,
             stateCollectionJob: None,
@@ -379,12 +381,12 @@ impl ChatRuntime {
     pub(crate) fn reserveCancellation(
         &mut self,
         expectedTurnId: Option<u64>,
-        isLoading: bool,
+        isProcessing: bool,
     ) -> Result<Option<(u64, u64)>, String> {
         if expectedTurnId.is_some_and(|expected| self.activeTurnId != expected) {
             return Err("Work generation is no longer active".to_string());
         }
-        if !isLoading || self.isCancelling {
+        if !isProcessing || self.isCancelling {
             if expectedTurnId.is_some() { return Err("Work execution is no longer running".to_string()); }
             return Ok(None);
         }
@@ -1650,7 +1652,7 @@ impl MessageProcessingDelegate {
     ) -> impl std::future::Future<Output = Result<Option<ChatMessage>, String>> + 'static {
         if expectedTurnId.is_none() { self.cancelSummaryTasks(Some(&chatId)); }
         let cancellation = self.withExistingRuntime(Some(chatId.clone()), |runtime| {
-            runtime.reserveCancellation(expectedTurnId, self.isChatLoading(chatId.clone())).map(|reservation|
+            runtime.reserveCancellation(expectedTurnId, self.isChatProcessing(&chatId)).map(|reservation|
                 reservation.map(|(cancelled, cancelling)| (cancelled, cancelling, runtime.responseStream.clone())))
         });
         let mut delegate = self.clone_for_core();
@@ -1664,7 +1666,28 @@ impl MessageProcessingDelegate {
             delegate.clearCurrentTurnToolInvocationCount(chatId.clone());
             // Cancel the producer first. Closing the stream earlier lets its cleanup task
             // remove the active service before AIMessageManager can invalidate execution.
-            let usageResult = AIMessageManager::cancelOperation(chatId.clone()).await;
+            let usageResult = match AIMessageManager::cancelOperation(chatId.clone()).await {
+                Ok(true) => Ok(()),
+                // The registry can be empty between segments of a live turn; invalidate the
+                // turn's service so a continuation cannot register after cancellation.
+                Ok(false) => {
+                    let fallbackService = delegate
+                        .withExistingRuntime(Some(chatId.clone()), |runtime| runtime.enhancedAiService.clone())
+                        .flatten();
+                    match fallbackService {
+                        Some(mut service) => {
+                            ChainLogger::info(
+                                SEND_CHAIN,
+                                "send.cancel.fallback",
+                                &[("chatKey", chatId.clone())],
+                            );
+                            service.cancelConversation().await
+                        }
+                        None => Ok(()),
+                    }
+                }
+                Err(error) => Err(error),
+            };
             let ownsCancellation = delegate.withExistingRuntime(Some(chatId.clone()), |runtime| {
                 runtime.activeTurnId == cancellationTurnId && runtime.isCancelling
             }).unwrap_or(false);
@@ -1917,6 +1940,7 @@ impl MessageProcessingDelegate {
             .flatten();
         let (receiptSender, receiptReceiver) = oneshot::channel();
         self.withRuntime(Some(chatId.clone()), |runtime| {
+            runtime.enhancedAiService = Some(request.enhancedAiService.clone());
             runtime.receipt = Some(Arc::new(Mutex::new(ChatTurnReceiptState {
                 turnId, nativeExecutionId: request.turnOptions.nativeExecutionId.clone(), sender: Some(receiptSender),
                 result: MessageSendResultData {
