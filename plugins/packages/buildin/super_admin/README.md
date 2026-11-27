@@ -11,19 +11,19 @@ The Host sets its initial directory to the current chat's file directory using
 the selected profile's VFS mapping. Variables, exports and `cd` do not persist
 across calls. The process's actual exit status decides command completion.
 
-The tool observes it for up to one second after startup. A `running` receipt
-includes `sessionId` and a null `exitCode`; the Host retains the process while
-the AI calls `get_screen`, `input`, `terminal_wait` or `close`. `terminal_wait`
-observes the same command for at most one additional second without resubmitting
-it. A foreground wait expiry does not interrupt execution. Startup, privilege
-IPC, OS submission and output-file persistence are outside that wait budget.
+The tool consumes `Tools.System.terminal.runStream` until actual completion.
+The outer package call waits up to 20 seconds across the entire operation; if
+still running it returns `execution_id`. Use `package_wait` to collect subsequent
+output and the final result. Proxy `timeout_ms: 0` requests immediate background
+execution. No separate terminal wait tool or foreground deadline is used.
+Start events expose `sessionId` for `get_screen`, `input` and `close`. Streamed
+events and final results omit submitted scripts and internal SDK metadata.
 
 `terminal_open` starts a persistent interactive shell. Use it for REPLs, editors,
 interactive programs and commands that must share shell state. `input` sends
 literal text, `control=enter` submits a line, and `control=ctrl,input=c` sends
 Ctrl+C. Text plus `control=enter` can be sent together. Screen reads do not wait
-for a command to finish. Interactive input has no per-command managed exit code;
-`terminal_wait` applies only to a process launched by `terminal`.
+for a command to finish. Interactive input has no per-command managed exit code.
 
 Both modes use the same Host PTY implementation. Platform details, the bounded
 output-drain policy, Windows temporary scripts and browser image requirements
@@ -39,8 +39,10 @@ that suspend event delivery perform cleanup after delivery resumes.
 - Running command processes remain protected, including silent commands and
   commands awaiting input. A process newly observed as finished receives a fresh
   idle period.
-- Screen reads, input and result waits refresh that session's deadline and hold
-  its lease during the call.
+- A command stream holds its session lease through completion or failure.
+  Screen reads and input refresh that session's deadline and hold its lease
+  during the call. `package_wait` reads execution records without extending
+  terminal activity.
 - A live interactive shell remains protected until explicit close or shell exit.
   It cannot be declared idle merely because an editor or REPL is silent.
 - Cleanup checks record identity, revision, leases and Host running state, then

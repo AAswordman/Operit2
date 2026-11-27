@@ -80,7 +80,7 @@ class RuntimeBrowserOwner extends ChangeNotifier {
 
   static final RuntimeBrowserOwner instance = RuntimeBrowserOwner._();
 
-  static const String _homeUrl = 'https://www.bing.com';
+  static const String _homeUrl = 'about:blank';
   static const String _logTag = 'WorkspaceBrowser';
   static const double _defaultZoomFactor = 0.4;
   static const double _minZoomFactor = 0.1;

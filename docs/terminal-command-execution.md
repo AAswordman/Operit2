@@ -2,7 +2,7 @@
 
 Super Admin exposes two launch modes over the existing Host PTY transport.
 
-- `terminal` / SDK `run`: start a fresh command process in the current file
+- `terminal` / SDK `runStream`: start a fresh command process in the current file
   directory. The complete script is supplied before execution. Each invocation
   has its own variables, environment changes and working directory changes.
 - `terminal_open` / SDK `open`: start a persistent interactive shell in the
@@ -58,15 +58,17 @@ from output EOF. Retained command output is bounded to the latest 1 MiB.
 
 ## Foreground waiting and cleanup
 
-Super Admin waits at most one second **after startup**. A `status: running`
-receipt includes the session ID and a null final exit code. `terminal_wait`
-observes the same original process for another bounded wait without submitting
-input. Expiry neither cancels the process nor reserves its input or screen.
-Startup, privilege IPC and writing a large output file are outside that budget.
+Super Admin consumes SDK `runStream` through actual process completion. The
+outer package execution owns the foreground wait, including startup and output
+file persistence: it waits up to 20 seconds, then returns an `execution_id` if
+work is still running. `package_wait` collects later output and the final result
+without invoking the command again. Proxy `timeout_ms: 0` returns immediately.
+There is no terminal-specific wait tool or foreground budget. Start events expose
+the `sessionId` for input, screen and close while execution continues.
 
-Super Admin projects SDK command receipts into an explicit AI result contract
-shared by `terminal` and `terminal_wait`: session identity, platform/interpreter,
-output, exit code and execution state. SDK receipts retain the original command
+Super Admin projects SDK start/chunk events and final command receipts into an
+explicit AI result contract: session identity, platform/interpreter, streamed
+output and final output, exit code and execution state. SDK receipts retain the original command
 for programmatic consumers, but the AI result never forwards that `command` or
 unlisted SDK fields. The submitted script already belongs to the tool call;
 returning it again on each observation needlessly duplicates it in model history.
@@ -74,9 +76,11 @@ Oversized output is saved separately and returns its file reference and characte
 count through the same contract. Actual stdout is preserved, including commands
 that intentionally print their own source; no content-based stripping is applied.
 
-Running processes remain Host-owned after the tool returns. After completion,
+Running processes remain Host-owned after the foreground wait expires. The
+plugin holds its session lease until the stream completes or fails. After completion,
 the plugin's minute clock hook can close a session following ten minutes without
-plugin activity. Screen, input and result waits refresh activity. A command first
+plugin activity. Screen and input refresh activity; package result reads do not
+extend terminal leases. A command first
 observed as finished receives a fresh idle period; cleanup can therefore occur
 later than ten minutes after the OS exit. Exact record identity, activity revision
 and leases are checked after each async probe, and Host `closeIfIdle` validates

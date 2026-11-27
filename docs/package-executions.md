@@ -112,7 +112,7 @@ turn: the model receives later results through `package_wait`.
 
 ## Terminal integration
 
-The Super Admin AI package exposes `terminal`, `list_terminals`, `get_screen`,
+The Super Admin AI package exposes `terminal`, `terminal_open`, `list_terminals`, `get_screen`,
 `input` and `close`. `terminal_wait` and terminal-specific foreground timeout and
 background arguments are removed. Proxy `timeout_ms: 0` provides immediate
 background execution through the same execution manager as every package tool.
@@ -121,8 +121,9 @@ background execution through the same execution manager as every package tool.
 reserves an available named session and streams until actual command completion.
 It has no foreground deadline. The start event contains `sessionId` for input,
 screen and close; chunks carry live output; the completion event carries the
-actual final receipt. Super Admin forwards start and chunk events to its package
-execution and retains its function until the completion event. Closing an output
+actual final receipt. Super Admin projects start and chunk events without their
+submitted command or internal metadata, forwards them to its package execution
+and retains its function and session lease until completion or failure. Closing an output
 iterator detaches observation while the session still owns the running command.
 The existing SDK `run`, `wait` and `execStream` interfaces retain their contracts.
 

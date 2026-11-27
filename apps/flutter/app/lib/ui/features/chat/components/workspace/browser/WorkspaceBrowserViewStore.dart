@@ -42,7 +42,7 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
   static final WorkspaceBrowserViewStore instance =
       WorkspaceBrowserViewStore._();
 
-  static const String _homeUrl = 'https://www.bing.com';
+  static const String _homeUrl = 'about:blank';
   // Keep the workspace UI aligned with the host-owned WebView default.
   static const double _defaultZoomFactor = 0.4;
   static const double _minZoomFactor = 0.1;

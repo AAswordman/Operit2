@@ -55,7 +55,7 @@ test("read-only tools remain available", () => {
     "get_terminal_session_screen",
     "super_admin:list_terminals",
     "super_admin:get_screen",
-    "super_admin:terminal_wait",
+    "package_wait",
     "browser_snapshot",
     "my_notes:render",
   ]) {
