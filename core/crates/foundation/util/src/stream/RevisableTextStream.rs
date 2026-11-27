@@ -88,10 +88,25 @@ pub trait RevisableTextStream: Stream<Item = String> + TextStreamEventCarrier {
 
 /// Collects only accepted text and rejects a failed producer or an invalid revision sequence.
 pub async fn collect_revised_text<S: RevisableTextStream + ?Sized>(stream: &mut S) -> Result<String, String> {
+    collect_revised_text_observed(stream, || {}).await
+}
+
+/// Collects only accepted text and reports the first accepted chunk through `on_first_text`.
+pub async fn collect_revised_text_observed<S: RevisableTextStream + ?Sized>(
+    stream: &mut S,
+    mut on_first_text: impl FnMut(),
+) -> Result<String, String> {
     let mut tracker = TextStreamRevisionTracker::new("");
     let mut revisionError = None;
+    let mut reported = false;
     stream.collect_ordered(&mut |item| match item {
-        ResponseStreamItem::Chunk(chunk) => { tracker.append(&chunk); }
+        ResponseStreamItem::Chunk(chunk) => {
+            if !reported && !chunk.is_empty() {
+                reported = true;
+                on_first_text();
+            }
+            tracker.append(&chunk);
+        }
         ResponseStreamItem::Revision(event) => match event.event_type {
             TextStreamEventType::Savepoint => tracker.savepoint(&event.id),
             TextStreamEventType::Rollback => {

@@ -58,6 +58,12 @@ impl AIService for OllamaProvider {
     fn output_token_count(&self) -> i64 {
         self.inner.output_token_count()
     }
+    fn cache_write_input_token_count(&self) -> i64 {
+        self.inner.cache_write_input_token_count()
+    }
+    fn reasoning_token_count(&self) -> i64 {
+        self.inner.reasoning_token_count()
+    }
     fn provider_model(&self) -> String {
         self.inner.provider_model()
     }

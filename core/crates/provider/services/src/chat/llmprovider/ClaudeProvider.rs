@@ -48,6 +48,7 @@ pub struct ClaudeProvider {
 struct ClaudeProviderState {
     inputTokenCount: i64,
     cachedInputTokenCount: i64,
+    cacheWriteInputTokenCount: i64,
     outputTokenCount: i64,
     cancelled: bool,
     tokenCacheManager: TokenCacheManager,
@@ -720,6 +721,11 @@ impl ClaudeProvider {
             .and_then(Value::as_i64)
             .unwrap_or(0)
             .max(0);
+        if cache_creation > 0 {
+            if let Ok(mut state) = self.state.lock() {
+                state.cacheWriteInputTokenCount = cache_creation;
+            }
+        }
         let token_counts = TokenCounts {
             input: input_base.saturating_add(if open_ai_compatible {
                 0
@@ -755,6 +761,12 @@ impl AIService for ClaudeProvider {
             .expect("ClaudeProvider state mutex poisoned")
             .outputTokenCount
     }
+    fn cache_write_input_token_count(&self) -> i64 {
+        self.state
+            .lock()
+            .expect("ClaudeProvider state mutex poisoned")
+            .cacheWriteInputTokenCount
+    }
     fn provider_model(&self) -> String {
         let provider = match self.gateway_binding {
             Some(_) => "LOCAL_GATEWAY",
@@ -770,6 +782,7 @@ impl AIService for ClaudeProvider {
         state.tokenCacheManager.reset_token_counts();
         state.inputTokenCount = 0;
         state.cachedInputTokenCount = 0;
+        state.cacheWriteInputTokenCount = 0;
         state.outputTokenCount = 0;
     }
     fn cancel_streaming(&mut self) {

@@ -16,7 +16,8 @@ use super::OpenAIResponsesProvider::{
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use super::ThinkingDialect::ThinkingDialect;
 use crate::chat::llmprovider::AIService::{
-    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
+    response_stream_from_chunks, AIService, AiServiceError, ExtendedTokenCounts,
+    SendMessageRequest, TokenCounts, parse_extended_usage_counts,
 };
 use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::ModelConfigData::{BuiltinToolRequestFormat, ModelBuiltinTool};
@@ -306,6 +307,8 @@ pub struct DeepseekProvider {
 struct DeepseekProviderState {
     inputTokenCount: i64,
     cachedInputTokenCount: i64,
+    cacheWriteInputTokenCount: i64,
+    reasoningTokenCount: i64,
     outputTokenCount: i64,
     cancelled: bool,
     tokenCacheManager: TokenCacheManager,
@@ -466,6 +469,20 @@ impl DeepseekProvider {
         }
     }
 
+    fn currentExtendedCounts(&self) -> ExtendedTokenCounts {
+        let state = self.state.lock().expect("DeepseekProvider state mutex poisoned");
+        match state.activeParent.as_ref() {
+            Some(parent) => ExtendedTokenCounts {
+                cache_write_input: parent.cache_write_input_token_count(),
+                reasoning: parent.reasoning_token_count(),
+            },
+            None => ExtendedTokenCounts {
+                cache_write_input: state.cacheWriteInputTokenCount,
+                reasoning: state.reasoningTokenCount,
+            },
+        }
+    }
+
     fn setActiveParent(&self, parent: OpenAIProvider) -> u64 {
         let mut state = self
             .state
@@ -495,6 +512,15 @@ impl DeepseekProvider {
             state.inputTokenCount = state.tokenCacheManager.total_input_token_count();
             state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count();
             state.outputTokenCount = state.tokenCacheManager.output_token_count();
+            if let Some((cw, r)) = state.activeParent.as_ref().map(|parent| {
+                (
+                    parent.cache_write_input_token_count(),
+                    parent.reasoning_token_count(),
+                )
+            }) {
+                state.cacheWriteInputTokenCount = cw;
+                state.reasoningTokenCount = r;
+            }
             state.activeParent = None;
         }
     }
@@ -819,6 +845,17 @@ impl DeepseekProvider {
                 output: 0,
             });
         self.apply_token_counts(token_counts);
+        if let Some(usage) = response.get("usage") {
+            let extended = parse_extended_usage_counts(usage);
+            if let Ok(mut state) = self.state.lock() {
+                if extended.cache_write_input > 0 {
+                    state.cacheWriteInputTokenCount = extended.cache_write_input;
+                }
+                if extended.reasoning > 0 {
+                    state.reasoningTokenCount = extended.reasoning;
+                }
+            }
+        }
         let mut chunks = Vec::new();
         if let Some(reasoning) = extract_reasoning_chunk(response) {
             if !reasoning.is_empty() {
@@ -866,6 +903,14 @@ impl AIService for DeepseekProvider {
         self.currentTokenCounts().output
     }
 
+    fn cache_write_input_token_count(&self) -> i64 {
+        self.currentExtendedCounts().cache_write_input
+    }
+
+    fn reasoning_token_count(&self) -> i64 {
+        self.currentExtendedCounts().reasoning
+    }
+
     fn provider_model(&self) -> String {
         format!("{}:{}", self.provider_type, self.model_name)
     }
@@ -876,6 +921,8 @@ impl AIService for DeepseekProvider {
             state.activeParent = None;
             state.inputTokenCount = 0;
             state.cachedInputTokenCount = 0;
+            state.cacheWriteInputTokenCount = 0;
+            state.reasoningTokenCount = 0;
             state.outputTokenCount = 0;
             state.tokenCacheManager.reset_token_counts();
         }

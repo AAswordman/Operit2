@@ -13067,6 +13067,588 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, one{{count} item} other{{count} items}}'**
   String settingsToolsItemCount(int count);
+
+  /// No description provided for @settingsUsageTabAnalytics.
+  ///
+  /// In en, this message translates to:
+  /// **'Token Usage & Speed'**
+  String get settingsUsageTabAnalytics;
+
+  /// No description provided for @settingsUsageTabQuotas.
+  ///
+  /// In en, this message translates to:
+  /// **'Balances & Quotas'**
+  String get settingsUsageTabQuotas;
+
+  /// No description provided for @settingsUsageDeviceScopeAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All Space devices'**
+  String get settingsUsageDeviceScopeAll;
+
+  /// No description provided for @settingsUsageDeviceScopeLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'This device'**
+  String get settingsUsageDeviceScopeLocal;
+
+  /// No description provided for @settingsUsageExportJson.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy JSON report'**
+  String get settingsUsageExportJson;
+
+  /// No description provided for @settingsUsageExportCsv.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy CSV table'**
+  String get settingsUsageExportCsv;
+
+  /// No description provided for @settingsUsageExportCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Report copied to clipboard'**
+  String get settingsUsageExportCopied;
+
+  /// No description provided for @settingsUsageResetScopeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset usage statistics'**
+  String get settingsUsageResetScopeTitle;
+
+  /// No description provided for @settingsUsageResetLocalOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'This device only'**
+  String get settingsUsageResetLocalOnly;
+
+  /// No description provided for @settingsUsageResetAllSpace.
+  ///
+  /// In en, this message translates to:
+  /// **'All devices in Space'**
+  String get settingsUsageResetAllSpace;
+
+  /// No description provided for @settingsUsageResetScopeWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Local reset keeps synced records on other devices; Space-wide reset clears history across all connected devices.'**
+  String get settingsUsageResetScopeWarning;
+
+  /// No description provided for @settingsUsageKpiThroughput.
+  ///
+  /// In en, this message translates to:
+  /// **'Avg generation speed'**
+  String get settingsUsageKpiThroughput;
+
+  /// No description provided for @settingsUsageKpiTtftMedian.
+  ///
+  /// In en, this message translates to:
+  /// **'Median TTFT: {ttft}'**
+  String settingsUsageKpiTtftMedian(String ttft);
+
+  /// No description provided for @settingsUsageKpiSpeedSamples.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} streamed'**
+  String settingsUsageKpiSpeedSamples(int count);
+
+  /// No description provided for @settingsUsageKpiReasoning.
+  ///
+  /// In en, this message translates to:
+  /// **'Reasoning'**
+  String get settingsUsageKpiReasoning;
+
+  /// No description provided for @settingsUsageKpiCacheWrite.
+  ///
+  /// In en, this message translates to:
+  /// **'Cache write'**
+  String get settingsUsageKpiCacheWrite;
+
+  /// No description provided for @settingsUsageKpiSuccessRate.
+  ///
+  /// In en, this message translates to:
+  /// **'{ok} ok · {err} fail/cancel'**
+  String settingsUsageKpiSuccessRate(int ok, int err);
+
+  /// No description provided for @settingsUsageTimelineSpeedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Generation speed (tok/s)'**
+  String get settingsUsageTimelineSpeedTitle;
+
+  /// No description provided for @settingsUsageTimelineSpeedDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Streamed output {speed} tok/s · TTFT {ttft}'**
+  String settingsUsageTimelineSpeedDetail(String speed, String ttft);
+
+  /// No description provided for @settingsUsageTimelineNoSpeedData.
+  ///
+  /// In en, this message translates to:
+  /// **'No streamed requests ≥100ms in range'**
+  String get settingsUsageTimelineNoSpeedData;
+
+  /// No description provided for @settingsUsageAttrModels.
+  ///
+  /// In en, this message translates to:
+  /// **'Models'**
+  String get settingsUsageAttrModels;
+
+  /// No description provided for @settingsUsageAttrSources.
+  ///
+  /// In en, this message translates to:
+  /// **'Function & Source'**
+  String get settingsUsageAttrSources;
+
+  /// No description provided for @settingsUsageAttrDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'Space Devices'**
+  String get settingsUsageAttrDevices;
+
+  /// No description provided for @settingsUsageAttrLogs.
+  ///
+  /// In en, this message translates to:
+  /// **'Request Logs'**
+  String get settingsUsageAttrLogs;
+
+  /// No description provided for @settingsUsageColSpeed.
+  ///
+  /// In en, this message translates to:
+  /// **'Speed'**
+  String get settingsUsageColSpeed;
+
+  /// No description provided for @settingsUsageColTtft.
+  ///
+  /// In en, this message translates to:
+  /// **'TTFT'**
+  String get settingsUsageColTtft;
+
+  /// No description provided for @settingsUsageColSpend.
+  ///
+  /// In en, this message translates to:
+  /// **'Est. Cost'**
+  String get settingsUsageColSpend;
+
+  /// No description provided for @settingsUsageColShare.
+  ///
+  /// In en, this message translates to:
+  /// **'Share'**
+  String get settingsUsageColShare;
+
+  /// No description provided for @settingsUsageDeviceUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Local / Legacy Node'**
+  String get settingsUsageDeviceUnknown;
+
+  /// No description provided for @settingsUsageLogFilterRecent.
+  ///
+  /// In en, this message translates to:
+  /// **'Recent'**
+  String get settingsUsageLogFilterRecent;
+
+  /// No description provided for @settingsUsageLogFilterTopTokens.
+  ///
+  /// In en, this message translates to:
+  /// **'Peak Tokens'**
+  String get settingsUsageLogFilterTopTokens;
+
+  /// No description provided for @settingsUsageLogFilterIssues.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed / Cancelled'**
+  String get settingsUsageLogFilterIssues;
+
+  /// No description provided for @settingsUsageLogFilterReasoning.
+  ///
+  /// In en, this message translates to:
+  /// **'Reasoning'**
+  String get settingsUsageLogFilterReasoning;
+
+  /// No description provided for @settingsUsageStatusCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Completed'**
+  String get settingsUsageStatusCompleted;
+
+  /// No description provided for @settingsUsageStatusCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancelled'**
+  String get settingsUsageStatusCancelled;
+
+  /// No description provided for @settingsUsageStatusFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed'**
+  String get settingsUsageStatusFailed;
+
+  /// No description provided for @settingsUsageRequestDetailTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Request Telemetry'**
+  String get settingsUsageRequestDetailTitle;
+
+  /// No description provided for @settingsUsageLatencyBreakdown.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait {wait} · Stream {stream}'**
+  String settingsUsageLatencyBreakdown(String wait, String stream);
+
+  /// No description provided for @settingsQuotaProbeAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh all'**
+  String get settingsQuotaProbeAll;
+
+  /// No description provided for @settingsQuotaProbeSingle.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get settingsQuotaProbeSingle;
+
+  /// No description provided for @settingsQuotaProbeViaNode.
+  ///
+  /// In en, this message translates to:
+  /// **'Query via Space node'**
+  String get settingsQuotaProbeViaNode;
+
+  /// No description provided for @settingsQuotaFilterAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get settingsQuotaFilterAll;
+
+  /// No description provided for @settingsQuotaFilterBalance.
+  ///
+  /// In en, this message translates to:
+  /// **'Balances'**
+  String get settingsQuotaFilterBalance;
+
+  /// No description provided for @settingsQuotaFilterSubscription.
+  ///
+  /// In en, this message translates to:
+  /// **'Plans'**
+  String get settingsQuotaFilterSubscription;
+
+  /// No description provided for @settingsQuotaFilterLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'Local'**
+  String get settingsQuotaFilterLocal;
+
+  /// No description provided for @settingsQuotaFilterBudget.
+  ///
+  /// In en, this message translates to:
+  /// **'Budgets & Console'**
+  String get settingsQuotaFilterBudget;
+
+  /// No description provided for @settingsQuotaRemainingLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Remaining'**
+  String get settingsQuotaRemainingLabel;
+
+  /// No description provided for @settingsQuotaCashLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cash'**
+  String get settingsQuotaCashLabel;
+
+  /// No description provided for @settingsQuotaGrantedLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Granted'**
+  String get settingsQuotaGrantedLabel;
+
+  /// No description provided for @settingsQuotaUsedLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Used'**
+  String get settingsQuotaUsedLabel;
+
+  /// No description provided for @settingsQuotaDailyUsedLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Today'**
+  String get settingsQuotaDailyUsedLabel;
+
+  /// No description provided for @settingsQuotaMonthlyUsedLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Month'**
+  String get settingsQuotaMonthlyUsedLabel;
+
+  /// No description provided for @settingsQuotaKeyPoolCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} pool keys'**
+  String settingsQuotaKeyPoolCount(int count);
+
+  /// No description provided for @settingsQuotaStatusOk.
+  ///
+  /// In en, this message translates to:
+  /// **'Active'**
+  String get settingsQuotaStatusOk;
+
+  /// No description provided for @settingsQuotaStatusUnauthorized.
+  ///
+  /// In en, this message translates to:
+  /// **'Unauthorized'**
+  String get settingsQuotaStatusUnauthorized;
+
+  /// No description provided for @settingsQuotaStatusError.
+  ///
+  /// In en, this message translates to:
+  /// **'Error'**
+  String get settingsQuotaStatusError;
+
+  /// No description provided for @settingsQuotaStatusStale.
+  ///
+  /// In en, this message translates to:
+  /// **'Not queried'**
+  String get settingsQuotaStatusStale;
+
+  /// No description provided for @settingsQuotaStatusUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'No Public API'**
+  String get settingsQuotaStatusUnsupported;
+
+  /// No description provided for @settingsQuotaProbedBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Queried by {device} · {time}'**
+  String settingsQuotaProbedBy(String device, String time);
+
+  /// No description provided for @settingsQuotaOpenConsole.
+  ///
+  /// In en, this message translates to:
+  /// **'Console'**
+  String get settingsQuotaOpenConsole;
+
+  /// No description provided for @settingsQuotaProtocolConfig.
+  ///
+  /// In en, this message translates to:
+  /// **'Protocol'**
+  String get settingsQuotaProtocolConfig;
+
+  /// No description provided for @settingsQuotaSetBudget.
+  ///
+  /// In en, this message translates to:
+  /// **'Budget Cap'**
+  String get settingsQuotaSetBudget;
+
+  /// No description provided for @settingsQuotaEditBudget.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit Budget'**
+  String get settingsQuotaEditBudget;
+
+  /// No description provided for @settingsQuotaBudgetProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'{spent} / {limit} this cycle'**
+  String settingsQuotaBudgetProgress(String spent, String limit);
+
+  /// No description provided for @settingsQuotaBudgetExceeded.
+  ///
+  /// In en, this message translates to:
+  /// **'Budget alert threshold reached'**
+  String get settingsQuotaBudgetExceeded;
+
+  /// No description provided for @settingsQuotaDialogBudgetLimit.
+  ///
+  /// In en, this message translates to:
+  /// **'Monthly spending cap'**
+  String get settingsQuotaDialogBudgetLimit;
+
+  /// No description provided for @settingsQuotaDialogResetDay.
+  ///
+  /// In en, this message translates to:
+  /// **'Cycle reset day (1-28)'**
+  String get settingsQuotaDialogResetDay;
+
+  /// No description provided for @settingsQuotaDialogAlertPct.
+  ///
+  /// In en, this message translates to:
+  /// **'Alert threshold (%)'**
+  String get settingsQuotaDialogAlertPct;
+
+  /// No description provided for @settingsQuotaDialogProtocolLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Balance query protocol'**
+  String get settingsQuotaDialogProtocolLabel;
+
+  /// No description provided for @settingsQuotaDialogCustomPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom URL / relative path'**
+  String get settingsQuotaDialogCustomPath;
+
+  /// No description provided for @settingsQuotaDialogAmountJsonPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Amount JSON dot path'**
+  String get settingsQuotaDialogAmountJsonPath;
+
+  /// No description provided for @settingsQuotaDialogCurrencyJsonPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Currency JSON dot path (optional)'**
+  String get settingsQuotaDialogCurrencyJsonPath;
+
+  /// No description provided for @settingsQuotaDialogClear.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get settingsQuotaDialogClear;
+
+  /// No description provided for @settingsQuotaEmptyProviders.
+  ///
+  /// In en, this message translates to:
+  /// **'No model providers configured yet'**
+  String get settingsQuotaEmptyProviders;
+
+  /// No description provided for @settingsQuotaLocalZeroCost.
+  ///
+  /// In en, this message translates to:
+  /// **'On-device inference · Zero API fee'**
+  String get settingsQuotaLocalZeroCost;
+
+  /// No description provided for @settingsUsageColStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Status'**
+  String get settingsUsageColStatus;
+
+  /// No description provided for @settingsUsageColTime.
+  ///
+  /// In en, this message translates to:
+  /// **'Time'**
+  String get settingsUsageColTime;
+
+  /// No description provided for @settingsUsageModeStream.
+  ///
+  /// In en, this message translates to:
+  /// **'Stream'**
+  String get settingsUsageModeStream;
+
+  /// No description provided for @settingsUsageModeNonStream.
+  ///
+  /// In en, this message translates to:
+  /// **'Standard'**
+  String get settingsUsageModeNonStream;
+
+  /// No description provided for @settingsUsageTopModelsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Model Distribution & Token Mix'**
+  String get settingsUsageTopModelsTitle;
+
+  /// No description provided for @settingsUsageTokenMixLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Token composition'**
+  String get settingsUsageTokenMixLabel;
+
+  /// No description provided for @settingsUsageDirectInputLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct input'**
+  String get settingsUsageDirectInputLabel;
+
+  /// No description provided for @settingsUsageNoModelsInRange.
+  ///
+  /// In en, this message translates to:
+  /// **'No model traffic in this window'**
+  String get settingsUsageNoModelsInRange;
+
+  /// No description provided for @settingsUsageKpiNoPriceHint.
+  ///
+  /// In en, this message translates to:
+  /// **'No model pricing matched'**
+  String get settingsUsageKpiNoPriceHint;
+
+  /// No description provided for @settingsUsageKpiStreamHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Needs streamed reply ≥100ms'**
+  String get settingsUsageKpiStreamHint;
+
+  /// No description provided for @settingsUsageHeatmapWeeks.
+  ///
+  /// In en, this message translates to:
+  /// **'{weeks}-week activity'**
+  String settingsUsageHeatmapWeeks(int weeks);
+
+  /// No description provided for @settingsQuotaSummaryTotalRemaining.
+  ///
+  /// In en, this message translates to:
+  /// **'Tracked Balance'**
+  String get settingsQuotaSummaryTotalRemaining;
+
+  /// No description provided for @settingsQuotaSummaryProviders.
+  ///
+  /// In en, this message translates to:
+  /// **'{ready} active · {total} configured'**
+  String settingsQuotaSummaryProviders(int ready, int total);
+
+  /// No description provided for @settingsQuotaSummaryAlertCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} alerts'**
+  String settingsQuotaSummaryAlertCount(int count);
+
+  /// No description provided for @settingsUsageHeatmapSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Daily usage over the last {weeks} weeks'**
+  String settingsUsageHeatmapSubtitle(int weeks);
+
+  /// No description provided for @settingsUsageHeatmapMetricTokens.
+  ///
+  /// In en, this message translates to:
+  /// **'Token'**
+  String get settingsUsageHeatmapMetricTokens;
+
+  /// No description provided for @settingsUsageHeatmapMetricRequests.
+  ///
+  /// In en, this message translates to:
+  /// **'Requests'**
+  String get settingsUsageHeatmapMetricRequests;
+
+  /// No description provided for @settingsUsageHeatmapMetricCost.
+  ///
+  /// In en, this message translates to:
+  /// **'Cost'**
+  String get settingsUsageHeatmapMetricCost;
+
+  /// No description provided for @settingsUsageWeekdayMon.
+  ///
+  /// In en, this message translates to:
+  /// **'Mon'**
+  String get settingsUsageWeekdayMon;
+
+  /// No description provided for @settingsUsageWeekdayWed.
+  ///
+  /// In en, this message translates to:
+  /// **'Wed'**
+  String get settingsUsageWeekdayWed;
+
+  /// No description provided for @settingsUsageWeekdayFri.
+  ///
+  /// In en, this message translates to:
+  /// **'Fri'**
+  String get settingsUsageWeekdayFri;
+
+  /// No description provided for @settingsUsageWeekdaySun.
+  ///
+  /// In en, this message translates to:
+  /// **'Sun'**
+  String get settingsUsageWeekdaySun;
 }
 
 class _AppLocalizationsDelegate

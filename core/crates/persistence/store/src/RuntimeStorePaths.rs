@@ -26,6 +26,11 @@ impl RuntimeStorePaths {
         self.runtime_storage_path(FUNCTIONAL_CONFIGS_PREFERENCES_PATH)
     }
 
+    /// Returns the Space-synced provider quota and local budget preferences path.
+    pub fn provider_quota_preferences_path(&self) -> PathBuf {
+        self.runtime_storage_path(PROVIDER_QUOTA_PREFERENCES_PATH)
+    }
+
     /// Returns the installed skills directory.
     pub fn skills_dir(&self) -> PathBuf {
         self.runtime_storage_path(EXTENSIONS_SKILLS_DIR_PATH)

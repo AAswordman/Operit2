@@ -46,6 +46,14 @@ impl AIService for RateLimitedAIService {
         self.delegate.output_token_count()
     }
 
+    fn cache_write_input_token_count(&self) -> i64 {
+        self.delegate.cache_write_input_token_count()
+    }
+
+    fn reasoning_token_count(&self) -> i64 {
+        self.delegate.reasoning_token_count()
+    }
+
     fn provider_model(&self) -> String {
         self.delegate.provider_model()
     }

@@ -401,6 +401,26 @@ impl AIService for OpenCodeProvider {
         }
     }
 
+    /// Returns cache-write token usage.
+    fn cache_write_input_token_count(&self) -> i64 {
+        match &self.delegate {
+            OpenCodeDelegate::Chat(provider) => provider.cache_write_input_token_count(),
+            OpenCodeDelegate::Responses(provider) => provider.cache_write_input_token_count(),
+            OpenCodeDelegate::Claude(provider) => provider.cache_write_input_token_count(),
+            OpenCodeDelegate::Gemini(provider) => provider.cache_write_input_token_count(),
+        }
+    }
+
+    /// Returns reasoning token usage.
+    fn reasoning_token_count(&self) -> i64 {
+        match &self.delegate {
+            OpenCodeDelegate::Chat(provider) => provider.reasoning_token_count(),
+            OpenCodeDelegate::Responses(provider) => provider.reasoning_token_count(),
+            OpenCodeDelegate::Claude(provider) => provider.reasoning_token_count(),
+            OpenCodeDelegate::Gemini(provider) => provider.reasoning_token_count(),
+        }
+    }
+
     /// Resets delegated token counters.
     fn reset_token_counts(&mut self) {
         delegate_provider_method!(self, reset_token_counts);

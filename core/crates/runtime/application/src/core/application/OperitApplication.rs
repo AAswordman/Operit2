@@ -745,6 +745,31 @@ impl OperitApplication {
         async move { manager.check(context).await }
     }
 
+    /// Probes one provider's balance or rolling quota through this node's local runtime.
+    #[allow(non_snake_case)]
+    pub fn probeProviderQuota(
+        &self,
+        providerId: String,
+    ) -> impl std::future::Future<
+        Output = Result<operit_model::ProviderQuota::ProviderQuotaSnapshot, String>,
+    > + 'static {
+        async move {
+            crate::services::ProviderQuotaService::ProviderQuotaService::getInstance()
+                .probeProviderQuota(providerId)
+                .await
+        }
+    }
+
+    /// Persists a quota snapshot fetched remotely by a peer node in the Space.
+    #[allow(non_snake_case)]
+    pub fn saveSyncedQuotaSnapshot(
+        &self,
+        snapshot: operit_model::ProviderQuota::ProviderQuotaSnapshot,
+    ) -> Result<(), String> {
+        crate::services::ProviderQuotaService::ProviderQuotaService::getInstance()
+            .saveSyncedSnapshot(snapshot)
+    }
+
     /// Observes host download progress without exposing URLs or native file paths.
     pub fn applicationUpdateProgressFlow(&self) -> StateFlow<ApplicationUpdateProgress> {
         self.applicationUpdate.progress()
@@ -1282,6 +1307,11 @@ impl OperitApplication {
                     &operation.operation,
                     operation.payload.clone(),
                 )
+            }
+            (domain, _, _)
+                if domain == operit_store::repository::UsageStatisticsStore::USAGE_SYNC_DOMAIN =>
+            {
+                operit_store::repository::UsageStatisticsStore::applySyncedUsageOperation(operation)
             }
             (domain, entityType, operationName) => Err(format!(
                 "unsupported sync operation: {domain}/{entityType}/{operationName}"

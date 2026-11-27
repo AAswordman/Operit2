@@ -38,7 +38,7 @@ impl OperitApplication {
         let skipped = self.runtimeSyncOperationStore()?.skippedOperations().map_err(|e|e.to_string())?;
         let operations = operations.iter().chain(&skipped).collect::<Vec<_>>();
         let mut registry = PreferenceMerge::registry(storage.clone(), schema, operations.iter().copied(), |_,_|true)?;
-        registry.domains.extend([CHAT_SYNC_DOMAIN, PLUGIN_STORAGE_SYNC_DOMAIN, operit_store::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN, BINDING_SYNC_DOMAIN, NETWORK_CONTROL_SYNC_DOMAIN].map(str::to_owned));
+        registry.domains.extend([CHAT_SYNC_DOMAIN, PLUGIN_STORAGE_SYNC_DOMAIN, operit_store::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN, BINDING_SYNC_DOMAIN, NETWORK_CONTROL_SYNC_DOMAIN, operit_store::repository::UsageStatisticsStore::USAGE_SYNC_DOMAIN].map(str::to_owned));
         registry.locate = Box::new(|op| match op.domain.as_str() {
             "preferences" => operit_store::PreferencesDataStore::PreferencesSyncedEntry::operationPath(op).map_err(|e|e.to_string()),
             CHAT_SYNC_DOMAIN => Ok(operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into()),

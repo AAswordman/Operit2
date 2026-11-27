@@ -2144,7 +2144,9 @@ impl ChatServiceCore {
 
     /// Clears the token counters associated with the current chat service.
     pub fn resetTokenStatistics(&mut self) {
-        if let Err(error) = UsageStatisticsStore::new().clearAllTokenUsageRecords() {
+        if let Err(error) = UsageStatisticsStore::new()
+            .clearUsageStatistics(operit_model::ProviderQuota::UsageResetScope::LOCAL_ONLY)
+        {
             AppLogger::e(
                 "TokenStatistics",
                 &format!("failed to clear token ledger: {error}"),

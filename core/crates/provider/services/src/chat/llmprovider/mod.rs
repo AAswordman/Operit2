@@ -67,6 +67,8 @@ pub mod SlidingWindowRateLimiter;
 mod StreamingResponseLines;
 #[path = "ProviderHttp.rs"]
 mod ProviderHttp;
+#[path = "ProviderQuotaProber.rs"]
+pub mod ProviderQuotaProber;
 #[path = "StructuredToolCallBridge.rs"]
 pub mod StructuredToolCallBridge;
 #[path = "ThinkingDialect.rs"]

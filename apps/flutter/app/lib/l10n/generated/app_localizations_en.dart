@@ -7482,4 +7482,322 @@ class AppLocalizationsEn extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get settingsUsageTabAnalytics => 'Token Usage & Speed';
+
+  @override
+  String get settingsUsageTabQuotas => 'Balances & Quotas';
+
+  @override
+  String get settingsUsageDeviceScopeAll => 'All Space devices';
+
+  @override
+  String get settingsUsageDeviceScopeLocal => 'This device';
+
+  @override
+  String get settingsUsageExportJson => 'Copy JSON report';
+
+  @override
+  String get settingsUsageExportCsv => 'Copy CSV table';
+
+  @override
+  String get settingsUsageExportCopied => 'Report copied to clipboard';
+
+  @override
+  String get settingsUsageResetScopeTitle => 'Reset usage statistics';
+
+  @override
+  String get settingsUsageResetLocalOnly => 'This device only';
+
+  @override
+  String get settingsUsageResetAllSpace => 'All devices in Space';
+
+  @override
+  String get settingsUsageResetScopeWarning =>
+      'Local reset keeps synced records on other devices; Space-wide reset clears history across all connected devices.';
+
+  @override
+  String get settingsUsageKpiThroughput => 'Avg generation speed';
+
+  @override
+  String settingsUsageKpiTtftMedian(String ttft) {
+    return 'Median TTFT: $ttft';
+  }
+
+  @override
+  String settingsUsageKpiSpeedSamples(int count) {
+    return '$count streamed';
+  }
+
+  @override
+  String get settingsUsageKpiReasoning => 'Reasoning';
+
+  @override
+  String get settingsUsageKpiCacheWrite => 'Cache write';
+
+  @override
+  String settingsUsageKpiSuccessRate(int ok, int err) {
+    return '$ok ok · $err fail/cancel';
+  }
+
+  @override
+  String get settingsUsageTimelineSpeedTitle => 'Generation speed (tok/s)';
+
+  @override
+  String settingsUsageTimelineSpeedDetail(String speed, String ttft) {
+    return 'Streamed output $speed tok/s · TTFT $ttft';
+  }
+
+  @override
+  String get settingsUsageTimelineNoSpeedData =>
+      'No streamed requests ≥100ms in range';
+
+  @override
+  String get settingsUsageAttrModels => 'Models';
+
+  @override
+  String get settingsUsageAttrSources => 'Function & Source';
+
+  @override
+  String get settingsUsageAttrDevices => 'Space Devices';
+
+  @override
+  String get settingsUsageAttrLogs => 'Request Logs';
+
+  @override
+  String get settingsUsageColSpeed => 'Speed';
+
+  @override
+  String get settingsUsageColTtft => 'TTFT';
+
+  @override
+  String get settingsUsageColSpend => 'Est. Cost';
+
+  @override
+  String get settingsUsageColShare => 'Share';
+
+  @override
+  String get settingsUsageDeviceUnknown => 'Local / Legacy Node';
+
+  @override
+  String get settingsUsageLogFilterRecent => 'Recent';
+
+  @override
+  String get settingsUsageLogFilterTopTokens => 'Peak Tokens';
+
+  @override
+  String get settingsUsageLogFilterIssues => 'Failed / Cancelled';
+
+  @override
+  String get settingsUsageLogFilterReasoning => 'Reasoning';
+
+  @override
+  String get settingsUsageStatusCompleted => 'Completed';
+
+  @override
+  String get settingsUsageStatusCancelled => 'Cancelled';
+
+  @override
+  String get settingsUsageStatusFailed => 'Failed';
+
+  @override
+  String get settingsUsageRequestDetailTitle => 'Request Telemetry';
+
+  @override
+  String settingsUsageLatencyBreakdown(String wait, String stream) {
+    return 'Wait $wait · Stream $stream';
+  }
+
+  @override
+  String get settingsQuotaProbeAll => 'Refresh all';
+
+  @override
+  String get settingsQuotaProbeSingle => 'Refresh';
+
+  @override
+  String get settingsQuotaProbeViaNode => 'Query via Space node';
+
+  @override
+  String get settingsQuotaFilterAll => 'All';
+
+  @override
+  String get settingsQuotaFilterBalance => 'Balances';
+
+  @override
+  String get settingsQuotaFilterSubscription => 'Plans';
+
+  @override
+  String get settingsQuotaFilterLocal => 'Local';
+
+  @override
+  String get settingsQuotaFilterBudget => 'Budgets & Console';
+
+  @override
+  String get settingsQuotaRemainingLabel => 'Remaining';
+
+  @override
+  String get settingsQuotaCashLabel => 'Cash';
+
+  @override
+  String get settingsQuotaGrantedLabel => 'Granted';
+
+  @override
+  String get settingsQuotaUsedLabel => 'Used';
+
+  @override
+  String get settingsQuotaDailyUsedLabel => 'Today';
+
+  @override
+  String get settingsQuotaMonthlyUsedLabel => 'Month';
+
+  @override
+  String settingsQuotaKeyPoolCount(int count) {
+    return '$count pool keys';
+  }
+
+  @override
+  String get settingsQuotaStatusOk => 'Active';
+
+  @override
+  String get settingsQuotaStatusUnauthorized => 'Unauthorized';
+
+  @override
+  String get settingsQuotaStatusError => 'Error';
+
+  @override
+  String get settingsQuotaStatusStale => 'Not queried';
+
+  @override
+  String get settingsQuotaStatusUnsupported => 'No Public API';
+
+  @override
+  String settingsQuotaProbedBy(String device, String time) {
+    return 'Queried by $device · $time';
+  }
+
+  @override
+  String get settingsQuotaOpenConsole => 'Console';
+
+  @override
+  String get settingsQuotaProtocolConfig => 'Protocol';
+
+  @override
+  String get settingsQuotaSetBudget => 'Budget Cap';
+
+  @override
+  String get settingsQuotaEditBudget => 'Edit Budget';
+
+  @override
+  String settingsQuotaBudgetProgress(String spent, String limit) {
+    return '$spent / $limit this cycle';
+  }
+
+  @override
+  String get settingsQuotaBudgetExceeded => 'Budget alert threshold reached';
+
+  @override
+  String get settingsQuotaDialogBudgetLimit => 'Monthly spending cap';
+
+  @override
+  String get settingsQuotaDialogResetDay => 'Cycle reset day (1-28)';
+
+  @override
+  String get settingsQuotaDialogAlertPct => 'Alert threshold (%)';
+
+  @override
+  String get settingsQuotaDialogProtocolLabel => 'Balance query protocol';
+
+  @override
+  String get settingsQuotaDialogCustomPath => 'Custom URL / relative path';
+
+  @override
+  String get settingsQuotaDialogAmountJsonPath => 'Amount JSON dot path';
+
+  @override
+  String get settingsQuotaDialogCurrencyJsonPath =>
+      'Currency JSON dot path (optional)';
+
+  @override
+  String get settingsQuotaDialogClear => 'Remove';
+
+  @override
+  String get settingsQuotaEmptyProviders => 'No model providers configured yet';
+
+  @override
+  String get settingsQuotaLocalZeroCost => 'On-device inference · Zero API fee';
+
+  @override
+  String get settingsUsageColStatus => 'Status';
+
+  @override
+  String get settingsUsageColTime => 'Time';
+
+  @override
+  String get settingsUsageModeStream => 'Stream';
+
+  @override
+  String get settingsUsageModeNonStream => 'Standard';
+
+  @override
+  String get settingsUsageTopModelsTitle => 'Model Distribution & Token Mix';
+
+  @override
+  String get settingsUsageTokenMixLabel => 'Token composition';
+
+  @override
+  String get settingsUsageDirectInputLabel => 'Direct input';
+
+  @override
+  String get settingsUsageNoModelsInRange => 'No model traffic in this window';
+
+  @override
+  String get settingsUsageKpiNoPriceHint => 'No model pricing matched';
+
+  @override
+  String get settingsUsageKpiStreamHint => 'Needs streamed reply ≥100ms';
+
+  @override
+  String settingsUsageHeatmapWeeks(int weeks) {
+    return '$weeks-week activity';
+  }
+
+  @override
+  String get settingsQuotaSummaryTotalRemaining => 'Tracked Balance';
+
+  @override
+  String settingsQuotaSummaryProviders(int ready, int total) {
+    return '$ready active · $total configured';
+  }
+
+  @override
+  String settingsQuotaSummaryAlertCount(int count) {
+    return '$count alerts';
+  }
+
+  @override
+  String settingsUsageHeatmapSubtitle(int weeks) {
+    return 'Daily usage over the last $weeks weeks';
+  }
+
+  @override
+  String get settingsUsageHeatmapMetricTokens => 'Token';
+
+  @override
+  String get settingsUsageHeatmapMetricRequests => 'Requests';
+
+  @override
+  String get settingsUsageHeatmapMetricCost => 'Cost';
+
+  @override
+  String get settingsUsageWeekdayMon => 'Mon';
+
+  @override
+  String get settingsUsageWeekdayWed => 'Wed';
+
+  @override
+  String get settingsUsageWeekdayFri => 'Fri';
+
+  @override
+  String get settingsUsageWeekdaySun => 'Sun';
 }

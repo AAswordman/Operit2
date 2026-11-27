@@ -3936,5 +3936,204 @@
         "type": "int"
       }
     }
-  }
+  },
+  "settingsUsageTabAnalytics": "Token Usage & Speed",
+  "settingsUsageTabQuotas": "Balances & Quotas",
+  "settingsUsageDeviceScopeAll": "All Space devices",
+  "settingsUsageDeviceScopeLocal": "This device",
+  "settingsUsageExportJson": "Copy JSON report",
+  "settingsUsageExportCsv": "Copy CSV table",
+  "settingsUsageExportCopied": "Report copied to clipboard",
+  "settingsUsageResetScopeTitle": "Reset usage statistics",
+  "settingsUsageResetLocalOnly": "This device only",
+  "settingsUsageResetAllSpace": "All devices in Space",
+  "settingsUsageResetScopeWarning": "Local reset keeps synced records on other devices; Space-wide reset clears history across all connected devices.",
+  "settingsUsageKpiThroughput": "Avg generation speed",
+  "settingsUsageKpiTtftMedian": "Median TTFT: {ttft}",
+  "@settingsUsageKpiTtftMedian": {
+    "placeholders": {
+      "ttft": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsUsageKpiSpeedSamples": "{count} streamed",
+  "@settingsUsageKpiSpeedSamples": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsUsageKpiReasoning": "Reasoning",
+  "settingsUsageKpiCacheWrite": "Cache write",
+  "settingsUsageKpiSuccessRate": "{ok} ok · {err} fail/cancel",
+  "@settingsUsageKpiSuccessRate": {
+    "placeholders": {
+      "ok": {
+        "type": "int"
+      },
+      "err": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsUsageTimelineSpeedTitle": "Generation speed (tok/s)",
+  "settingsUsageTimelineSpeedDetail": "Streamed output {speed} tok/s · TTFT {ttft}",
+  "@settingsUsageTimelineSpeedDetail": {
+    "placeholders": {
+      "speed": {
+        "type": "String"
+      },
+      "ttft": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsUsageTimelineNoSpeedData": "No streamed requests ≥100ms in range",
+  "settingsUsageAttrModels": "Models",
+  "settingsUsageAttrSources": "Function & Source",
+  "settingsUsageAttrDevices": "Space Devices",
+  "settingsUsageAttrLogs": "Request Logs",
+  "settingsUsageColSpeed": "Speed",
+  "settingsUsageColTtft": "TTFT",
+  "settingsUsageColSpend": "Est. Cost",
+  "settingsUsageColShare": "Share",
+  "settingsUsageDeviceUnknown": "Local / Legacy Node",
+  "settingsUsageLogFilterRecent": "Recent",
+  "settingsUsageLogFilterTopTokens": "Peak Tokens",
+  "settingsUsageLogFilterIssues": "Failed / Cancelled",
+  "settingsUsageLogFilterReasoning": "Reasoning",
+  "settingsUsageStatusCompleted": "Completed",
+  "settingsUsageStatusCancelled": "Cancelled",
+  "settingsUsageStatusFailed": "Failed",
+  "settingsUsageRequestDetailTitle": "Request Telemetry",
+  "settingsUsageLatencyBreakdown": "Wait {wait} · Stream {stream}",
+  "@settingsUsageLatencyBreakdown": {
+    "placeholders": {
+      "wait": {
+        "type": "String"
+      },
+      "stream": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsQuotaProbeAll": "Refresh all",
+  "settingsQuotaProbeSingle": "Refresh",
+  "settingsQuotaProbeViaNode": "Query via Space node",
+  "settingsQuotaFilterAll": "All",
+  "settingsQuotaFilterBalance": "Balances",
+  "settingsQuotaFilterSubscription": "Plans",
+  "settingsQuotaFilterLocal": "Local",
+  "settingsQuotaFilterBudget": "Budgets & Console",
+  "settingsQuotaRemainingLabel": "Remaining",
+  "settingsQuotaCashLabel": "Cash",
+  "settingsQuotaGrantedLabel": "Granted",
+  "settingsQuotaUsedLabel": "Used",
+  "settingsQuotaDailyUsedLabel": "Today",
+  "settingsQuotaMonthlyUsedLabel": "Month",
+  "settingsQuotaKeyPoolCount": "{count} pool keys",
+  "@settingsQuotaKeyPoolCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsQuotaStatusOk": "Active",
+  "settingsQuotaStatusUnauthorized": "Unauthorized",
+  "settingsQuotaStatusError": "Error",
+  "settingsQuotaStatusStale": "Not queried",
+  "settingsQuotaStatusUnsupported": "No Public API",
+  "settingsQuotaProbedBy": "Queried by {device} · {time}",
+  "@settingsQuotaProbedBy": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsQuotaOpenConsole": "Console",
+  "settingsQuotaProtocolConfig": "Protocol",
+  "settingsQuotaSetBudget": "Budget Cap",
+  "settingsQuotaEditBudget": "Edit Budget",
+  "settingsQuotaBudgetProgress": "{spent} / {limit} this cycle",
+  "@settingsQuotaBudgetProgress": {
+    "placeholders": {
+      "spent": {
+        "type": "String"
+      },
+      "limit": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsQuotaBudgetExceeded": "Budget alert threshold reached",
+  "settingsQuotaDialogBudgetLimit": "Monthly spending cap",
+  "settingsQuotaDialogResetDay": "Cycle reset day (1-28)",
+  "settingsQuotaDialogAlertPct": "Alert threshold (%)",
+  "settingsQuotaDialogProtocolLabel": "Balance query protocol",
+  "settingsQuotaDialogCustomPath": "Custom URL / relative path",
+  "settingsQuotaDialogAmountJsonPath": "Amount JSON dot path",
+  "settingsQuotaDialogCurrencyJsonPath": "Currency JSON dot path (optional)",
+  "settingsQuotaDialogClear": "Remove",
+  "settingsQuotaEmptyProviders": "No model providers configured yet",
+  "settingsQuotaLocalZeroCost": "On-device inference · Zero API fee",
+  "settingsUsageColStatus": "Status",
+  "settingsUsageColTime": "Time",
+  "settingsUsageModeStream": "Stream",
+  "settingsUsageModeNonStream": "Standard",
+  "settingsUsageTopModelsTitle": "Model Distribution & Token Mix",
+  "settingsUsageTokenMixLabel": "Token composition",
+  "settingsUsageDirectInputLabel": "Direct input",
+  "settingsUsageNoModelsInRange": "No model traffic in this window",
+  "settingsUsageKpiNoPriceHint": "No model pricing matched",
+  "settingsUsageKpiStreamHint": "Needs streamed reply ≥100ms",
+  "settingsUsageHeatmapWeeks": "{weeks}-week activity",
+  "@settingsUsageHeatmapWeeks": {
+    "placeholders": {
+      "weeks": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsQuotaSummaryTotalRemaining": "Tracked Balance",
+  "settingsQuotaSummaryProviders": "{ready} active · {total} configured",
+  "@settingsQuotaSummaryProviders": {
+    "placeholders": {
+      "ready": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsQuotaSummaryAlertCount": "{count} alerts",
+  "@settingsQuotaSummaryAlertCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsUsageHeatmapSubtitle": "Daily usage over the last {weeks} weeks",
+  "@settingsUsageHeatmapSubtitle": {
+    "placeholders": {
+      "weeks": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsUsageHeatmapMetricTokens": "Token",
+  "settingsUsageHeatmapMetricRequests": "Requests",
+  "settingsUsageHeatmapMetricCost": "Cost",
+  "settingsUsageWeekdayMon": "Mon",
+  "settingsUsageWeekdayWed": "Wed",
+  "settingsUsageWeekdayFri": "Fri",
+  "settingsUsageWeekdaySun": "Sun"
 }

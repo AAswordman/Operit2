@@ -54,6 +54,8 @@ pub mod MessageVariantEntity;
 pub mod ModelCatalog;
 #[path = "ModelConfigData.rs"]
 pub mod ModelConfigData;
+#[path = "ProviderQuota.rs"]
+pub mod ProviderQuota;
 #[path = "ModelParameter.rs"]
 pub mod ModelParameter;
 #[path = "ModelThinking.rs"]
@@ -119,6 +121,7 @@ pub use MessagePartEntity::*;
 pub use MessageVariantEntity::*;
 pub use ModelCatalog::*;
 pub use ModelConfigData::*;
+pub use ProviderQuota::*;
 pub use ModelParameter::*;
 pub use OpenAIModels::*;
 pub use OperitChatArchive::*;

@@ -277,6 +277,15 @@ impl ChatConfigurationResult {
     }
 }
 
+/// Attribution and pricing metadata resolved by runtime support when persisting usage telemetry.
+#[derive(Clone, Debug, Default, PartialEq)]
+#[allow(non_snake_case)]
+pub struct ProviderUsageAttribution {
+    pub providerId: String,
+    pub keyFingerprint: String,
+    pub modelPricing: Option<operit_model::ModelConfigData::ModelPricing>,
+}
+
 /// Supplies runtime-owned data and plugin operations to provider code.
 pub trait ProviderRuntimeSupport: Send + Sync {
     /// Executes a local model on the device selected by its inference Binding.
@@ -295,6 +304,14 @@ pub trait ProviderRuntimeSupport: Send + Sync {
         outputTokens: i64,
         cachedInputTokens: i64,
     ) -> Result<(), String>;
+
+    /// Resolves persisted provider profile identity and configured pricing for usage snapshots.
+    fn usageAttributionForProviderModel(
+        &self,
+        _providerModel: &str,
+    ) -> Option<ProviderUsageAttribution> {
+        None
+    }
 
     /// Returns whether profile-document descriptions are excluded from prompt composition.
     fn disableUserPreferenceDescription(&self) -> Result<bool, String>;

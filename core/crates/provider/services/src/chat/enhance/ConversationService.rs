@@ -10,13 +10,19 @@ use crate::chat::enhance::ConversationContext::ConversationContext;
 use crate::chat::hooks::SummaryHookRegistry::{SummaryHookContext, SummaryHookRegistry};
 use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
 use crate::chat::llmprovider::AIService::{
-    collect_response_text, AiServiceError, SendMessageRequest, TokenCounts,
+    collect_response_text_observed, AiServiceError, SendMessageRequest, TokenCounts,
 };
 use crate::runtime_support::ProviderRuntimeContext;
+use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_model::FunctionType::FunctionType;
 use operit_model::ModelParameter::ModelParameter;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
-use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
+use operit_model::ProviderQuota::{
+    calculate_model_cost, pricing_currency_code, UsageRequestStatus,
+};
+use operit_store::repository::UsageStatisticsStore::{
+    UsageRequestCapture, UsageRequestSource, UsageStatisticsStore,
+};
 use operit_util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
 use operit_vfs::VfsPath;
 use operit_tools::ToolExecutionManager::ToolExecutionManager;
@@ -548,7 +554,9 @@ impl ConversationService {
             .summary_prompt
             .expect("SummaryHookContext.summary_prompt must be present after before_send_to_model");
         if let Some(callback) = &progress { callback("summary_preparing"); }
-        let summaryStream = {
+        let startedAtMs = currentTimeMillis();
+        let mut firstOutputAtMs = None::<i64>;
+        let mut summaryStream = {
             let mut service = summaryService.lock().await;
             service.reset_token_counts();
             service
@@ -565,18 +573,28 @@ impl ConversationService {
                 })
                 .await?
         };
-        let content = collect_response_text(summaryStream).await?;
+        let content = collect_response_text_observed(summaryStream, || {
+            if firstOutputAtMs.is_none() {
+                firstOutputAtMs = Some(currentTimeMillis());
+            }
+        })
+        .await?;
+        let completedAtMs = currentTimeMillis();
         if !ToolExecutionManager::extractToolInvocations(&content).is_empty() {
             return Err(AiServiceError::RequestFailed("Conversation summary attempted to call a tool".into()));
         }
         let mut summaryContent = ChatMarkupRegex::remove_meta_tags(&removeThinkingContent(content.trim()));
-        let usage = {
+        let (usage, cacheWriteTokens, reasoningTokens) = {
             let service = summaryService.lock().await;
-            TokenCounts {
-                input: service.input_token_count(),
-                cached_input: service.cached_input_token_count(),
-                output: service.output_token_count(),
-            }
+            (
+                TokenCounts {
+                    input: service.input_token_count(),
+                    cached_input: service.cached_input_token_count(),
+                    output: service.output_token_count(),
+                },
+                service.cache_write_input_token_count(),
+                service.reasoning_token_count(),
+            )
         };
         operit_util::AppLogger::AppLogger::i("ConversationService", &format!(
             "chat.summary.usage providerModel={} sameConversationModel={} inputTokens={} cachedInputTokens={} outputTokens={}",
@@ -627,15 +645,32 @@ impl ConversationService {
             )
             .map_err(AiServiceError::RequestFailed)?;
         UsageStatisticsStore::new()
-            .recordProviderModelRequest(
+            .recordProviderModelRequestDetailed(UsageRequestCapture {
                 providerModel,
-                FunctionType::SUMMARY,
-                UsageRequestSource::SUMMARY_GENERATION,
-                None,
-                usage.input,
-                usage.output,
-                usage.cached_input,
-            )
+                functionType: FunctionType::SUMMARY,
+                source: UsageRequestSource::SUMMARY_GENERATION,
+                chatId: None,
+                inputTokens: usage.input,
+                outputTokens: usage.output,
+                cachedInputTokens: usage.cached_input,
+                cacheWriteTokens,
+                reasoningTokens,
+                waitDurationMs: firstOutputAtMs
+                    .map(|first| (first - startedAtMs).max(0))
+                    .unwrap_or_else(|| (completedAtMs - startedAtMs).max(0)),
+                outputDurationMs: firstOutputAtMs
+                    .map(|first| (completedAtMs - first).max(0))
+                    .unwrap_or(0),
+                totalDurationMs: (completedAtMs - startedAtMs).max(0),
+                status: UsageRequestStatus::COMPLETED,
+                originNodeId: String::new(),
+                providerId: String::new(),
+                keyId: String::new(),
+                keyFingerprint: String::new(),
+                estimatedCost: 0.0,
+                currency: String::new(),
+                stream: true,
+            })
             .map_err(AiServiceError::RequestFailed)?;
         Ok((summaryContent, usage))
     }
@@ -672,7 +707,9 @@ impl ConversationService {
             let service = title_service.lock().await;
             service.provider_model()
         };
-        let title_stream = {
+        let startedAtMs = currentTimeMillis();
+        let mut firstOutputAtMs = None::<i64>;
+        let mut title_stream = {
             let mut service = title_service.lock().await;
             service
                 .send_message(SendMessageRequest {
@@ -688,13 +725,21 @@ impl ConversationService {
                 })
                 .await?
         };
-        let title_content = collect_response_text(title_stream).await?;
+        let title_content = collect_response_text_observed(title_stream, || {
+            if firstOutputAtMs.is_none() {
+                firstOutputAtMs = Some(currentTimeMillis());
+            }
+        })
+        .await?;
+        let completedAtMs = currentTimeMillis();
         let title = sanitizeConversationTitle(&removeThinkingContent(&title_content));
-        let (input_tokens, cached_input_tokens, output_tokens) = {
+        let (input_tokens, cached_input_tokens, cache_write_tokens, reasoning_tokens, output_tokens) = {
             let service = title_service.lock().await;
             (
                 service.input_token_count(),
                 service.cached_input_token_count(),
+                service.cache_write_input_token_count(),
+                service.reasoning_token_count(),
                 service.output_token_count(),
             )
         };
@@ -707,16 +752,59 @@ impl ConversationService {
                 cached_input_tokens,
             )
             .map_err(AiServiceError::RequestFailed)?;
+        let totalDurationMs = (completedAtMs - startedAtMs).max(0);
+        let waitDurationMs = firstOutputAtMs
+            .map(|first| (first - startedAtMs).max(0))
+            .unwrap_or(totalDurationMs);
+        let outputDurationMs = firstOutputAtMs
+            .map(|first| (completedAtMs - first).max(0))
+            .unwrap_or(0);
+        let attribution = self
+            .runtime_context
+            .support()
+            .usageAttributionForProviderModel(&provider_model);
+        let (providerId, keyFingerprint, estimatedCost, currency) = match attribution {
+            Some(info) => {
+                let (cost, curr) = match info.modelPricing.as_ref() {
+                    Some(pricing) => (
+                        calculate_model_cost(
+                            pricing,
+                            input_tokens,
+                            cached_input_tokens,
+                            cache_write_tokens,
+                            output_tokens,
+                        ),
+                        pricing_currency_code(&pricing.currency).to_string(),
+                    ),
+                    None => (0.0, String::new()),
+                };
+                (info.providerId, info.keyFingerprint, cost, curr)
+            }
+            None => (String::new(), String::new(), 0.0, String::new()),
+        };
         UsageStatisticsStore::new()
-            .recordProviderModelRequest(
-                provider_model,
-                FunctionType::TITLE_GENERATION,
-                UsageRequestSource::TITLE_GENERATION,
-                None,
-                input_tokens,
-                output_tokens,
-                cached_input_tokens,
-            )
+            .recordProviderModelRequestDetailed(UsageRequestCapture {
+                providerModel: provider_model,
+                functionType: FunctionType::TITLE_GENERATION,
+                source: UsageRequestSource::TITLE_GENERATION,
+                chatId: None,
+                inputTokens: input_tokens,
+                outputTokens: output_tokens,
+                cachedInputTokens: cached_input_tokens,
+                cacheWriteTokens: cache_write_tokens,
+                reasoningTokens: reasoning_tokens,
+                waitDurationMs,
+                outputDurationMs,
+                totalDurationMs,
+                status: UsageRequestStatus::COMPLETED,
+                originNodeId: String::new(),
+                providerId,
+                keyId: String::new(),
+                keyFingerprint,
+                estimatedCost,
+                currency,
+                stream: false,
+            })
             .map_err(AiServiceError::RequestFailed)?;
         Ok(title)
     }

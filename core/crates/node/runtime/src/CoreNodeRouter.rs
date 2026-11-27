@@ -1976,6 +1976,32 @@ impl CoreNodeRouter {
                     }.await;
                     return CoreCallResponse { requestId, result };
                 }
+                Ok((true, PeerSyncMethod::ProbeProviderQuota)) => {
+                    let result = async {
+                        let provider_id: String = operit_link::fromCoreValue(request.payload.args)
+                            .map_err(|e| CoreLinkError::internal(e.to_string()))?;
+                        let application_target = self
+                            .localCore
+                            .targetForSchema("application")
+                            .ok_or_else(|| {
+                                CoreLinkError::internal(
+                                    "Core application target is unavailable",
+                                )
+                            })?;
+                        let response = self
+                            .localCore
+                            .callApplication(CoreCallRequest::new(
+                                requestId.0.clone(),
+                                application_target,
+                                "probeProviderQuota",
+                                operit_link::toCoreValue(serde_json::json!({ "providerId": provider_id }))
+                                    .map_err(|e| CoreLinkError::internal(e.to_string()))?,
+                            ))
+                            .await;
+                        response.result
+                    }.await;
+                    return CoreCallResponse { requestId, result };
+                }
                 Ok((true, method)) => return self.dispatchPeerSyncCall(method, request.payload).await,
                 Ok((false, _)) => return self.forwardCall(Some(&previousNodeId), request).await,
             }

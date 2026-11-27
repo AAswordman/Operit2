@@ -1,10 +1,16 @@
 use std::sync::{Arc, Mutex};
 
 use super::enhance::MultiServiceManager::SharedAIServiceHandle;
-use super::llmprovider::AIService::{AiServiceError, TokenCounts};
+use super::llmprovider::AIService::{AiServiceError, ExtendedTokenCounts, TokenCounts};
 use crate::runtime_support::ProviderRuntimeSupport;
+use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_model::FunctionType::FunctionType;
-use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
+use operit_model::ProviderQuota::{
+    calculate_model_cost, pricing_currency_code, UsageRequestStatus,
+};
+use operit_store::repository::UsageStatisticsStore::{
+    UsageRequestCapture, UsageRequestSource, UsageStatisticsStore,
+};
 
 /// Token totals owned by one logical turn, including requests interrupted by cancellation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -26,12 +32,60 @@ struct TurnTokenUsageState {
 }
 
 /// Serializes settlement of a physical request across completion and cancellation.
+struct RequestExecutionTelemetry {
+    startedAtMs: i64,
+    firstOutputAtMs: Option<i64>,
+    stream: bool,
+    status: UsageRequestStatus,
+    providerId: String,
+    keyId: String,
+    keyFingerprint: String,
+}
+
 pub(super) struct RequestTokenUsage {
     service: SharedAIServiceHandle,
     functionType: FunctionType,
     source: UsageRequestSource,
     chatId: Option<String>,
+    telemetry: Mutex<RequestExecutionTelemetry>,
     result: tokio::sync::Mutex<Option<Result<TokenCounts, AiServiceError>>>,
+}
+
+impl RequestTokenUsage {
+    pub(super) fn markFirstOutput(&self) {
+        if let Ok(mut telemetry) = self.telemetry.lock() {
+            if telemetry.firstOutputAtMs.is_none() {
+                telemetry.firstOutputAtMs = Some(currentTimeMillis());
+            }
+        }
+    }
+
+    pub(super) fn setAttribution(
+        &self,
+        stream: bool,
+        providerId: String,
+        keyId: String,
+        keyFingerprint: String,
+    ) {
+        if let Ok(mut telemetry) = self.telemetry.lock() {
+            telemetry.stream = stream;
+            if !providerId.is_empty() {
+                telemetry.providerId = providerId;
+            }
+            if !keyId.is_empty() {
+                telemetry.keyId = keyId;
+            }
+            if !keyFingerprint.is_empty() {
+                telemetry.keyFingerprint = keyFingerprint;
+            }
+        }
+    }
+
+    pub(super) fn markStatus(&self, status: UsageRequestStatus) {
+        if let Ok(mut telemetry) = self.telemetry.lock() {
+            telemetry.status = status;
+        }
+    }
 }
 
 impl std::fmt::Debug for RequestTokenUsage {
@@ -90,6 +144,15 @@ impl TurnTokenUsage {
             functionType,
             source,
             chatId,
+            telemetry: Mutex::new(RequestExecutionTelemetry {
+                startedAtMs: currentTimeMillis(),
+                firstOutputAtMs: None,
+                stream: false,
+                status: UsageRequestStatus::COMPLETED,
+                providerId: String::new(),
+                keyId: String::new(),
+                keyFingerprint: String::new(),
+            }),
             result: tokio::sync::Mutex::new(None),
         });
         let mut state = self.0.lock().expect("turn token usage mutex poisoned");
@@ -121,7 +184,7 @@ impl TurnTokenUsage {
         request: &RequestTokenUsage,
         runtime: &dyn ProviderRuntimeSupport,
     ) -> Result<TokenCounts, AiServiceError> {
-        self.finishRequestWith(request, |providerModel, tokens| {
+        self.finishRequestWithExtended(request, |providerModel, tokens, extended| {
             runtime
                 .updateTokensForProviderModel(
                     providerModel,
@@ -130,16 +193,78 @@ impl TurnTokenUsage {
                     tokens.cached_input,
                 )
                 .map_err(AiServiceError::RequestFailed)?;
+            let completedAtMs = currentTimeMillis();
+            let telemetry = request
+                .telemetry
+                .lock()
+                .expect("request telemetry mutex poisoned");
+            let totalDurationMs = (completedAtMs - telemetry.startedAtMs).max(0);
+            let waitDurationMs = telemetry
+                .firstOutputAtMs
+                .map(|first| (first - telemetry.startedAtMs).max(0))
+                .unwrap_or(totalDurationMs);
+            let outputDurationMs = telemetry
+                .firstOutputAtMs
+                .map(|first| (completedAtMs - first).max(0))
+                .unwrap_or(0);
+            let attribution = runtime.usageAttributionForProviderModel(providerModel);
+            let (providerId, keyFingerprint, estimatedCost, currency) = match attribution {
+                Some(info) => {
+                    let resolvedProviderId = if telemetry.providerId.is_empty() {
+                        info.providerId
+                    } else {
+                        telemetry.providerId.clone()
+                    };
+                    let resolvedFingerprint = if telemetry.keyFingerprint.is_empty() {
+                        info.keyFingerprint
+                    } else {
+                        telemetry.keyFingerprint.clone()
+                    };
+                    let (cost, curr) = match info.modelPricing.as_ref() {
+                        Some(pricing) => (
+                            calculate_model_cost(
+                                pricing,
+                                tokens.input,
+                                tokens.cached_input,
+                                extended.cache_write_input,
+                                tokens.output,
+                            ),
+                            pricing_currency_code(&pricing.currency).to_string(),
+                        ),
+                        None => (0.0, String::new()),
+                    };
+                    (resolvedProviderId, resolvedFingerprint, cost, curr)
+                }
+                None => (
+                    telemetry.providerId.clone(),
+                    telemetry.keyFingerprint.clone(),
+                    0.0,
+                    String::new(),
+                ),
+            };
             UsageStatisticsStore::new()
-                .recordProviderModelRequest(
-                    providerModel.to_string(),
-                    request.functionType.clone(),
-                    request.source.clone(),
-                    request.chatId.clone(),
-                    tokens.input,
-                    tokens.output,
-                    tokens.cached_input,
-                )
+                .recordProviderModelRequestDetailed(UsageRequestCapture {
+                    providerModel: providerModel.to_string(),
+                    functionType: request.functionType.clone(),
+                    source: request.source.clone(),
+                    chatId: request.chatId.clone(),
+                    inputTokens: tokens.input,
+                    outputTokens: tokens.output,
+                    cachedInputTokens: tokens.cached_input,
+                    cacheWriteTokens: extended.cache_write_input,
+                    reasoningTokens: extended.reasoning,
+                    waitDurationMs,
+                    outputDurationMs,
+                    totalDurationMs,
+                    status: telemetry.status,
+                    originNodeId: String::new(),
+                    providerId,
+                    keyId: telemetry.keyId.clone(),
+                    keyFingerprint,
+                    estimatedCost,
+                    currency,
+                    stream: telemetry.stream,
+                })
                 .map(|_| ())
                 .map_err(AiServiceError::RequestFailed)
         })
@@ -152,6 +277,17 @@ impl TurnTokenUsage {
         request: &RequestTokenUsage,
         record: impl FnOnce(&str, &TokenCounts) -> Result<(), AiServiceError>,
     ) -> Result<TokenCounts, AiServiceError> {
+        self.finishRequestWithExtended(request, |providerModel, tokens, _| {
+            record(providerModel, tokens)
+        })
+        .await
+    }
+
+    async fn finishRequestWithExtended(
+        &self,
+        request: &RequestTokenUsage,
+        record: impl FnOnce(&str, &TokenCounts, &ExtendedTokenCounts) -> Result<(), AiServiceError>,
+    ) -> Result<TokenCounts, AiServiceError> {
         let mut result = request.result.lock().await;
         if let Some(result) = result.as_ref() {
             return result.clone();
@@ -162,6 +298,10 @@ impl TurnTokenUsage {
             output: service.output_token_count().max(0),
             cached_input: service.cached_input_token_count().max(0),
         };
+        let extended = ExtendedTokenCounts {
+            cache_write_input: service.cache_write_input_token_count().max(0),
+            reasoning: service.reasoning_token_count().max(0),
+        };
         let providerModel = service.provider_model();
         drop(service);
         {
@@ -171,7 +311,7 @@ impl TurnTokenUsage {
             state.snapshot.cachedInputTokens += tokens.cached_input;
             state.lastRequestTokens = Some((tokens.input, tokens.output));
         }
-        let settled = record(&providerModel, &tokens).map(|()| tokens);
+        let settled = record(&providerModel, &tokens, &extended).map(|()| tokens);
         *result = Some(settled.clone());
         settled
     }
