@@ -15,12 +15,12 @@ class RuntimeBrowserFileUpload {
 
   /// Runs an automation action while capturing the file chooser it opens.
   Future<void> run(String script) {
-    return _capture(() => _controller.runJavaScript(script));
+    return capture(() => _controller.runJavaScript(script));
   }
 
   /// Evaluates an automation action and preserves its JavaScript return value.
   Future<Object?> evaluate(String script) {
-    return _capture(() => _controller.runJavaScriptReturningResult(script));
+    return capture(() => _controller.runJavaScriptReturningResult(script));
   }
 
   /// Applies host-provided files, clears the selection, or cancels the chooser.
@@ -39,7 +39,7 @@ window.__operitBrowserFileChooser.run(() =>
   /// Page-owned eval is subject to CSP. Separate native calls preserve script
   /// completion values and global declarations without evaluating a string in
   /// the page. Unique scopes keep overlapping actions and navigation independent.
-  Future<T> _capture<T>(Future<T> Function() action) async {
+  Future<T> capture<T>(Future<T> Function() action) async {
     final captureId = _nextCaptureId++;
     await _controller.runJavaScript('''
 $_fileChooserRuntimeScript
