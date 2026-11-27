@@ -222,6 +222,63 @@ fn simultaneous_changes_converge_and_external_mount_is_excluded() {
     assert_eq!(a.ops().len(), 2);
 }
 
+/// A divergent local version overwritten by a winning remote state must stay recoverable.
+#[test]
+fn divergent_overwrite_preserves_the_losing_local_version() {
+    let a = Node::new();
+    let b = Node::new();
+    let path = "workspaces/project/main.txt";
+    a.write(path, b"shared base");
+    a.workspace().scan().unwrap();
+    a.send(&b);
+    // Both peers edit while offline; b edits later so its wall-clock order wins.
+    a.write(path, b"a days of work");
+    a.workspace().scan().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    b.write(path, b"b winning edit");
+    b.workspace().scan().unwrap();
+    let a_op = a.ops().pop().unwrap();
+    let b_op = b.ops().pop().unwrap();
+    a.deliver(&b, &a_op);
+    b.deliver(&a, &b_op);
+    assert_eq!(a.host.readBytes(path).unwrap(), b"b winning edit");
+    assert_eq!(b.host.readBytes(path).unwrap(), b"b winning edit");
+    // The losing bytes are archived with a sidecar index under the conflict area.
+    let conflicts = a.host.list(&format!("runtime/data/sync_conflicts/{path}")).unwrap();
+    assert_eq!(conflicts.len(), 1, "losing version must be indexed in the conflict area");
+    let record: serde_json::Value = serde_json::from_slice(&a.host.readBytes(&conflicts[0].path).unwrap()).unwrap();
+    assert_eq!(record["path"], path);
+    let hash = record["contentHash"].as_str().unwrap();
+    assert_eq!(a.host.readBytes(&format!("runtime/sync/blobs/{hash}")).unwrap(), b"a days of work");
+    // The winner keeps its own identical content without archiving anything.
+    assert!(!b.host.exists("runtime/data/sync_conflicts").unwrap());
+    assert_eq!(a.workspace().scan().unwrap(), 0);
+    assert_eq!(b.workspace().scan().unwrap(), 0);
+}
+
+/// Identical local and remote content must not produce a conflict record.
+#[test]
+fn identical_content_overwrite_creates_no_conflict_record() {
+    let a = Node::new();
+    let b = Node::new();
+    let path = "workspaces/project/same.txt";
+    a.write(path, b"base");
+    a.workspace().scan().unwrap();
+    a.send(&b);
+    a.write(path, b"identical edit");
+    a.workspace().scan().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    b.write(path, b"identical edit");
+    b.workspace().scan().unwrap();
+    let a_op = a.ops().pop().unwrap();
+    let b_op = b.ops().pop().unwrap();
+    a.deliver(&b, &a_op);
+    b.deliver(&a, &b_op);
+    assert_eq!(a.host.readBytes(path).unwrap(), b"identical edit");
+    assert!(!a.host.exists("runtime/data/sync_conflicts").unwrap());
+    assert!(!b.host.exists("runtime/data/sync_conflicts").unwrap());
+}
+
 #[cfg(unix)]
 #[test]
 fn links_are_not_uploaded_and_remote_writes_cannot_follow_links() {

@@ -12,6 +12,7 @@ use operit_host_api::{HostError, HostErrorKind, HostResult, RuntimeStorageHost};
 use operit_util::RuntimeStorageLayout::{runtimeStorageOwnership, RuntimeStorageOwnership, RUNTIME_CHAT_OUTPUTS_DIR_PATH, LEGACY_CHAT_ATTACHMENTS_DIR_PATH};
 use crate::FileSyncPolicy::{FileSyncPolicy, FileReference, POLICY_PATH, REFERENCE_SUFFIX, MAX_POLICY_BYTES, readLimitedForScan, ignored, readIgnoreForScan, isControl};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::RuntimeFileSyncStore::{
     RuntimeFileSnapshot, RuntimeFileSyncStore, RUNTIME_FILE_SYNC_DOMAIN,
@@ -729,6 +730,7 @@ impl WorkspaceFileSyncStore {
     fn writePending(&self, path: &str, next: Option<&RuntimeFileSnapshot>, content: Option<&[u8]>, checkpoint: bool) -> HostResult<Option<FileStamp>> {
         validateFilePath(path).map_err(HostError::new)?;
         self.checkDestination(path)?;
+        self.preserveOverwritten(path, next)?;
         match next {
             Some(reference) => {
                 self.host.writeBytes(path, content.ok_or_else(|| HostError::new("Missing verified workspace file bytes"))?)?;
@@ -746,6 +748,35 @@ impl WorkspaceFileSyncStore {
                 Ok(None)
             }
         }
+    }
+
+    /// Archives a content-divergent local version before a winning remote state replaces it.
+    /// The blob reference is permanent and the sidecar index keeps the loss recoverable by hash;
+    /// identical content never produces a conflict record. Failures abort the overwrite so the
+    /// durable pending intent can retry instead of destroying unarchived bytes.
+    fn preserveOverwritten(&self, path: &str, next: Option<&RuntimeFileSnapshot>) -> HostResult<()> {
+        if !self.host.exists(path)? { return Ok(()); }
+        let previous = self.host.readBytes(path)?;
+        let hash = format!("{:x}", Sha256::digest(&previous));
+        if next.is_some_and(|snapshot| snapshot.reference.contentHash == hash) { return Ok(()); }
+        self.files().storeBlob(&previous).map_err(HostError::new)?;
+        let operations = self.operations();
+        let deviceId = operations.localDeviceId().map_err(|error| HostError::new(error.to_string()))?;
+        let preservedAt = operit_host_api::TimeUtils::tryCurrentTimeMillis().map_err(HostError::new)?;
+        operations.withJournal(|journal| journal.transaction(|tx|
+            crate::Transaction::Journal::preserve_conflict_blob(tx, &hash, path, &deviceId, preservedAt)
+        )).map_err(|error| HostError::new(error.to_string()))?;
+        // Hash-named sidecars are idempotent across recovery replays and avoid SAF "(N)" aliases.
+        let sidecar = format!("runtime/data/sync_conflicts/{path}/{hash}.json");
+        if !self.host.exists(&sidecar)? {
+            let record = serde_json::json!({
+                "path": path, "contentHash": hash, "size": previous.len(),
+                "deviceId": deviceId, "preservedAt": preservedAt,
+            });
+            let bytes = serde_json::to_vec(&record).map_err(|error| HostError::new(error.to_string()))?;
+            self.host.writeBytesAtomically(&sidecar, &bytes)?;
+        }
+        Ok(())
     }
 
     /// Removes empty descendants after tombstones, keeping the workspace root.
