@@ -459,10 +459,12 @@ fn collectToolPkgChatRuntimeStatistics(
     let currentSessionToolCount = activeChatIds
         .iter()
         .map(|activeChatId| {
+            // Cancellation clears a chat's count before its loading flag, so a
+            // concurrently dispatched hook can observe a loading chat without one.
             currentTurnToolInvocationCounts
                 .get(activeChatId)
                 .copied()
-                .expect("active chat tool invocation count must be initialized before dispatching a chat runtime hook")
+                .unwrap_or(0)
         })
         .sum();
     ToolPkgChatRuntimeStatistics {
@@ -3826,6 +3828,22 @@ mod tests {
         assert_eq!(statistics.activeChatIds.len(), 2);
         assert!(statistics.activeChatIds.contains(&"chat-a".to_string()));
         assert!(statistics.activeChatIds.contains(&"chat-b".to_string()));
+    }
+
+    /// Tolerates a chat whose count was already cleared by cancellation while it is still loading.
+    #[test]
+    fn toolpkg_chat_runtime_statistics_tolerate_cancelling_chat_without_count() {
+        let executionStates = HashMap::from([
+            ("chat-a".to_string(), activeExecutionState()),
+            ("chat-b".to_string(), activeExecutionState()),
+        ]);
+        let counts = HashMap::from([("chat-a".to_string(), 2)]);
+
+        let statistics = collectToolPkgChatRuntimeStatistics("chat-a", &executionStates, &counts);
+
+        assert_eq!(statistics.currentTurnToolInvocationCount, 2);
+        assert_eq!(statistics.activeConversationCount, 2);
+        assert_eq!(statistics.currentSessionToolCount, 2);
     }
 }
 
