@@ -405,14 +405,14 @@ impl CoreSpaceStore {
             .delete().map_err(|error| error.to_string())?;
         self.writeMemberRecord(&member)?;
         if let Err(error) = self.writeDeviceProfile(&profile) {
-            operit_util::AppLogger::AppLogger::w("CoreSpaceStore", &format!("Exit Space: local profile: {error}"));
+            operit_util::app_log!(w, "CoreSpaceStore", &format!("Exit Space: local profile: {error}"));
         }
         for directory in [RUNTIME_SPACE_MEMBERS_DIR_PATH, RUNTIME_SPACE_TOPOLOGY_DIR_PATH,
             RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH, RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH] {
             let entries = match self.storage.list(directory) {
                 Ok(entries) => entries,
                 Err(error) => {
-                    operit_util::AppLogger::AppLogger::w("CoreSpaceStore", &format!("Exit Space: list {directory}: {error}"));
+                    operit_util::app_log!(w, "CoreSpaceStore", &format!("Exit Space: list {directory}: {error}"));
                     continue;
                 }
             };
@@ -422,7 +422,7 @@ impl CoreSpaceStore {
                     continue;
                 }
                 if let Err(error) = CoreNodeStateStore::newWithStorage(self.storage.clone(), entry.path.clone()).delete() {
-                    operit_util::AppLogger::AppLogger::w("CoreSpaceStore", &format!("Exit Space: delete {}: {error}", entry.path));
+                    operit_util::app_log!(w, "CoreSpaceStore", &format!("Exit Space: delete {}: {error}", entry.path));
                 }
             }
         }
@@ -1201,7 +1201,7 @@ impl CoreSpaceStore {
                 Err(error) => {
                     let error = format!("Space record {}: {error}", entry.path);
                     if localPath.as_deref() == Some(entry.path.as_str()) { return Err(error); }
-                    operit_util::AppLogger::AppLogger::w("CoreSpaceStore", &error);
+                    operit_util::app_log!(w, "CoreSpaceStore", &error);
                 }
             }
         }
@@ -1332,7 +1332,7 @@ impl CoreSpaceStore {
             })();
             match record {
                 Ok(record) => { records.insert(record.nodeId.clone(), record); },
-                Err(error) => { operit_util::AppLogger::AppLogger::w("CoreSpaceStore", &format!("Space record {}: {error}", entry.path)); },
+                Err(error) => { operit_util::app_log!(w, "CoreSpaceStore", &format!("Space record {}: {error}", entry.path)); },
             }
         }
         Ok(records)

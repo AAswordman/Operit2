@@ -103,9 +103,10 @@ container. Normal firmware updates preserve NVS and the reserved layout partitio
 Keep the matching ELF for crash address resolution.
 
 Measured on 2026-11-27, the complete Core text/audio application is
-2,555,136 bytes (2.44 MiB), down 992 bytes from the previous
-2,556,128-byte image. The unchanged application partition has 1,442,560 bytes
-free. The 1 MiB target remains unmet by 1,506,560 bytes. The fixed 4 MiB flash
+2,549,424 bytes (2.43 MiB), down 5,712 bytes from the previous
+2,555,136-byte image. The unchanged application partition has 1,448,272 bytes
+free. The 1 MiB target remains unmet by 1,500,848 bytes. Further size work is
+paused; this revision retains the verified implementation. The fixed 4 MiB flash
 container is not the application size.
 
 Node-local preferences reject transaction commit records and omit the replica
@@ -127,12 +128,17 @@ Timeouts share one poll routine without boxing the operation or erasing its Send
 property across await; full Core HTTP directory builds remain supported. Historical
 Space admission decoding belongs to its enum variant, removing the duplicate
 command enum. Status JSON serializes the existing record directly; UI diagnostics
-parse C bytes without an intermediate string.
+parse C bytes without an intermediate string. Call, Watch and Push share the
+route metadata codec while preserving their typed payloads and original argument
+storage. Peer record cleanup validates all request files before deleting outcomes
+and requests, using a fixed array instead of iterator and set allocations.
 
 Verification: final Xtensa release, ELF ABI, partition and C/Wasm packaging
 passed. Runtime without HTTP directories: 151 passed; Core/Edge admission: 46 passed;
 persistence: 373 passed (3 ignored); editor: 109 passed; firmware-module simulation:
-58 passed; TypeScript checks passed. Link's 62 passes are from the preceding revision.
+58 passed; TypeScript checks passed. The editor, firmware-module and TypeScript
+results precede the final shared-route cleanup; runtime, persistence and Core/Edge
+admission were rerun for it. Link's 62 passes are from the preceding revision.
 
 The Linux simulator passed a targeted real-TCP transport workflow against Core:
 pairing and approval, storage-full/interrupted-write recovery, 65-second PCM byte
@@ -140,7 +146,7 @@ volume, long recognition text, repeated audio rounds, playback backpressure,
 text streaming, long UTF-8 input, reconnect, restart and offline cancellation.
 The deterministic model and speech providers do not validate recognition quality.
 The workflow kept the 256 KiB heap and 16/24/20 KiB guarded task stacks; sampled
-peak heap was 203,360 bytes with zero allocation failures. Earlier runs exhausted
+peak heap was 203,752 bytes with zero allocation failures. Earlier runs exhausted
 the heap while expanding the editor IPC JSON output beside audio state. Output
 now grows fallibly in small blocks and serializes each reply once. A later run
 exhausted the heap in the desktop TCP adapter's infallible 16 KiB allocation;

@@ -704,29 +704,22 @@ pub(crate) fn purgePeerRecords(store: &PeerStateStore, deviceId: &str) -> Result
     let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     // Read only identities, not complete source snapshots. Validate every
     // request file before deleting anything, preserving unrelated requests.
-    let records = [INBOUND, OUTBOUND, INBOX]
-        .into_iter()
-        .map(|path| {
-            let ids = store
-                .records::<RecordPeers>(path)?
-                .into_iter()
-                .filter(|(_, record)| {
-                    record.request.applicantDeviceId == deviceId
-                        || record.request.targetDeviceId == deviceId
-                })
-                .map(|(id, _)| id)
-                .collect::<Vec<_>>();
-            Ok((path, ids))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+    let mut records = [(INBOUND, Vec::new()), (OUTBOUND, Vec::new()), (INBOX, Vec::new())];
+    for (path, ids) in &mut records {
+        for (id, record) in store.records::<RecordPeers>(path)? {
+            if record.request.applicantDeviceId == deviceId || record.request.targetDeviceId == deviceId {
+                ids.push(id);
+            }
+        }
+    }
     // Remove retry outcomes first: if a later write fails, the remaining
     // request still identifies the work to finish on an idempotent retry.
-    for id in records
-        .iter()
-        .flat_map(|(_, ids)| ids)
-        .collect::<BTreeSet<_>>()
-    {
-        store.deleteRecord(RESULTS, id)?;
+    for (index, (_, ids)) in records.iter().enumerate() {
+        for id in ids {
+            if !records[..index].iter().any(|(_, previous)| previous.contains(id)) {
+                store.deleteRecord(RESULTS, id)?;
+            }
+        }
     }
     for (path, ids) in records {
         for id in ids {
