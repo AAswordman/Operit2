@@ -21,7 +21,7 @@ use crate::services::RuntimeHostInteractionService::{
     publishOwnerAppNotification, RuntimeHostInteractionAppNotificationPayload,
 };
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
-    WorkspaceBackupManager, WorkspaceToolHookDropGuard,
+    WorkspaceBackupManager, WorkspaceToolHookDropGuard, WorkspaceToolHookRegistration,
 };
 use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
@@ -48,6 +48,7 @@ use operit_providers::chat::EnhancedAIService::{
 };
 use operit_providers::chat::TurnTokenUsage::{TurnTokenSnapshot, TurnTokenUsage};
 use operit_providers::runtime_support::ChatConfigurationResult;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_plugin_sdk::js_sdk::results::{ChatCommittedMessage, JsOptional, MessageSendOutcome, MessageSendResultData, MessageSendStatus};
 use tokio::sync::oneshot;
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
@@ -345,6 +346,7 @@ pub struct ChatRuntime {
     pub responseStream: Option<SharedAiResponseStream>,
     pub enhancedAiService: Option<EnhancedAIService>,
     pub cancellationToken: MessageCancellationToken,
+    workspaceToolHook: Option<Arc<WorkspaceToolHookRegistration<AIToolHandler>>>,
     pub guidanceInbox: Option<ChatGuidanceInbox>,
     pub streamCollectionJob: Option<String>,
     pub stateCollectionJob: Option<String>,
@@ -369,6 +371,7 @@ impl ChatRuntime {
             responseStream: None,
             enhancedAiService: None,
             cancellationToken: MessageCancellationToken::default(),
+            workspaceToolHook: None,
             guidanceInbox: None,
             streamCollectionJob: None,
             stateCollectionJob: None,
@@ -1080,6 +1083,7 @@ impl MessageProcessingDelegate {
                 if let Some(inbox) = &runtime.guidanceInbox {
                     inbox.closeAndClear();
                 }
+                if let Some(registration) = runtime.workspaceToolHook.take() { registration.close(); }
                 if let Some(lease) = runtime.executionLease.take() {
                     if !runtime.currentTurnOptions.deferSequenceCompletion {
                         lease.release().expect("Execution lease release must succeed");
@@ -1419,6 +1423,7 @@ impl MessageProcessingDelegate {
             if let Some(inbox) = &runtime.guidanceInbox {
                 inbox.closeAndClear();
             }
+            if let Some(registration) = runtime.workspaceToolHook.take() { registration.close(); }
             if let Some(lease) = runtime.executionLease.take() {
                 if !runtime.currentTurnOptions.deferSequenceCompletion {
                     lease.release().expect("Terminal execution lease release must succeed");
@@ -1657,7 +1662,7 @@ impl MessageProcessingDelegate {
         let cancellation = self.withExistingRuntime(Some(chatId.clone()), |runtime| {
             runtime.reserveCancellation(expectedTurnId, self.isChatProcessing(&chatId)).map(|reservation|
                 reservation.map(|(cancelled, cancelling)| (cancelled, cancelling,
-                    runtime.responseStream.clone(), runtime.enhancedAiService.take())))
+                    runtime.responseStream.clone(), runtime.enhancedAiService.take(), runtime.workspaceToolHook.take())))
         });
         let mut delegate = self.clone_for_core();
         async move {
@@ -1665,13 +1670,14 @@ impl MessageProcessingDelegate {
                 if expectedTurnId.is_some() { return Err("Work runtime no longer exists".to_string()); }
                 return Ok(None);
             };
-            let Some((cancelledTurnId, cancellationTurnId, responseStream, service)) = reservation? else { return Ok(None); };
+            let Some((cancelledTurnId, cancellationTurnId, responseStream, service, workspaceToolHook)) = reservation? else { return Ok(None); };
             if expectedTurnId.is_some() { delegate.cancelSummaryTasks(Some(&chatId)); }
             // The turn owns cancellation even before a send registers or after its stream closes.
             let usageResult = match service {
                 Some(mut service) => service.cancelConversation().await,
                 None => Ok(()),
             };
+            if let Some(registration) = workspaceToolHook { registration.close(); }
             let ownsCancellation = delegate.withExistingRuntime(Some(chatId.clone()), |runtime| {
                 runtime.activeTurnId == cancellationTurnId && runtime.isCancelling
             }).unwrap_or(false);
@@ -2033,14 +2039,17 @@ impl MessageProcessingDelegate {
         } else {
             None
         };
-        let workerWorkspaceToolHookSession = Arc::new(Mutex::new(workspaceToolHookSession));
-        let workerWorkspaceToolHookHandler = Arc::new(Mutex::new(workspaceToolHookHandler.clone()));
-        // Covers every synchronous early return below; ownership moves to the
-        // worker future's own drop guard once the task is scheduled.
-        let mut workspaceToolHookCleanupGuard = WorkspaceToolHookDropGuard::new(
-            workerWorkspaceToolHookSession.clone(),
-            workerWorkspaceToolHookHandler.clone(),
+        let workspaceToolHookCleanupGuard = WorkspaceToolHookDropGuard::new(
+            workspaceToolHookSession, workspaceToolHookHandler,
         );
+        let registered = self.withExistingRuntime(Some(chatId.clone()), |runtime| {
+            if runtime.activeTurnId != turnId || runtime.isCancelling { return false; }
+            runtime.workspaceToolHook = Some(workspaceToolHookCleanupGuard.registration.clone());
+            true
+        }).unwrap_or(false);
+        if !registered {
+            return Err(operit_providers::chat::llmprovider::AIService::AiServiceError::RequestCancelled);
+        }
         if shouldAddUserMessageToChat {
             ChainLogger::verbose(
                 MESSAGE_STORE_CHAIN,
@@ -2172,14 +2181,6 @@ impl MessageProcessingDelegate {
                     "receive.stream.create.error",
                     &[("chatId", chatId.clone()), ("error", error.to_string())],
                 );
-                if let Some(session) = workerWorkspaceToolHookSession
-                    .lock()
-                    .expect("workspace tool hook session mutex poisoned")
-                    .take()
-                {
-                    workspaceToolHookHandler.removeToolHook(session.hookId());
-                    session.close();
-                }
                 if self.cleanupRuntimeAfterTurn(chatId.clone(), turnId) {
                     self.finishChatExecutionForTurn(
                         chatId.clone(),
@@ -2338,8 +2339,6 @@ impl MessageProcessingDelegate {
         let completionRevisionTracker = workerRevisionTracker.clone();
         let completionPartStream = workerPartStream.clone();
         let completionMessageProcessingDelegate = workerMessageProcessingDelegate.clone();
-        let completionWorkspaceToolHookSession = workerWorkspaceToolHookSession.clone();
-        let completionWorkspaceToolHookHandler = workerWorkspaceToolHookHandler.clone();
         let completionFirstResponseElapsed = workerFirstResponseElapsed.clone();
         let completionResponseStream = workerResponseStream.clone();
         let persistChatId = completionChatId.clone();
@@ -2386,13 +2385,7 @@ impl MessageProcessingDelegate {
                 "message-response-collection",
                 Box::new(move || {
                     Box::pin(async move {
-                        // Fires when this future is dropped mid-stream (user
-                        // cancel, plugin engine revoke); a no-op once the
-                        // completion path below has taken the session.
-                        let _workspaceToolHookDropGuard = WorkspaceToolHookDropGuard::new(
-                            completionWorkspaceToolHookSession.clone(),
-                            completionWorkspaceToolHookHandler.clone(),
-                        );
+                        let workspaceToolHookCleanupGuard = workspaceToolHookCleanupGuard;
                         responseItems
                             .collect_ordered(&mut move |item| {
                                 let chunk = match item {
@@ -2469,17 +2462,7 @@ impl MessageProcessingDelegate {
                                 persistStreamingSnapshot(&snapshot);
                             })
                             .await;
-                        let workspaceToolHookSession = completionWorkspaceToolHookSession
-                            .lock()
-                            .expect("workspace tool hook session mutex poisoned")
-                            .take();
-                        if let Some(session) = workspaceToolHookSession.as_ref() {
-                            completionWorkspaceToolHookHandler
-                                .lock()
-                                .expect("workspace tool hook handler mutex poisoned")
-                                .removeToolHook(session.hookId());
-                            session.close();
-                        }
+                        workspaceToolHookCleanupGuard.registration.close();
                         if !completionMessageProcessingDelegate
                             .lock()
                             .expect("worker message processing delegate mutex poisoned")
@@ -2933,7 +2916,6 @@ impl MessageProcessingDelegate {
                     error.to_string(),
                 )
             })?;
-        workspaceToolHookCleanupGuard.handoff();
         executionGuard.handoff();
         workGuard.handoff();
         Ok(SendUserMessageProcessingResult {
