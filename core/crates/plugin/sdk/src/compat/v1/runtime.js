@@ -220,6 +220,24 @@ function __operitInstallV1Runtime(runtime) {
             if (typeof args[1] === 'string') { type = args[0]; index = 1; }
             name = args[index];
         }
+        if (type === 'default' && name === 'grep_context') {
+            var objectCall = args[0] !== null && typeof args[0] === 'object';
+            var parameters = objectCall ? args[0].params : args[index + 1];
+            var { intent, ...search } = parameters;
+            var grepParams = Object.assign({}, search, {
+                pattern: intent,
+                case_insensitive: true,
+                context_lines: search.context_lines === undefined ? 8 : search.context_lines,
+                max_results: search.max_results === undefined ? 10 : search.max_results,
+            });
+            if (objectCall) {
+                rewritten[0] = Object.assign({}, args[0], { name: 'grep_code', params: grepParams });
+            } else {
+                rewritten[index] = 'grep_code';
+                rewritten[index + 1] = grepParams;
+            }
+            return originalToolCall.apply(runtime, rewritten);
+        }
         if (type === 'default' && name === 'browser_handle_dialog') {
             var objectCall = args[0] !== null && typeof args[0] === 'object';
             var parameters = objectCall ? args[0].params : args[index + 1];
