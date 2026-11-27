@@ -110,3 +110,26 @@ opt-level = 2
 
 [profile.dev.package.roxmltree]
 opt-level = 2
+
+# Cold-start budget: the bridge is dlopen'd on the startup critical path and its
+# page faults dominate first launch on compressed F2FS volumes. Shrink the ELF
+# (fat LTO deduplicates monomorphized generics across the 30+ core crates).
+# Mirrors edge/boards/android_phone, which already ships this profile.
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+
+# Strip only on Android. This profile is shared by every desktop/mobile/web
+# build of the bridge; Windows resolves crash stacks through the deployed PDB
+# and Apple/Linux symbolication relies on the ELF/Mach-O symbol table, so their
+# release artifacts must keep symbols. cdylib exports live in .dynsym and are
+# unaffected by stripping the Android .symtab.
+[target.aarch64-linux-android.profile.release]
+strip = "symbols"
+
+[target.armv7-linux-androideabi.profile.release]
+strip = "symbols"
+
+[target.x86_64-linux-android.profile.release]
+strip = "symbols"
