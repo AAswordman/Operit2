@@ -6,6 +6,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../common/ModelDisplayName.dart';
 import 'UsageBentoComponents.dart';
 import 'UsageFormatters.dart';
 import 'UsagePricing.dart';
@@ -82,7 +83,9 @@ class UsageTimelineRecord {
 
   // Length-prefixed keys avoid merging equal model names from different providers.
   String get modelKey => '${provider.length}:$provider$model';
-  String get label => '$provider · $model';
+
+  /// Presents a readable model name while modelKey retains the exact identity.
+  String get label => '$provider · ${formatModelDisplayName(model)}';
 }
 
 enum UsageTimelineMetric {

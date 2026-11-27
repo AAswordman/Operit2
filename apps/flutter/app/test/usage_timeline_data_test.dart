@@ -53,9 +53,9 @@ void main() {
       record(minute, model: 'unknown', input: 0, output: 0),
     ]);
     expect(result.series.map((s) => s.label), [
-      'A · model',
-      'A · unknown',
-      'B · model',
+      'A · Model',
+      'A · Unknown',
+      'B · Model',
     ]);
     expect(result.series.map((s) => s.total), [12, 0, 12]);
     expect(result.requestCount, 3);

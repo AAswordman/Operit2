@@ -8,6 +8,7 @@ import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import '../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../common/ChatMessageIdentity.dart';
+import '../../../../common/ModelDisplayName.dart';
 import '../../viewmodel/ChatViewModel.dart';
 
 /// Returns the primary header title for a cursor-style AI message.
@@ -18,7 +19,7 @@ String cursorAiPrimaryTitle(
 }) {
   if (message.roleName.isEmpty ||
       readChatMessageIdentity(message)?.usesProviderLogo == true) {
-    return message.modelName;
+    return formatModelDisplayName(message.modelName);
   }
   if (snapshot.showRoleName && message.roleName.isNotEmpty) {
     return message.roleName;
@@ -33,7 +34,7 @@ String bubbleAiPrimaryTitle(
 ) {
   if (message.roleName.isEmpty ||
       readChatMessageIdentity(message)?.usesProviderLogo == true) {
-    return message.modelName;
+    return formatModelDisplayName(message.modelName);
   }
   return snapshot.showRoleName ? message.roleName : '';
 }
@@ -51,10 +52,10 @@ String formatModelProviderLabel(
   final showProvider =
       snapshot.showModelProvider && message.provider.isNotEmpty;
   if (showModel && showProvider) {
-    return '${message.modelName} · ${message.provider}';
+    return '${formatModelDisplayName(message.modelName)} · ${message.provider}';
   }
   if (showModel) {
-    return message.modelName;
+    return formatModelDisplayName(message.modelName);
   }
   if (showProvider) {
     return message.provider;

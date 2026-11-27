@@ -10,6 +10,7 @@ import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../common/ModelDisplayName.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../model/ProviderLogo.dart';
 import 'UsageAttributionSection.dart';
@@ -1835,7 +1836,7 @@ class _ModelCompositionBentoCard extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                '${item.provider} · ${item.modelName}',
+                '${item.provider} · ${formatModelDisplayName(item.modelName)}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: text.labelMedium?.copyWith(fontWeight: FontWeight.w600),

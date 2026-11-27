@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core;
+import '../ModelDisplayName.dart';
 
 /// Presents one possible sender's exact provider-scoped model and selection rule.
 class ChatParticipantModel {
@@ -50,6 +51,7 @@ class ChatModelSelection {
   String get label {
     final binding = singleBinding;
     if (binding == null) return '多模型 · ${participants.length} 个角色';
-    return canSelectGlobal ? binding.modelId : '固定 · ${binding.modelId}';
+    final name = formatModelDisplayName(binding.modelId);
+    return canSelectGlobal ? name : '固定 · $name';
   }
 }

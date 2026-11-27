@@ -24,7 +24,7 @@ void main() {
           await tester.pumpAndSettle();
 
           final expected = [
-            if (showModel) message.modelName,
+            if (showModel) 'Model:latest',
             if (showProvider) message.provider,
           ].join(' · ');
           expect(formatModelProviderLabel(message, snapshot), expected);
@@ -32,7 +32,7 @@ void main() {
             expect(find.textContaining(expected), findsOneWidget);
           }
           expect(
-            find.textContaining(message.modelName),
+            find.textContaining('Model:latest'),
             showModel ? findsOneWidget : findsNothing,
           );
           expect(
@@ -68,7 +68,7 @@ void main() {
         controller.previewThemeSettings();
         await tester.pumpAndSettle();
         expect(
-          find.textContaining('org/model:latest'),
+          find.textContaining('Model:latest'),
           switches.$1 ? findsOneWidget : findsNothing,
         );
         expect(
@@ -142,7 +142,7 @@ void main() {
     );
     expect(
       formatModelProviderLabel(_message(provider: ''), snapshot),
-      'org/model:latest',
+      'Model:latest',
     );
     expect(
       formatModelProviderLabel(_message(model: ''), snapshot),
@@ -169,7 +169,7 @@ void main() {
         });
         await _pumpMessage(tester, model, snapshot);
         await tester.pumpAndSettle();
-        expect(find.textContaining(model.modelName), findsOneWidget);
+        expect(find.textContaining('Model:latest'), findsOneWidget);
         if (style == 'cursor') {
           expect(find.byType(ProviderIdentityLogo), findsNothing);
           expect(find.byType(ChatAvatarImage), findsNothing);
@@ -208,7 +208,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(ChatAvatarImage), findsNothing);
       expect(find.byType(ProviderIdentityLogo), findsNothing);
-      expect(find.textContaining(model.modelName), findsOneWidget);
+      expect(find.textContaining('Model:latest'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     });

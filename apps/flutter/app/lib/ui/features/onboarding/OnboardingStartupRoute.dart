@@ -20,6 +20,7 @@ import '../../../l10n/generated/app_localizations.dart';
 import '../../common/StorageDirectorySelectionError.dart';
 import '../../common/DeviceSpaceDiscoveryPanel.dart';
 import '../../common/OperitLogoMark.dart';
+import '../../common/ModelDisplayName.dart';
 import '../../common/RuntimeBootstrapScreen.dart';
 import '../../common/ChatBackupDirectoryPanel.dart';
 import '../../common/ChatBackupRestorePanel.dart';
@@ -3400,8 +3401,8 @@ class _OnboardingAvailableModelPickerState
                                     core_proxy
                                         .AvailableProviderModelSource
                                         .catalog
-                            ? '${model.modelId} (${l10n.settingsModelAvailableSourceHistory})'
-                            : model.modelId,
+                            ? '${formatModelDisplayName(model.modelId)} (${l10n.settingsModelAvailableSourceHistory})'
+                            : formatModelDisplayName(model.modelId),
                       ),
                     ),
                   )

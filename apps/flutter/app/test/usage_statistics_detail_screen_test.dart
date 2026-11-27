@@ -86,7 +86,7 @@ void main() {
       await _scrollToText(tester, 'Model usage over time');
       expect(find.text('3h'), findsOneWidget);
       expect(find.textContaining('min buckets'), findsOneWidget);
-      expect(find.textContaining('OpenAI · gpt-5'), findsWidgets);
+      expect(find.textContaining('OpenAI · Gpt 5'), findsWidgets);
       expect(find.text('Daily usage trend'), findsNothing);
       expect(find.text('Function model ranking'), findsNothing);
       expect(tester.takeException(), isNull);
@@ -145,7 +145,7 @@ void main() {
       final model = find.ancestor(
         of: find.descendant(
           of: find.byType(FilterChip),
-          matching: find.textContaining('OpenAI · gpt-5'),
+          matching: find.textContaining('OpenAI · Gpt 5'),
         ),
         matching: find.byType(FilterChip),
       );
@@ -474,11 +474,11 @@ void main() {
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
       await _scrollToText(tester, 'Model usage over time');
-      expect(find.textContaining('OpenAI · gpt-5'), findsWidgets);
-      expect(find.textContaining('LegacyAI · legacy-model'), findsNothing);
+      expect(find.textContaining('OpenAI · Gpt 5'), findsWidgets);
+      expect(find.textContaining('LegacyAI · Legacy Model'), findsNothing);
       await tester.tap(find.byTooltip('Refresh'));
       await tester.pumpAndSettle();
-      expect(find.textContaining('LegacyAI · legacy-model'), findsNothing);
+      expect(find.textContaining('LegacyAI · Legacy Model'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
@@ -554,9 +554,9 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('usage-attr-tab-logs')));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.textContaining('OpenAI · gpt-5').last);
+      await tester.ensureVisible(find.textContaining('OpenAI · Gpt 5').last);
       await tester.pumpAndSettle();
-      await tester.tap(find.textContaining('OpenAI · gpt-5').last);
+      await tester.tap(find.textContaining('OpenAI · Gpt 5').last);
       await tester.pumpAndSettle();
       expect(find.text('Request Telemetry'), findsOneWidget);
       expect(

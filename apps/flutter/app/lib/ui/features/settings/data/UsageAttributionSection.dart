@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core;
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../common/ModelDisplayName.dart';
 import '../model/ProviderLogo.dart';
 import 'UsageBentoComponents.dart';
 import 'UsageFormatters.dart';
@@ -115,7 +116,7 @@ class _UsageAttributionSectionState extends State<UsageAttributionSection> {
     final groups = _groupRecords(
       widget.records,
       keyOf: (r) => '${r.provider}:${r.modelName}',
-      titleOf: (r) => '${r.provider.isEmpty ? l10n.settingsDataDetailedStatsUnlabeledProvider : r.provider} · ${r.modelName.isEmpty ? l10n.settingsDataDetailedStatsUnlabeledModel : r.modelName}',
+      titleOf: (r) => '${r.provider.isEmpty ? l10n.settingsDataDetailedStatsUnlabeledProvider : r.provider} · ${r.modelName.isEmpty ? l10n.settingsDataDetailedStatsUnlabeledModel : formatModelDisplayName(r.modelName)}',
       providerOf: (r) => r.provider,
     );
     if (groups.isEmpty) {
@@ -358,7 +359,7 @@ class _UsageAttributionSectionState extends State<UsageAttributionSection> {
           children: [
             Expanded(
               child: Text(
-                '${record.provider} · ${record.modelName}',
+                '${record.provider} · ${formatModelDisplayName(record.modelName)}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),

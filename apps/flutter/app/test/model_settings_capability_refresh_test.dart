@@ -144,7 +144,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Test Provider').first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('test-model').last);
+      await tester.tap(find.text('Test Model').last);
       await tester.pumpAndSettle();
       expect(popup, findsNothing);
       expect(bridge.modelSelectionWrites, 1);
@@ -184,7 +184,7 @@ void main() {
         expect(tester.takeException(), isNull);
         await tester.tap(find.text('Test Provider').first);
         await tester.pumpAndSettle();
-        await tester.tap(find.text('test-model').last);
+        await tester.tap(find.text('Test Model').last);
         await tester.pumpAndSettle();
         expect(selectedModel, 'test-model');
         final chatId = missingProvider ? 'created-chat' : 'existing-chat';
@@ -234,7 +234,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Test Provider').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('test-model').last);
+    await tester.tap(find.text('Test Model').last);
     await tester.pumpAndSettle();
     expect(bridge.chatBindings['embedded-chat']?.modelId, 'test-model');
     expect(bridge.chatBinding.modelId, 'global-model');
@@ -266,8 +266,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(bridge.requestedModelChatId, 'fixed-chat');
-      expect(find.text('test-model'), findsOneWidget);
-      expect(find.text('expensive-global-model'), findsNothing);
+      expect(find.text('Test Model'), findsOneWidget);
+      expect(find.text('Expensive Global Model'), findsNothing);
       expect(find.textContaining('固定模型'), findsWidgets);
       expect(bridge.thinkingCalls, 1);
       expect(bridge.modelSelectionWrites, 0);
@@ -296,7 +296,7 @@ void main() {
       await tester.tap(find.text('Test Provider').first);
       await tester.pumpAndSettle();
       bridge.participantModels = [_participantModel(followsGlobal: false)];
-      await tester.tap(find.text('test-model').last);
+      await tester.tap(find.text('Test Model').last);
       await tester.pumpAndSettle();
       expect(bridge.modelSelectionWrites, 0);
       expect(find.textContaining('当前会话包含固定模型'), findsOneWidget);
@@ -332,8 +332,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('test-model'), findsOneWidget);
-      expect(find.text('second-model'), findsOneWidget);
+      expect(find.text('Test Model'), findsOneWidget);
+      expect(find.text('Second Model'), findsOneWidget);
       expect(bridge.thinkingCalls, 0);
       expect(bridge.modelSelectionWrites, 0);
       expect(tester.takeException(), isNull);
@@ -380,8 +380,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('固定 · test-model'), findsOneWidget);
-      expect(find.text('global-model'), findsNothing);
+      expect(find.text('固定 · Test Model'), findsOneWidget);
+      expect(find.text('Global Model'), findsNothing);
       bridge.participantModels = [
         {
           'id': 'model:chat',
@@ -395,8 +395,8 @@ void main() {
       ];
       update(() => chatId = 'global-chat');
       await tester.pumpAndSettle();
-      expect(find.text('global-model'), findsOneWidget);
-      expect(find.text('固定 · test-model'), findsNothing);
+      expect(find.text('Global Model'), findsOneWidget);
+      expect(find.text('固定 · Test Model'), findsNothing);
       expect(bridge.requestedModelChatId, 'global-chat');
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
@@ -472,11 +472,11 @@ void main() {
     await tester.pump();
     expect(find.byType(Dialog), findsWidgets);
     expect(find.byType(M3LoadingIndicator), findsOneWidget);
-    expect(find.text('new-model'), findsNothing);
+    expect(find.text('New Model'), findsNothing);
     gate.complete();
     await tester.pumpAndSettle();
     expect(find.byType(M3LoadingIndicator), findsNothing);
-    expect(find.text('new-model'), findsOneWidget);
+    expect(find.text('New Model'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
   for (final downloadedAt in <int?>[null, 1794000000000]) {
@@ -491,7 +491,7 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(find.byTooltip(l10n.settingsModelAddModel));
         await tester.pumpAndSettle();
-        expect(find.text('new-model'), findsOneWidget);
+        expect(find.text('New Model'), findsOneWidget);
         expect(find.textContaining('fixture catalog offline'), findsNothing);
         if (downloadedAt == null) {
           expect(find.text(l10n.settingsModelCatalogBundled), findsOneWidget);
@@ -499,7 +499,7 @@ void main() {
         await tester.tap(find.text(l10n.settingsModelCatalogRetry));
         await tester.pumpAndSettle();
         expect(bridge.catalogRefreshCalls, 1);
-        expect(find.text('new-model'), findsOneWidget);
+        expect(find.text('New Model'), findsOneWidget);
         expect(find.textContaining('fixture catalog offline'), findsNothing);
         expect(tester.takeException(), isNull);
       },
@@ -531,17 +531,17 @@ void main() {
       final l10n = AppLocalizations.of(panelKey.currentContext!)!;
       await tester.tap(find.text('Test Provider'));
       await tester.pumpAndSettle();
-      expect(find.text('stale-model'), findsOneWidget);
-      expect(find.text('custom-model'), findsOneWidget);
+      expect(find.text('Stale Model'), findsOneWidget);
+      expect(find.text('Custom Model'), findsOneWidget);
       expect(find.text(l10n.settingsModelCustomBadge), findsOneWidget);
 
       await tester.tap(find.text(l10n.settingsModelSyncModels));
       await tester.pumpAndSettle();
 
       expect(bridge.syncModelsCalls, 1);
-      expect(find.text('stale-model'), findsNothing);
-      expect(find.text('fresh-model'), findsOneWidget);
-      expect(find.text('custom-model'), findsOneWidget);
+      expect(find.text('Stale Model'), findsNothing);
+      expect(find.text('Fresh Model'), findsOneWidget);
+      expect(find.text('Custom Model'), findsOneWidget);
       expect(find.text(l10n.settingsModelCustomBadge), findsOneWidget);
       expect(find.text(l10n.settingsModelSyncSummary(1, 1, 1)), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -635,7 +635,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(bridge.createdCustomModels, [('test-provider', 'manual-model')]);
-      expect(find.text('manual-model'), findsOneWidget);
+      expect(find.text('Manual Model'), findsOneWidget);
       expect(find.text(l10n.settingsModelCustomBadge), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
@@ -814,7 +814,7 @@ void main() {
 
       await tester.tap(find.text('Test Provider'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('test-model').last);
+      await tester.tap(find.text('Test Model').last);
       await tester.pumpAndSettle();
       // A capability saves as soon as it is switched.
       await tester.tap(find.text(l10n.settingsModelCapabilityImage).last);
@@ -937,7 +937,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('deepseek-flash'), findsOneWidget);
+      expect(find.text('Deepseek Flash'), findsOneWidget);
       ProviderLogo logo() =>
           tester.widget<ProviderLogo>(find.byType(ProviderLogo).first);
       expect(logo().providerTypeId, isEmpty);
@@ -947,14 +947,14 @@ void main() {
       bridge.modelId = bridge.chatBinding.modelId;
       bridge.emitProfiles();
       await tester.pumpAndSettle();
-      expect(find.text('deepseek-flash'), findsOneWidget);
+      expect(find.text('Deepseek Flash'), findsOneWidget);
       expect(logo().providerTypeId, 'OPENAI');
       expect(logo().fallbackName, 'Test Provider');
       expect(bridge.resolutionCalls, 0);
 
       bridge.emitBindings(const {});
       await tester.pumpAndSettle();
-      expect(find.text('deepseek-flash'), findsNothing);
+      expect(find.text('Deepseek Flash'), findsNothing);
       expect(find.text('模型配置不可用'), findsOneWidget);
       expect(logo().providerTypeId, isEmpty);
       expect(tester.takeException(), isNull);

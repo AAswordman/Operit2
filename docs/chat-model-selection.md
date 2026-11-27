@@ -1,5 +1,22 @@
 # Conversation model selection
 
+Flutter model labels use `formatModelDisplayName`: remove the namespace through
+the final `/`, join standalone numeric runs with dots when each component has
+at most two digits, replace the remaining `-` with spaces, and uppercase the
+first character of each word while preserving the remaining characters. For
+example, `anthropic/claude-sonnet-4-5` becomes `Claude Sonnet 4.5`, and
+`openai/gpt-5-mini` becomes `Gpt 5 Mini`. Numeric runs containing a year and
+alphanumeric size tokens such as `70b` are not interpreted as decimal versions.
+Composer selections, participant model labels, message headers, settings
+selections, onboarding selections and
+usage summaries share this presentation rule. Provider names and explicitly
+authored local-model display names keep their own naming.
+
+Stored provider/model bindings, request IDs, search by original ID, model ID
+inputs, error details, message metadata tooltips, usage record details and
+exports retain the exact IDs. Display names do not participate in identity,
+grouping, pricing or request routing.
+
 The chat model in functional settings is the global default. New conversations
 use that default dynamically. Selecting a model in either existing composer
 model menu writes only the selected conversation's provider/model pair; it does

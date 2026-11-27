@@ -14,6 +14,7 @@ import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/CommonNetworkErrorView.dart';
 import '../../../common/ApiErrorText.dart';
 import '../../../common/ThinkingLevelText.dart';
+import '../../../common/ModelDisplayName.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
@@ -1527,7 +1528,9 @@ class _ProviderCard extends StatelessWidget {
                       children: <Widget>[
                         Flexible(
                           child: Text(
-                            displayedModel?.id ?? l10n.settingsModelNoModels,
+                            displayedModel == null
+                                ? l10n.settingsModelNoModels
+                                : formatModelDisplayName(displayedModel.id),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.bodySmall!
@@ -3408,13 +3411,16 @@ class _ProviderModelTile extends StatelessWidget {
                           const SizedBox(width: 6),
                         ],
                         Flexible(
-                          child: Text(
-                            model.id,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: colorScheme.onSurface,
+                          child: Tooltip(
+                            message: model.id,
+                            child: Text(
+                              formatModelDisplayName(model.id),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: colorScheme.onSurface,
+                              ),
                             ),
                           ),
                         ),
@@ -6248,7 +6254,7 @@ class _FunctionMappingRow extends StatelessWidget {
         : _functionMappingWarning(l10n, functionType, summary!);
     final bindingText = l10n.settingsModelFunctionMappingsCurrent(
       summary?.providerName ?? displayBinding.providerId,
-      displayBinding.modelId,
+      formatModelDisplayName(displayBinding.modelId),
     );
     final description = _functionTypeDescription(l10n, functionType);
 
@@ -6488,7 +6494,7 @@ class _FunctionModelSelectorDialogState
     final groups = <String, _ProviderModelGroupEntry>{};
     for (final summary in widget.summaries) {
       if (query.isNotEmpty &&
-          !'${summary.modelId} ${summary.providerName} ${summary.providerTypeId}'
+          !'${summary.modelId} ${formatModelDisplayName(summary.modelId)} ${summary.providerName} ${summary.providerTypeId}'
               .toLowerCase()
               .contains(query)) {
         continue;
@@ -6746,10 +6752,13 @@ class _FunctionModelOptionTile extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      Text(
-                        summary.modelId,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      Tooltip(
+                        message: summary.modelId,
+                        child: Text(
+                          formatModelDisplayName(summary.modelId),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Row(
