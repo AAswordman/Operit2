@@ -503,6 +503,18 @@ impl MessageDao {
         )?.into_iter().map(|row| Ok(ChatMessageCount { chatId: row.get(0)?, count: row.get(1)? })).collect()
     }
 
+    /// Sums persisted input and cached input tokens across measured messages in a chat.
+    pub fn getChatCachedTokenTotals(&self, chatId: &str) -> Result<(i64, i64), SqliteStoreError> {
+        let row = self.store.queryOne(
+            "SELECT COALESCE(SUM(CASE WHEN inputTokens > 0 THEN inputTokens ELSE 0 END), 0), COALESCE(SUM(CASE WHEN inputTokens > 0 AND cachedInputTokens > 0 THEN MIN(cachedInputTokens, inputTokens) ELSE 0 END), 0) FROM messages WHERE chatId = ?1",
+            sqliteParams![chatId],
+        )?;
+        match row {
+            Some(row) => Ok((row.get(0)?, row.get(1)?)),
+            None => Ok((0, 0)),
+        }
+    }
+
     /// Processes the exact persisted message record with explicit storage errors.
     pub fn updateSelectedVariantIndex(
         &self,

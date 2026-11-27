@@ -180,9 +180,10 @@ class _ContextUsagePanelState extends State<ContextUsagePanel> {
     ColorScheme colors,
     core_proxy.ChatInputMenuSummary summary,
   ) {
-    final limit = summary.maxContextTokens;
+    final budget = resolveContextBudget(summary);
+    final limit = budget.effectiveLimit;
     final used = summary.currentWindowSize;
-    final hasLimit = limit > 0;
+    final hasLimit = budget.hasLimit;
     final usageRatio = hasLimit ? (used / limit).clamp(0.0, 1.0) : 0.0;
     final remaining = hasLimit ? math.max(0, limit - used) : 0;
 
@@ -292,11 +293,22 @@ class _ContextUsagePanelState extends State<ContextUsagePanel> {
         }
       }
     }
+    final cacheRate = summary.cacheHitRate;
+    final cachedTokens = summary.cachedInputTokenCount;
+    final ioReadout =
+        '入 ${formatCompactTokenCount(summary.inputTokenCount)} · 出 ${formatCompactTokenCount(summary.outputTokenCount)}';
     final trailingReadout = _hoveringCompact && widget.canCompact
         ? '压缩后保留关键上下文'
         : hoveredItem != null
         ? '${hoveredItem.label} ${hoveredItem.value}'
-        : '入 ${formatCompactTokenCount(summary.inputTokenCount)} · 出 ${formatCompactTokenCount(summary.outputTokenCount)}';
+        : ioReadout;
+    final isHoverHighlighted =
+        (_hoveringCompact && widget.canCompact) || hoveredItem != null;
+    final cacheColor = cacheRate != null && cacheRate > 0
+        ? (colors.brightness == Brightness.dark
+              ? const Color(0xFF5EEAD4)
+              : const Color(0xFF0F766E))
+        : colors.onSurfaceVariant;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -304,12 +316,14 @@ class _ContextUsagePanelState extends State<ContextUsagePanel> {
       children: <Widget>[
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.baseline,
-          textBaseline: TextBaseline.alphabetic,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: <Widget>[
             Flexible(
+              flex: 3,
               child: Tooltip(
-                message: '$used / ${hasLimit ? limit : "未设置上限"}',
+                message: budget.hasCompressionSupplement
+                    ? '$used / $limit（压缩阈值 · 最大 ${budget.rawMaxTokens}）'
+                    : '$used / ${hasLimit ? limit : "未设置上限"}',
                 child: Text.rich(
                   TextSpan(
                     children: <InlineSpan>[
@@ -333,6 +347,20 @@ class _ContextUsagePanelState extends State<ContextUsagePanel> {
                           ],
                         ),
                       ),
+                      if (budget.hasCompressionSupplement)
+                        TextSpan(
+                          text:
+                              ' (最大 ${formatCompactTokenCount(budget.rawMaxTokens)})',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            fontSize: 10.5,
+                            color: colors.onSurfaceVariant.withValues(
+                              alpha: 0.72,
+                            ),
+                            fontFeatures: const <FontFeature>[
+                              FontFeature.tabularFigures(),
+                            ],
+                          ),
+                        ),
                     ],
                   ),
                   maxLines: 1,
@@ -342,20 +370,49 @@ class _ContextUsagePanelState extends State<ContextUsagePanel> {
             ),
             const SizedBox(width: 6),
             Flexible(
-              child: Text(
-                trailingReadout,
-                textAlign: TextAlign.end,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  fontSize: 11,
-                  color: _hoveringCompact || hoveredItem != null
-                      ? colors.primary
-                      : colors.onSurfaceVariant,
-                  fontFeatures: const <FontFeature>[
-                    FontFeature.tabularFigures(),
-                  ],
-                ),
+              flex: 2,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: <Widget>[
+                  Text(
+                    trailingReadout,
+                    textAlign: TextAlign.end,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontSize: 11,
+                      color: isHoverHighlighted
+                          ? colors.primary
+                          : colors.onSurfaceVariant,
+                      fontFeatures: const <FontFeature>[
+                        FontFeature.tabularFigures(),
+                      ],
+                    ),
+                  ),
+                  if (!isHoverHighlighted && cacheRate != null)
+                    Tooltip(
+                      message: cachedTokens != null
+                          ? '累计输入缓存命中 $cachedTokens tokens'
+                          : '累计输入缓存命中率',
+                      child: Text(
+                        '缓存命中 ${formatCacheHitPercentage(cacheRate)}',
+                        textAlign: TextAlign.end,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          fontSize: 10,
+                          color: cacheColor,
+                          fontWeight: cacheRate > 0
+                              ? FontWeight.w600
+                              : FontWeight.w400,
+                          fontFeatures: const <FontFeature>[
+                            FontFeature.tabularFigures(),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ],
@@ -430,9 +487,10 @@ class _ContextUsagePanelState extends State<ContextUsagePanel> {
     ColorScheme colors,
     core_proxy.ChatInputMenuSummary summary,
   ) {
-    final limit = summary.maxContextTokens;
+    final budget = resolveContextBudget(summary);
+    final limit = budget.effectiveLimit;
     final used = summary.currentWindowSize;
-    final hasLimit = limit > 0;
+    final hasLimit = budget.hasLimit;
     final fraction = hasLimit ? (used / limit).clamp(0.0, 1.0) : 0.0;
     final remaining = hasLimit ? math.max(0, limit - used) : 0;
     final arcColor = fraction >= 0.9
@@ -509,8 +567,11 @@ class _ContextUsagePanelState extends State<ContextUsagePanel> {
                   children: <Widget>[
                     _TelemetryRow(
                       label: '上下文窗口',
-                      value:
-                          '${formatCompactTokenCount(used)} / ${hasLimit ? formatCompactTokenCount(limit) : "未设置上限"}',
+                      value: hasLimit
+                          ? budget.hasCompressionSupplement
+                                ? '${formatCompactTokenCount(used)} / ${formatCompactTokenCount(limit)} (最大 ${formatCompactTokenCount(budget.rawMaxTokens)})'
+                                : '${formatCompactTokenCount(used)} / ${formatCompactTokenCount(limit)}'
+                          : '${formatCompactTokenCount(used)} / 未设置上限',
                       emphasized: true,
                     ),
                     if (hasLimit)
@@ -523,6 +584,13 @@ class _ContextUsagePanelState extends State<ContextUsagePanel> {
                       value:
                           '${formatCompactTokenCount(summary.inputTokenCount)} / ${formatCompactTokenCount(summary.outputTokenCount)}',
                     ),
+                    if (summary.cacheHitRate case final cacheRate?)
+                      _TelemetryRow(
+                        label: '缓存命中',
+                        value: summary.cachedInputTokenCount != null
+                            ? '${formatCacheHitPercentage(cacheRate)} (${formatCompactTokenCount(summary.cachedInputTokenCount!)})'
+                            : formatCacheHitPercentage(cacheRate),
+                      ),
                   ],
                 ),
               ),
@@ -795,17 +863,18 @@ class _TelemetryRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 1.5),
       child: Row(
         children: <Widget>[
-          Expanded(
-            child: Text(
-              label,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: colors.onSurfaceVariant,
-              ),
+          Text(
+            label,
+            maxLines: 1,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: colors.onSurfaceVariant,
             ),
           ),
-          Flexible(
+          const SizedBox(width: 8),
+          Expanded(
             child: Text(
               value,
+              textAlign: TextAlign.end,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.labelSmall?.copyWith(

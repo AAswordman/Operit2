@@ -18,6 +18,7 @@ import '../../../../../../common/icons/MaterialIconNameResolver.dart';
 import '../../../../../../main/navigation/ToolPkgCatalogChangeBus.dart';
 import '../../../../viewmodel/ChatSelectionTransition.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
+import '../../../workspace/context_stats/TopBarCapsuleModels.dart';
 
 const String _kSvgSliders =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg>';
@@ -1535,7 +1536,7 @@ class _ChatSessionSummarySectionState
     extends State<_ChatSessionSummarySection> {
   Timer? _summaryTimer;
   bool _pollingSummary = false;
-  Future<int>? _maxContextTokensFuture;
+  Future<core_proxy.ChatInputMenuSummary>? _summaryFuture;
   int _currentWindowSize = 0;
   int _inputTokenCount = 0;
   int _outputTokenCount = 0;
@@ -1547,7 +1548,7 @@ class _ChatSessionSummarySectionState
   void initState() {
     super.initState();
     if (widget.showNativeStatistics) {
-      _maxContextTokensFuture = _loadSummary();
+      _summaryFuture = _loadSummary();
       _summaryTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
         if (_pollingSummary) return;
         _pollingSummary = true;
@@ -1559,7 +1560,7 @@ class _ChatSessionSummarySectionState
               widget.currentChatId == chatId &&
               widget.viewModel == viewModel) {
             setState(() {
-              _maxContextTokensFuture = Future.value(value);
+              _summaryFuture = Future.value(value);
             });
           }
         } catch (error) {
@@ -1581,7 +1582,7 @@ class _ChatSessionSummarySectionState
       _inputTokenCount = 0;
       _outputTokenCount = 0;
       if (widget.showNativeStatistics) {
-        _maxContextTokensFuture = _loadSummary();
+        _summaryFuture = _loadSummary();
       }
     }
   }
@@ -1715,7 +1716,7 @@ class _ChatSessionSummarySectionState
   );
 
   /// Reads native token statistics without consulting any plugin domain records.
-  Future<int> _loadSummary() async {
+  Future<core_proxy.ChatInputMenuSummary> _loadSummary() async {
     final chatId = widget.currentChatId;
     final viewModel = widget.viewModel;
     final summary = await viewModel.chatCore.chatInputMenuSummary(
@@ -1730,7 +1731,7 @@ class _ChatSessionSummarySectionState
         _outputTokenCount = summary.outputTokenCount;
       });
     }
-    return summary.maxContextTokens;
+    return summary;
   }
 
   /// Stops overlay observers without cancelling the already detached presentation.
@@ -1759,8 +1760,8 @@ class _ChatSessionSummarySectionState
 
   /// Reports native statistics failures separately from plugin-owned selectors.
   Widget _buildNativeStatistics(ColorScheme colorScheme, TextTheme textTheme) =>
-      FutureBuilder<int>(
-        future: _maxContextTokensFuture,
+      FutureBuilder<core_proxy.ChatInputMenuSummary>(
+        future: _summaryFuture,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return Padding(
@@ -1768,10 +1769,13 @@ class _ChatSessionSummarySectionState
               child: Text('统计加载失败：${snapshot.error}'),
             );
           }
-          final maxContextTokens = snapshot.data;
-          final contextUsagePercentage = maxContextTokens == null
+          final summary = snapshot.data;
+          final budget = summary == null ? null : resolveContextBudget(summary);
+          final contextUsagePercentage = budget == null
               ? null
-              : _contextUsagePercentage(maxContextTokens);
+              : _contextUsagePercentage(budget);
+          final cacheHitRate = summary?.cacheHitRate;
+          final cachedInputTokenCount = summary?.cachedInputTokenCount;
           final totalTokenCount = _inputTokenCount + _outputTokenCount;
           return Column(
             mainAxisSize: MainAxisSize.min,
@@ -1833,7 +1837,7 @@ class _ChatSessionSummarySectionState
                           label: '上下文窗口',
                           value: _contextWindowLabel(
                             currentWindowSize: _currentWindowSize,
-                            maxContextTokens: maxContextTokens,
+                            budget: budget,
                           ),
                         ),
                         _ChatStatValueRow(
@@ -1844,6 +1848,13 @@ class _ChatSessionSummarySectionState
                           label: '输出 Token',
                           value: _formatTokenCount(_outputTokenCount),
                         ),
+                        if (cacheHitRate != null)
+                          _ChatStatValueRow(
+                            label: '缓存命中率',
+                            value: cachedInputTokenCount != null
+                                ? '${formatCacheHitPercentage(cacheHitRate)} (${_formatTokenCount(cachedInputTokenCount)})'
+                                : formatCacheHitPercentage(cacheHitRate),
+                          ),
                         _ChatStatValueRow(
                           label: '总 Token',
                           value: _formatTokenCount(totalTokenCount),
@@ -1859,23 +1870,27 @@ class _ChatSessionSummarySectionState
       );
 
   /// Calculates the current context usage percentage for the summary row.
-  double _contextUsagePercentage(int maxContextTokens) {
-    if (maxContextTokens <= 0) {
+  double _contextUsagePercentage(ContextBudgetSnapshot budget) {
+    if (!budget.hasLimit) {
       return 0;
     }
-    return (_currentWindowSize / maxContextTokens * 100).clamp(0, 999);
+    return (_currentWindowSize / budget.effectiveLimit * 100).clamp(0, 999);
   }
 
   /// Formats the context window values used in the expanded statistics.
   String _contextWindowLabel({
     required int currentWindowSize,
-    required int? maxContextTokens,
+    required ContextBudgetSnapshot? budget,
   }) {
-    final maxTokens = maxContextTokens;
-    if (maxTokens == null) {
+    if (budget == null) {
       return '加载中...';
     }
-    return '${_formatTokenCount(currentWindowSize)} / ${_formatTokenCount(maxTokens)}';
+    final primary =
+        '${_formatTokenCount(currentWindowSize)} / ${_formatTokenCount(budget.effectiveLimit)}';
+    if (!budget.hasCompressionSupplement) {
+      return primary;
+    }
+    return '$primary (最大 ${_formatTokenCount(budget.rawMaxTokens)})';
   }
 
   /// Formats token counts with compact thousands separators.

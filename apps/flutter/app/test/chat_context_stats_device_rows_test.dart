@@ -447,6 +447,47 @@ void main() {
     expect(_refreshButton(tester).onPressed, isNotNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets(
+    'displays compressed context threshold as limit with full max as supplement',
+    (tester) async {
+      final bridge = _DeviceStatsBridge('local')
+        ..currentWindowSize = 97_700
+        ..maxContextTokens = 1_000_000
+        ..summaryThresholdRatio = 0.85
+        ..cachedInputTokenCount = 1_706_040
+        ..cacheHitRate = 0.8124;
+      await tester.pumpWidget(_app(bridge));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('11%'), findsOneWidget);
+      expect(
+        find.byTooltip('上下文占用 11%（压缩阈值 850k / 最大 1M） · 缓存命中 81.2% · 本机'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byType(TopBarDynamicCapsule));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byTooltip('97700 / 850000（压缩阈值 · 最大 1000000）'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('97.7k / 850k (最大 1M)'), findsOneWidget);
+      expect(find.text('缓存命中 81.2%'), findsOneWidget);
+      expect(find.text('剩余 752k'), findsOneWidget);
+
+      await tester.tap(find.text('仪表'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('97.7k / 850k (最大 1M)'), findsOneWidget);
+      expect(find.text('752k'), findsOneWidget);
+      expect(find.text('81.2% (1.7M)'), findsOneWidget);
+      expect(find.text('11%'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
 }
 
 Finder _deviceSemantics(String name, String status) =>
@@ -537,6 +578,9 @@ class _DeviceStatsBridge extends OperitRuntimeBridge {
   int compactCalls = 0;
   int currentWindowSize = 5826;
   int maxContextTokens = 1_000_000;
+  int? cachedInputTokenCount;
+  double? cacheHitRate;
+  double? summaryThresholdRatio;
   ContextWindowBreakdown? breakdown;
 
   BindingRouteStatus get status => BindingRouteStatus(
@@ -578,8 +622,11 @@ class _DeviceStatsBridge extends OperitRuntimeBridge {
         currentWindowSize: currentWindowSize,
         inputTokenCount: 8972,
         outputTokenCount: 96,
+        cachedInputTokenCount: cachedInputTokenCount,
+        cacheHitRate: cacheHitRate,
         maxContextTokens: maxContextTokens,
         breakdown: breakdown,
+        summaryThresholdRatio: summaryThresholdRatio,
       ).toJson(),
       'deviceSpaceTopology' => RuntimeDeviceSpaceTopology(
         currentDeviceId: 'local',

@@ -1,5 +1,7 @@
 // ignore_for_file: file_names
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
@@ -29,6 +31,67 @@ enum NodeLabelDisplayMode { auto, nameOnly, taskOnly }
 
 /// Visual activity state of an optical-fiber curve connecting two nodes.
 enum FiberLinkState { idle, active, preview, handoff, bidirectional, broken }
+
+/// Effective context budget derived from the model cap and summary ratio.
+class ContextBudgetSnapshot {
+  const ContextBudgetSnapshot({
+    required this.effectiveLimit,
+    required this.rawMaxTokens,
+    required this.compressionRatio,
+  });
+
+  /// Context ceiling used for percentage, capacity bar fill, and headroom.
+  /// When auto-summary is enabled (`0 < ratio < 1`), this is `rawMaxTokens * ratio`.
+  final int effectiveLimit;
+
+  /// Full configured model max context capacity shown alongside as supplement.
+  final int rawMaxTokens;
+
+  /// Active summary threshold ratio when it lowers [effectiveLimit] below [rawMaxTokens].
+  final double? compressionRatio;
+
+  bool get hasLimit => effectiveLimit > 0;
+
+  bool get hasCompressionSupplement =>
+      rawMaxTokens > 0 && effectiveLimit > 0 && effectiveLimit < rawMaxTokens;
+}
+
+/// Resolves the active context limit and supplementary model cap from [summary].
+ContextBudgetSnapshot resolveContextBudget(
+  core_proxy.ChatInputMenuSummary? summary,
+) {
+  if (summary == null || summary.maxContextTokens <= 0) {
+    return const ContextBudgetSnapshot(
+      effectiveLimit: 0,
+      rawMaxTokens: 0,
+      compressionRatio: null,
+    );
+  }
+  final rawMax = summary.maxContextTokens;
+  final ratio = summary.summaryThresholdRatio;
+  if (ratio != null && ratio.isFinite && ratio > 0 && ratio < 1.0) {
+    final compressed = math.max(1, (rawMax * ratio).round());
+    return ContextBudgetSnapshot(
+      effectiveLimit: compressed,
+      rawMaxTokens: rawMax,
+      compressionRatio: compressed < rawMax ? ratio : null,
+    );
+  }
+  return ContextBudgetSnapshot(
+    effectiveLimit: rawMax,
+    rawMaxTokens: rawMax,
+    compressionRatio: null,
+  );
+}
+
+/// Formats a normalized `0.0..1.0` cache hit ratio (e.g. `0%`, `81.2%`, `100%`).
+String formatCacheHitPercentage(double ratio) {
+  final clamped = ratio.clamp(0.0, 1.0) * 100.0;
+  final fixed = clamped.toStringAsFixed(1);
+  return fixed.endsWith('.0')
+      ? '${fixed.substring(0, fixed.length - 2)}%'
+      : '$fixed%';
+}
 
 /// One segment displayed in the Scheme A context usage bar.
 class ContextSegmentEntry {
@@ -243,6 +306,7 @@ class TopBarCapsuleResolver {
     }
 
     // 8. Idle telemetry ring + percentage + active node
+    final budget = resolveContextBudget(snapshot.summary);
     final String idleLabel;
     if (snapshot.loadingSummary) {
       idleLabel = ownerShort != null ? '... · $ownerShort' : '...';
@@ -257,6 +321,13 @@ class TopBarCapsuleResolver {
         : pct == null
         ? '--'
         : '${pct.toStringAsFixed(0)}%';
+    final limitHint = budget.hasCompressionSupplement
+        ? '（压缩阈值 ${formatCompactTokenCount(budget.effectiveLimit)} / 最大 ${formatCompactTokenCount(budget.rawMaxTokens)}）'
+        : '';
+    final cacheRate = snapshot.summary?.cacheHitRate;
+    final cacheHint = cacheRate != null
+        ? ' · 缓存命中 ${formatCacheHitPercentage(cacheRate)}'
+        : '';
     final tone = pct != null && pct >= 90
         ? TopBarCapsuleTone.error
         : pct != null && pct >= 80
@@ -270,14 +341,15 @@ class TopBarCapsuleResolver {
       label: idleLabel,
       tooltip: snapshot.summaryFailed
           ? l10n.contextStatsSummaryLoadFailed
-          : '上下文占用 $pctTooltip${ownerShort != null ? ' · $ownerShort' : ''}',
+          : '上下文占用 $pctTooltip$limitHint$cacheHint${ownerShort != null ? ' · $ownerShort' : ''}',
       contextPercentage: pct,
     );
   }
 
   static double? _contextUsagePercentage(core_proxy.ChatInputMenuSummary? s) {
-    if (s == null || s.maxContextTokens <= 0) return null;
-    return s.currentWindowSize / s.maxContextTokens * 100;
+    final budget = resolveContextBudget(s);
+    if (s == null || !budget.hasLimit) return null;
+    return s.currentWindowSize / budget.effectiveLimit * 100;
   }
 
   static core_proxy.RuntimeDeviceSpaceDevice? _resolveOwnerDevice(
