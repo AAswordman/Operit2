@@ -363,7 +363,8 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
         return loadFuture;
       },
       onSelectModel: _selectChatModel,
-      onAddModel: _addProviderModel,
+      onSyncModels: _syncProviderModels,
+      onCreateCustomModel: _createCustomProviderModel,
       onEditProvider: _editOpenedProvider,
       onDeleteProvider: _deleteProvider,
       clients: widget.clients,
@@ -445,10 +446,35 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
         errorDetails: core_proxy.CoreProxyErrorDetails.fromCoreLinkError(error),
         providerName: provider.name,
       );
+  /// Syncs a provider's model list with its live listing, removing obsolete non-custom models.
+  Future<core_proxy.ProviderModelSyncResult?> _syncProviderModels(
+    core_proxy.ProviderProfile provider,
+  ) async {
+    try {
+      final result = await widget.clients.preferencesModelConfigManager
+          .syncProviderModels(providerId: provider.id);
+      _reload();
+      return result;
+    } on CoreLinkError catch (error) {
+      if (!mounted) {
+        return null;
+      }
+      final l10n = AppLocalizations.of(context)!;
+      final action = await _AddProviderModelErrorDialog.show(
+        context: context,
+        title: l10n.settingsModelSyncModels,
+        errorDetails: core_proxy.CoreProxyErrorDetails.fromCoreLinkError(error),
+        providerName: provider.name,
+        showCustomAction: _providerSupportsCustomModel(provider),
+      );
+      if (action == _AddProviderModelErrorAction.custom && mounted) {
+        await _createCustomProviderModel(provider);
+      }
+      return null;
     }
   }
 
-  /// Prompts for and creates a provider model with a user-entered model ID.
+  /// Prompts for and creates a custom provider model with a user-entered model ID.
   Future<void> _createCustomProviderModel(
     core_proxy.ProviderProfile provider,
   ) async {
@@ -468,11 +494,23 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
     if (modelId == null) {
       return;
     }
-    await widget.clients.preferencesModelConfigManager.createProviderModel(
-      providerId: provider.id,
-      modelId: modelId,
-    );
-    _reload();
+    try {
+      await widget.clients.preferencesModelConfigManager.createProviderModel(
+        providerId: provider.id,
+        modelId: modelId,
+      );
+      _reload();
+    } on CoreLinkError catch (error) {
+      if (!mounted) {
+        return;
+      }
+      await _AddProviderModelErrorDialog.show(
+        context: context,
+        title: l10n.settingsModelCustomModel,
+        errorDetails: core_proxy.CoreProxyErrorDetails.fromCoreLinkError(error),
+        providerName: provider.name,
+      );
+    }
   }
 
   Future<void> _deleteModel(
@@ -1227,30 +1265,12 @@ class _AvailableModelDialog extends StatefulWidget {
 enum _AvailableModelListScope { fetched, all }
 
 // Lucide SVG Icons (MIT License)
-const String _kSvgSearch =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>';
 const String _kSvgClose =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
-const String _kSvgLayers =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 12.5-8.58 3.91a2 2 0 0 1-1.66 0L2 12.5"/><path d="m22 17.5-8.58 3.91a2 2 0 0 1-1.66 0L2 17.5"/></svg>';
-const String _kSvgSparkles =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg>';
-const String _kSvgHistory =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>';
 const String _kSvgCheck =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
-const String _kSvgCpu =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></svg>';
-const String _kSvgChevronRight =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
 const String _kSvgChevronDown =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
-const String _kSvgCheckSquare =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/></svg>';
-const String _kSvgCloudOff =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 2 20 20"/><path d="M5.782 5.782A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.307-.193"/><path d="M21.532 16.5A4.5 4.5 0 0 0 17.5 10h-1.79A7.008 7.008 0 0 0 10 5.07"/></svg>';
-const String _kSvgSearchX =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13.5 8.5-5 5"/><path d="m8.5 8.5 5 5"/><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>';
 
 class _LucideIcon extends StatelessWidget {
   const _LucideIcon(this.svg, {this.size = 18, this.color});
@@ -1321,990 +1341,6 @@ class _ModernCheckbox extends StatelessWidget {
                       ),
                     )
                   : null),
-      ),
-    );
-  }
-}
-
-class _TransformerScopeSlider extends StatelessWidget {
-  const _TransformerScopeSlider({
-    required this.scope,
-    required this.fetchedLabel,
-    required this.allLabel,
-    required this.onChanged,
-  });
-
-  final _AvailableModelListScope scope;
-  final String fetchedLabel;
-  final String allLabel;
-  final ValueChanged<_AvailableModelListScope> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final isAll = scope == _AvailableModelListScope.all;
-
-    return Container(
-      height: 38,
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.18),
-        ),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final itemWidth = (constraints.maxWidth - 2) / 2;
-          return Stack(
-            children: <Widget>[
-              // Fluid Transformer sliding thumb
-              AnimatedAlign(
-                duration: const Duration(milliseconds: 260),
-                curve: Curves.fastOutSlowIn,
-                alignment: isAll ? Alignment.centerRight : Alignment.centerLeft,
-                child: Container(
-                  width: itemWidth,
-                  height: double.infinity,
-                  decoration: BoxDecoration(
-                    color: colorScheme.primaryContainer.withValues(alpha: 0.65),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: colorScheme.primary.withValues(alpha: 0.35),
-                      width: 1,
-                    ),
-                    boxShadow: <BoxShadow>[
-                      BoxShadow(
-                        color: colorScheme.shadow.withValues(alpha: 0.12),
-                        blurRadius: 4,
-                        offset: const Offset(0, 1),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              // Option labels with smooth morph animation
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: _SliderOptionItem(
-                      icon: _kSvgSparkles,
-                      label: fetchedLabel,
-                      selected: !isAll,
-                      onTap: () => onChanged(_AvailableModelListScope.fetched),
-                    ),
-                  ),
-                  Expanded(
-                    child: _SliderOptionItem(
-                      icon: _kSvgHistory,
-                      label: allLabel,
-                      selected: isAll,
-                      onTap: () => onChanged(_AvailableModelListScope.all),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _SliderOptionItem extends StatelessWidget {
-  const _SliderOptionItem({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Center(
-          child: AnimatedDefaultTextStyle(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeInOut,
-            style: textTheme.labelMedium!.copyWith(
-              fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-              color: selected
-                  ? colorScheme.onPrimaryContainer
-                  : colorScheme.onSurfaceVariant,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: <Widget>[
-                AnimatedScale(
-                  scale: selected ? 1.06 : 0.94,
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutBack,
-                  child: _LucideIcon(
-                    icon,
-                    size: 14,
-                    color: selected
-                        ? colorScheme.primary
-                        : colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _AvailableModelDialogState extends State<_AvailableModelDialog> {
-  final _searchController = TextEditingController();
-  final Set<String> _selectedModelIds = <String>{};
-  late _AvailableModelListScope _scope;
-  late List<core_proxy.AvailableProviderModel> _models;
-  late core_proxy.ModelCatalogStatus _catalogStatus;
-  bool _retryingCatalog = false;
-  String? _retryError;
-
-  @override
-  void initState() {
-    super.initState();
-    _models = widget.models;
-    _catalogStatus = widget.catalogStatus;
-    final hasFetched = _models.any(_availableProviderModelIsFetched);
-    _scope = hasFetched
-        ? _AvailableModelListScope.fetched
-        : _AvailableModelListScope.all;
-  }
-
-  /// Downloads the model catalog again and describes the provider's models with it.
-  Future<void> _retryCatalog() async {
-    setState(() {
-      _retryingCatalog = true;
-      _retryError = null;
-    });
-    try {
-      final reload = await widget.onRetryCatalog();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _models = reload.models;
-        _catalogStatus = reload.catalogStatus;
-        final modelIds = _models.map((model) => model.modelId).toSet();
-        _selectedModelIds.retainWhere(modelIds.contains);
-      });
-    } on CoreLinkError catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _retryError = core_proxy.CoreProxyErrorDetails.fromCoreLinkError(
-          error,
-        ).message;
-      });
-    } finally {
-      if (mounted) {
-        setState(() => _retryingCatalog = false);
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  /// Returns models in the current fetched-or-history scope.
-  List<core_proxy.AvailableProviderModel> _scopedModels() {
-    if (_scope == _AvailableModelListScope.all) {
-      return _models;
-    }
-    return _models
-        .where(_availableProviderModelIsFetched)
-        .toList(growable: false);
-  }
-
-  /// Filters scoped models according to the current search query.
-  List<core_proxy.AvailableProviderModel> _filteredModels(
-    AppLocalizations l10n,
-  ) {
-    final query = _searchController.text.trim().toLowerCase();
-    final scopedModels = _scopedModels();
-    if (query.isEmpty) {
-      return scopedModels;
-    }
-    return scopedModels
-        .where((model) {
-          final text =
-              '${model.modelId} ${_availableModelSubtitle(l10n, model, includeSource: _scope == _AvailableModelListScope.all)}'
-                  .toLowerCase();
-          return text.contains(query);
-        })
-        .toList(growable: false);
-  }
-
-  /// Switches between fetched-only and catalog-history listings.
-  void _setScope(_AvailableModelListScope scope) {
-    setState(() {
-      _scope = scope;
-      if (scope == _AvailableModelListScope.fetched) {
-        _selectedModelIds.removeWhere((modelId) {
-          return _models.any(
-            (model) =>
-                model.modelId == modelId &&
-                !_availableProviderModelIsFetched(model),
-          );
-        });
-      }
-    });
-  }
-
-  /// Toggles the selected state of one catalog model.
-  void _toggleModel(core_proxy.AvailableProviderModel model) {
-    setState(() {
-      if (_selectedModelIds.contains(model.modelId)) {
-        _selectedModelIds.remove(model.modelId);
-      } else {
-        _selectedModelIds.add(model.modelId);
-      }
-    });
-  }
-
-  /// Returns the selected catalog models in their displayed catalog order.
-  List<core_proxy.AvailableProviderModel> _selectedModels() {
-    return _models
-        .where((model) => _selectedModelIds.contains(model.modelId))
-        .toList(growable: false);
-  }
-
-  /// Returns whether all currently filtered models are selected.
-  bool _areAllFilteredSelected(
-    List<core_proxy.AvailableProviderModel> filtered,
-  ) {
-    if (filtered.isEmpty) {
-      return false;
-    }
-    return filtered.every((model) => _selectedModelIds.contains(model.modelId));
-  }
-
-  /// Selects or clears all currently filtered models.
-  void _toggleSelectAll(List<core_proxy.AvailableProviderModel> filtered) {
-    setState(() {
-      if (_areAllFilteredSelected(filtered)) {
-        for (final model in filtered) {
-          _selectedModelIds.remove(model.modelId);
-        }
-      } else {
-        for (final model in filtered) {
-          _selectedModelIds.add(model.modelId);
-        }
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final textTheme = theme.textTheme;
-    final l10n = AppLocalizations.of(context)!;
-    final query = _searchController.text.trim();
-    final filteredModels = _filteredModels(l10n);
-    final includeSource = _scope == _AvailableModelListScope.all;
-    final fetchedCount = _models.where(_availableProviderModelIsFetched).length;
-    final allCount = _models.length;
-    final allFilteredSelected = _areAllFilteredSelected(filteredModels);
-
-    final viewport = MediaQuery.sizeOf(context);
-    final dialogWidth = (viewport.width - 32).clamp(320.0, 560.0).toDouble();
-    final dialogHeight = (viewport.height - 48).clamp(320.0, 600.0).toDouble();
-
-    return Dialog(
-      insetPadding: const EdgeInsets.all(16),
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: SizedBox(
-        width: dialogWidth,
-        height: dialogHeight,
-        child: Column(
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 12, 12, 12),
-              child: Row(
-                children: <Widget>[
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: colorScheme.primary.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(9),
-                    ),
-                    child: Center(
-                      child: _LucideIcon(
-                        _kSvgLayers,
-                        size: 18,
-                        color: colorScheme.primary,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      l10n.settingsModelAddModel,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: MaterialLocalizations.of(
-                      context,
-                    ).closeButtonTooltip,
-                    icon: _LucideIcon(
-                      _kSvgClose,
-                      size: 16,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Column(
-                children: <Widget>[
-                  Container(
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest.withValues(
-                        alpha: 0.35,
-                      ),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: colorScheme.outlineVariant.withValues(
-                          alpha: 0.25,
-                        ),
-                      ),
-                    ),
-                    child: TextField(
-                      controller: _searchController,
-                      style: textTheme.bodyMedium,
-                      textAlignVertical: TextAlignVertical.center,
-                      decoration: InputDecoration(
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                        ),
-                        border: InputBorder.none,
-                        prefixIcon: Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: _LucideIcon(
-                            _kSvgSearch,
-                            size: 16,
-                            color: colorScheme.onSurfaceVariant.withValues(
-                              alpha: 0.7,
-                            ),
-                          ),
-                        ),
-                        prefixIconConstraints: const BoxConstraints(
-                          minWidth: 36,
-                          minHeight: 36,
-                        ),
-                        hintText: l10n.search,
-                        hintStyle: textTheme.bodyMedium?.copyWith(
-                          color: colorScheme.onSurfaceVariant.withValues(
-                            alpha: 0.6,
-                          ),
-                        ),
-                        suffixIcon: _searchController.text.isNotEmpty
-                            ? IconButton(
-                                icon: _LucideIcon(
-                                  _kSvgClose,
-                                  size: 14,
-                                  color: colorScheme.onSurfaceVariant,
-                                ),
-                                visualDensity: VisualDensity.compact,
-                                padding: EdgeInsets.zero,
-                                onPressed: () {
-                                  _searchController.clear();
-                                  setState(() {});
-                                },
-                              )
-                            : null,
-                        suffixIconConstraints: const BoxConstraints(
-                          minWidth: 32,
-                          minHeight: 32,
-                        ),
-                      ),
-                      onChanged: (_) => setState(() {}),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: _TransformerScopeSlider(
-                          scope: _scope,
-                          fetchedLabel:
-                              '${l10n.settingsModelAvailableFetchedOnly} ($fetchedCount)',
-                          allLabel:
-                              '${l10n.settingsModelAvailableIncludeHistory} ($allCount)',
-                          onChanged: _setScope,
-                        ),
-                      ),
-                      if (filteredModels.isNotEmpty) ...<Widget>[
-                        const SizedBox(width: 10),
-                        Material(
-                          color: colorScheme.surfaceContainerHighest.withValues(
-                            alpha: 0.35,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            side: BorderSide(
-                              color: colorScheme.outlineVariant.withValues(
-                                alpha: 0.15,
-                              ),
-                            ),
-                          ),
-                          child: InkWell(
-                            onTap: () => _toggleSelectAll(filteredModels),
-                            borderRadius: BorderRadius.circular(10),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 7,
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: <Widget>[
-                                  _LucideIcon(
-                                    allFilteredSelected
-                                        ? _kSvgClose
-                                        : _kSvgCheckSquare,
-                                    size: 14,
-                                    color: allFilteredSelected
-                                        ? colorScheme.error
-                                        : colorScheme.primary,
-                                  ),
-                                  const SizedBox(width: 5),
-                                  Text(
-                                    allFilteredSelected
-                                        ? l10n.clear
-                                        : l10n.settingsWorkspaceSelectAllCurrentList,
-                                    style: textTheme.labelMedium?.copyWith(
-                                      color: allFilteredSelected
-                                          ? colorScheme.error
-                                          : colorScheme.primary,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  _CatalogStatusLine(
-                    status: _catalogStatus,
-                    retryError: _retryError,
-                    retrying: _retryingCatalog,
-                    onRetry: _retryCatalog,
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                children: <Widget>[
-                  if (filteredModels.isEmpty &&
-                      query.isEmpty &&
-                      _scope == _AvailableModelListScope.fetched)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 36,
-                        horizontal: 16,
-                      ),
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            _LucideIcon(
-                              _kSvgCloudOff,
-                              size: 36,
-                              color: colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.5,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              l10n.settingsModelAvailableEmptyFetched,
-                              textAlign: TextAlign.center,
-                              style: textTheme.bodySmall?.copyWith(
-                                color: colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )
-                  else if (filteredModels.isEmpty && query.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 36),
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            _LucideIcon(
-                              _kSvgSearchX,
-                              size: 36,
-                              color: colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.5,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              l10n.noData,
-                              style: textTheme.bodyMedium?.copyWith(
-                                color: colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  for (final model in filteredModels)
-                    _AvailableModelItemCard(
-                      model: model,
-                      selected: _selectedModelIds.contains(model.modelId),
-                      includeSource: includeSource,
-                      onTap: () => _toggleModel(model),
-                    ),
-                  _CustomModelActionCard(
-                    onTap: () => Navigator.of(
-                      context,
-                    ).pop(const _AvailableModelCustom()),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 12, 16, 12),
-              child: Row(
-                children: <Widget>[
-                  Text(
-                    _selectedModelIds.isEmpty
-                        ? ''
-                        : l10n.settingsWorkspaceSelectedCount(
-                            _selectedModelIds.length,
-                            filteredModels.length,
-                          ),
-                    style: textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const Spacer(),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    child: Text(l10n.cancel),
-                  ),
-                  const SizedBox(width: 10),
-                  FilledButton(
-                    onPressed: _selectedModelIds.isEmpty
-                        ? null
-                        : () => Navigator.of(
-                            context,
-                          ).pop(_AvailableModelsPicked(_selectedModels())),
-                    style: FilledButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 8,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    child: Text(
-                      '${l10n.settingsModelAddModelShort} (${_selectedModelIds.length})',
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AvailableModelItemCard extends StatelessWidget {
-  const _AvailableModelItemCard({
-    required this.model,
-    required this.selected,
-    required this.includeSource,
-    required this.onTap,
-  });
-
-  final core_proxy.AvailableProviderModel model;
-  final bool selected;
-  final bool includeSource;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final textTheme = theme.textTheme;
-    final l10n = AppLocalizations.of(context)!;
-    final contextLength = model.context?.maxContextTokens;
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Material(
-        color: selected
-            ? colorScheme.primaryContainer.withValues(alpha: 0.22)
-            : colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-          side: BorderSide(
-            color: selected
-                ? colorScheme.primary.withValues(alpha: 0.45)
-                : colorScheme.outlineVariant.withValues(alpha: 0.18),
-          ),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-            child: Row(
-              children: <Widget>[
-                _ModernCheckbox(checked: selected, onTap: onTap),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Text(
-                        model.modelId,
-                        style: textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: selected
-                              ? colorScheme.primary
-                              : colorScheme.onSurface,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: <Widget>[
-                          if (contextLength != null)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 1.5,
-                              ),
-                              decoration: BoxDecoration(
-                                color: colorScheme.primary.withValues(
-                                  alpha: 0.12,
-                                ),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                _formatContextLength(contextLength) ??
-                                    '${(contextLength / 1000).round()}K',
-                                style: textTheme.labelSmall?.copyWith(
-                                  color: colorScheme.primary,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ),
-                          if (includeSource)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 1.5,
-                              ),
-                              decoration: BoxDecoration(
-                                color: colorScheme.surfaceContainerHighest,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                _availableProviderModelIsFetched(model)
-                                    ? l10n.settingsModelAvailableSourceFetched
-                                    : l10n.settingsModelAvailableSourceHistory,
-                                style: textTheme.labelSmall?.copyWith(
-                                  color: colorScheme.onSurfaceVariant,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ),
-                          if (model.capabilities != null)
-                            _ModelCapabilityCapsules(
-                              capabilities: model.capabilities!,
-                            ),
-                          if (model.catalogModelId == null &&
-                              model.capabilities == null)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 1.5,
-                              ),
-                              decoration: BoxDecoration(
-                                color: colorScheme.errorContainer.withValues(
-                                  alpha: 0.45,
-                                ),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                l10n.settingsModelUnrecognized,
-                                style: textTheme.labelSmall?.copyWith(
-                                  color: colorScheme.onErrorContainer,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ),
-                          if (model.builtinTools.isNotEmpty)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 5,
-                                vertical: 1.5,
-                              ),
-                              decoration: BoxDecoration(
-                                color: colorScheme.tertiaryContainer.withValues(
-                                  alpha: 0.35,
-                                ),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                l10n.settingsModelBuiltinTools,
-                                style: textTheme.labelSmall?.copyWith(
-                                  color: colorScheme.tertiary,
-                                  fontSize: 10,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Describes the active catalog without surfacing background download failures.
-class _CatalogStatusLine extends StatelessWidget {
-  const _CatalogStatusLine({
-    required this.status,
-    required this.retryError,
-    required this.retrying,
-    required this.onRetry,
-  });
-
-  final core_proxy.ModelCatalogStatus status;
-  final String? retryError;
-  final bool retrying;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final error = retryError;
-    final updatedAt = status.updatedAt;
-    final String message;
-    if (error != null) {
-      message = l10n.settingsModelCatalogUpdateFailed(error);
-    } else if (updatedAt == null) {
-      message = l10n.settingsModelCatalogBundled;
-    } else {
-      message = l10n.settingsModelCatalogUpdatedAt(
-        _formatCatalogTime(updatedAt),
-      );
-    }
-    final failed = error != null;
-    final color = failed ? colorScheme.error : colorScheme.onSurfaceVariant;
-    return Row(
-      children: <Widget>[
-        Icon(
-          failed ? Icons.error_outline : Icons.info_outline,
-          size: 14,
-          color: color,
-        ),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(
-            message,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: color,
-              fontSize: 11,
-            ),
-          ),
-        ),
-        if (retrying)
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8),
-            child: M3LoadingIndicator(size: 14),
-          )
-        else
-          TextButton(
-            onPressed: onRetry,
-            style: TextButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-            ),
-            child: Text(l10n.settingsModelCatalogRetry),
-          ),
-      ],
-    );
-  }
-}
-
-/// Formats a catalog download time as local month, day and time.
-String _formatCatalogTime(int updatedAt) {
-  final time = DateTime.fromMillisecondsSinceEpoch(updatedAt).toLocal();
-  String twoDigits(int value) => value.toString().padLeft(2, '0');
-  return '${twoDigits(time.month)}-${twoDigits(time.day)} '
-      '${twoDigits(time.hour)}:${twoDigits(time.minute)}';
-}
-
-class _CustomModelActionCard extends StatelessWidget {
-  const _CustomModelActionCard({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final l10n = AppLocalizations.of(context)!;
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 2, bottom: 4),
-      child: Material(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.18),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-          side: BorderSide(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.22),
-          ),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: Row(
-              children: <Widget>[
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: colorScheme.primary.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(7),
-                  ),
-                  child: Center(
-                    child: _LucideIcon(
-                      _kSvgCpu,
-                      size: 16,
-                      color: colorScheme.primary,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Text(
-                        l10n.settingsModelCustomModel,
-                        style: textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: colorScheme.onSurface,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        l10n.settingsModelModelId,
-                        style: textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                _LucideIcon(
-                  _kSvgChevronRight,
-                  size: 16,
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -2612,6 +1648,7 @@ class _CapsuleActionButton extends StatelessWidget {
     required this.onTap,
     this.tooltip,
     this.icon,
+    this.loading = false,
     this.primary = false,
     this.destructive = false,
   });
@@ -2620,6 +1657,7 @@ class _CapsuleActionButton extends StatelessWidget {
   final VoidCallback? onTap;
   final String? tooltip;
   final IconData? icon;
+  final bool loading;
   final bool primary;
 
   /// Marks an action that removes something, in the error color.
@@ -2653,6 +1691,7 @@ class _CapsuleActionButton extends StatelessWidget {
       borderColor = colorScheme.outlineVariant.withValues(alpha: 0.35);
     }
 
+    final hasLeading = loading || icon != null;
     Widget button = Material(
       color: backgroundColor,
       shape: StadiumBorder(side: BorderSide(color: borderColor)),
@@ -2662,7 +1701,7 @@ class _CapsuleActionButton extends StatelessWidget {
         customBorder: const StadiumBorder(),
         child: Padding(
           padding: EdgeInsetsDirectional.fromSTEB(
-            icon == null ? 10 : 8,
+            hasLeading ? 8 : 10,
             5,
             10,
             5,
@@ -2670,15 +1709,25 @@ class _CapsuleActionButton extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              if (icon != null) ...<Widget>[
+              if (loading) ...<Widget>[
+                const SizedBox.square(
+                  dimension: 13,
+                  child: Center(child: M3LoadingIndicator(size: 13)),
+                ),
+                const SizedBox(width: 5),
+              ] else if (icon != null) ...<Widget>[
                 Icon(icon, size: 14, color: foregroundColor),
                 const SizedBox(width: 4),
               ],
-              Text(
-                label,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: foregroundColor,
-                  fontWeight: FontWeight.w600,
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: foregroundColor,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ],
@@ -2694,13 +1743,24 @@ class _CapsuleActionButton extends StatelessWidget {
   }
 }
 
+bool _providerSupportsSync(core_proxy.ProviderProfile provider) {
+  return provider.providerType != core_proxy.ApiProviderType.localModel &&
+      provider.providerType != core_proxy.ApiProviderType.baidu &&
+      provider.providerType != core_proxy.ApiProviderType.xunfei;
+}
+
+bool _providerSupportsCustomModel(core_proxy.ProviderProfile provider) {
+  return provider.providerType != core_proxy.ApiProviderType.localModel;
+}
+
 class _ProviderDetailScreen extends StatefulWidget {
   const _ProviderDetailScreen({
     required this.providerId,
     required this.initialData,
     required this.reload,
     required this.onSelectModel,
-    required this.onAddModel,
+    required this.onSyncModels,
+    required this.onCreateCustomModel,
     required this.onEditProvider,
     required this.onDeleteProvider,
     required this.clients,
@@ -2711,7 +1771,12 @@ class _ProviderDetailScreen extends StatefulWidget {
   final ModelSettingsData initialData;
   final Future<ModelSettingsData> Function() reload;
   final Future<void> Function(String providerId, String modelId) onSelectModel;
-  final Future<void> Function(core_proxy.ProviderProfile provider) onAddModel;
+  final Future<core_proxy.ProviderModelSyncResult?> Function(
+    core_proxy.ProviderProfile provider,
+  )
+  onSyncModels;
+  final Future<void> Function(core_proxy.ProviderProfile provider)
+  onCreateCustomModel;
   final Future<void> Function(core_proxy.ProviderProfile provider)
   onEditProvider;
   final Future<void> Function(core_proxy.ProviderProfile provider)
@@ -2730,8 +1795,12 @@ class _ProviderDetailScreen extends StatefulWidget {
     required Future<ModelSettingsData> Function() reload,
     required Future<void> Function(String providerId, String modelId)
     onSelectModel,
+    required Future<core_proxy.ProviderModelSyncResult?> Function(
+      core_proxy.ProviderProfile provider,
+    )
+    onSyncModels,
     required Future<void> Function(core_proxy.ProviderProfile provider)
-    onAddModel,
+    onCreateCustomModel,
     required Future<void> Function(core_proxy.ProviderProfile provider)
     onEditProvider,
     required Future<void> Function(core_proxy.ProviderProfile provider)
@@ -2750,7 +1819,8 @@ class _ProviderDetailScreen extends StatefulWidget {
         initialData: initialData,
         reload: reload,
         onSelectModel: onSelectModel,
-        onAddModel: onAddModel,
+        onSyncModels: onSyncModels,
+        onCreateCustomModel: onCreateCustomModel,
         onEditProvider: onEditProvider,
         onDeleteProvider: onDeleteProvider,
         clients: clients,
@@ -2842,6 +1912,7 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
   final Map<String, int> _reveals = <String, int>{};
   final Set<String> _checkedModelIds = <String>{};
   bool _selecting = false;
+  bool _syncingModels = false;
   bool _batchRunning = false;
   bool _batchStopping = false;
   int _batchDone = 0;
@@ -2957,6 +2028,84 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
     }
     final l10n = AppLocalizations.of(context)!;
     _notify(l10n.settingsModelSaveFailed(_errorMessage(error)), error: true);
+  }
+
+  Future<void> _syncModels(core_proxy.ProviderProfile provider) async {
+    if (_syncingModels || _batchRunning) {
+      return;
+    }
+    setState(() {
+      _syncingModels = true;
+    });
+    core_proxy.ProviderModelSyncResult? result;
+    try {
+      result = await widget.onSyncModels(provider);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _syncingModels = false;
+        });
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    await _refresh();
+    if (!mounted || result == null) {
+      return;
+    }
+    final updated = _provider;
+    if (updated != null &&
+        _expandedModelId != null &&
+        !updated.models.any((model) => model.id == _expandedModelId)) {
+      setState(() {
+        _expandedModelId = null;
+      });
+    }
+    _notifySyncResult(result);
+  }
+
+  void _notifySyncResult(core_proxy.ProviderModelSyncResult result) {
+    final l10n = AppLocalizations.of(context)!;
+    for (final adjustment in result.bindingAdjustments) {
+      if (adjustment.newModelId == null) {
+        _notify(
+          l10n.settingsModelSyncMissingBinding(result.removedCount),
+          error: true,
+        );
+        return;
+      }
+    }
+    core_proxy.ModelBindingAdjustment? switched;
+    for (final adjustment in result.bindingAdjustments) {
+      if (adjustment.newModelId != null) {
+        switched = adjustment;
+        if (adjustment.functionType == core_proxy.FunctionType.chat) {
+          break;
+        }
+      }
+    }
+    if (switched != null) {
+      _notify(
+        l10n.settingsModelSyncSwitchedBinding(
+          result.addedCount,
+          result.removedCount,
+          switched.newModelId!,
+        ),
+      );
+      return;
+    }
+    if (result.addedCount == 0 && result.removedCount == 0) {
+      _notify(l10n.settingsModelSyncUpToDate(result.totalCount));
+      return;
+    }
+    _notify(
+      l10n.settingsModelSyncSummary(
+        result.addedCount,
+        result.removedCount,
+        result.keptCustomCount,
+      ),
+    );
   }
 
   void _startSelecting([String? modelId]) {
@@ -3313,13 +2462,31 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
                           ),
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      _CapsuleActionButton(
-                        label: l10n.settingsModelAddModel,
-                        tooltip: l10n.settingsModelAddModel,
-                        primary: true,
-                        onTap: () => _run(() => widget.onAddModel(provider)),
-                      ),
+                      if (_providerSupportsSync(provider)) ...<Widget>[
+                        const SizedBox(width: 8),
+                        _CapsuleActionButton(
+                          label: _syncingModels
+                              ? l10n.settingsModelSyncingModels
+                              : l10n.settingsModelSyncModels,
+                          tooltip: l10n.settingsModelSyncModelsTooltip,
+                          icon: Icons.sync_rounded,
+                          loading: _syncingModels,
+                          primary: true,
+                          onTap: _syncingModels || _batchRunning
+                              ? null
+                              : () => unawaited(_syncModels(provider)),
+                        ),
+                      ] else if (_providerSupportsCustomModel(provider)) ...<Widget>[
+                        const SizedBox(width: 8),
+                        _CapsuleActionButton(
+                          label: l10n.settingsModelCustomModel,
+                          tooltip: l10n.settingsModelCustomModel,
+                          icon: Icons.add_rounded,
+                          primary: true,
+                          onTap: () =>
+                              _run(() => widget.onCreateCustomModel(provider)),
+                        ),
+                      ],
                       const SizedBox(width: 8),
                       _CapsuleActionButton(
                         label: l10n.edit,
@@ -3371,8 +2538,15 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
                     batchStopping: _batchStopping,
                     batchDone: _batchDone,
                     batchTotal: _batchTotal,
-                    onTestAll: () =>
-                        unawaited(_testModels(provider, provider.models)),
+                    onAddCustomModel:
+                        _providerSupportsSync(provider) &&
+                            _providerSupportsCustomModel(provider)
+                        ? () => _run(() => widget.onCreateCustomModel(provider))
+                        : null,
+                    onTestAll: _syncingModels
+                        ? null
+                        : () =>
+                              unawaited(_testModels(provider, provider.models)),
                     onStopTests: _stopTests,
                     onStartSelecting: _startSelecting,
                     onToggleCheckAll: () => _toggleCheckAll(provider),
@@ -3395,15 +2569,65 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
                                   color: colorScheme.onSurfaceVariant,
                                 ),
                               ),
-                              const SizedBox(height: 12),
-                              FilledButton.icon(
-                                onPressed: () =>
-                                    _run(() => widget.onAddModel(provider)),
-                                style:
-                                    SettingsControlStyles.sectionFilledButton(),
-                                icon: const Icon(Icons.playlist_add, size: 18),
-                                label: Text(l10n.settingsModelAddModel),
-                              ),
+                              if (_providerSupportsSync(provider) ||
+                                  _providerSupportsCustomModel(
+                                    provider,
+                                  )) ...<Widget>[
+                                const SizedBox(height: 12),
+                                Wrap(
+                                  spacing: 10,
+                                  runSpacing: 8,
+                                  alignment: WrapAlignment.center,
+                                  children: <Widget>[
+                                    if (_providerSupportsSync(provider))
+                                      FilledButton.icon(
+                                        onPressed: _syncingModels
+                                            ? null
+                                            : () => unawaited(
+                                                _syncModels(provider),
+                                              ),
+                                        style: SettingsControlStyles
+                                            .sectionFilledButton(),
+                                        icon: _syncingModels
+                                            ? const SizedBox.square(
+                                                dimension: 16,
+                                                child: Center(
+                                                  child: M3LoadingIndicator(
+                                                    size: 16,
+                                                  ),
+                                                ),
+                                              )
+                                            : const Icon(
+                                                Icons.sync_rounded,
+                                                size: 18,
+                                              ),
+                                        label: Text(
+                                          _syncingModels
+                                              ? l10n.settingsModelSyncingModels
+                                              : l10n.settingsModelSyncModels,
+                                        ),
+                                      ),
+                                    if (_providerSupportsCustomModel(provider))
+                                      OutlinedButton.icon(
+                                        onPressed: _syncingModels
+                                            ? null
+                                            : () => _run(
+                                                () =>
+                                                    widget.onCreateCustomModel(
+                                                      provider,
+                                                    ),
+                                              ),
+                                        icon: const Icon(
+                                          Icons.add_rounded,
+                                          size: 18,
+                                        ),
+                                        label: Text(
+                                          l10n.settingsModelCustomModel,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
                             ],
                           ),
                         )
@@ -3478,7 +2702,7 @@ Color _testRestrictedColor(bool isDark) {
   return isDark ? const Color(0xFFE9BB62) : const Color(0xFF986600);
 }
 
-/// The actions over a provider's models: test them all, or check some to test or delete.
+/// The actions over a provider's models: add a custom model, test them all, or check some to test or delete.
 class _ModelListToolbar extends StatelessWidget {
   const _ModelListToolbar({
     required this.selecting,
@@ -3488,6 +2712,7 @@ class _ModelListToolbar extends StatelessWidget {
     required this.batchStopping,
     required this.batchDone,
     required this.batchTotal,
+    required this.onAddCustomModel,
     required this.onTestAll,
     required this.onStopTests,
     required this.onStartSelecting,
@@ -3504,7 +2729,8 @@ class _ModelListToolbar extends StatelessWidget {
   final bool batchStopping;
   final int batchDone;
   final int batchTotal;
-  final VoidCallback onTestAll;
+  final VoidCallback? onAddCustomModel;
+  final VoidCallback? onTestAll;
   final VoidCallback onStopTests;
   final VoidCallback onStartSelecting;
   final VoidCallback onToggleCheckAll;
@@ -3570,7 +2796,7 @@ class _ModelListToolbar extends StatelessWidget {
               child: Center(child: M3LoadingIndicator(size: 14)),
             ),
             const SizedBox(width: 8),
-            Flexible(
+            Expanded(
               child: Text(
                 l10n.settingsModelTestProgress(batchDone, batchTotal),
                 maxLines: 1,
@@ -3578,8 +2804,21 @@ class _ModelListToolbar extends StatelessWidget {
                 style: labelStyle,
               ),
             ),
+          ] else ...<Widget>[
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: onAddCustomModel == null
+                    ? const SizedBox.shrink()
+                    : _CapsuleActionButton(
+                        label: l10n.settingsModelCustomModel,
+                        icon: Icons.add_rounded,
+                        onTap: onAddCustomModel,
+                      ),
+              ),
+            ),
           ],
-          const Spacer(),
+          const SizedBox(width: 6),
           if (batchRunning)
             _CapsuleActionButton(
               label: l10n.stop,
@@ -3603,8 +2842,8 @@ class _ModelListToolbar extends StatelessWidget {
     }
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
-      child: SizedBox(
-        height: 32,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 32),
         child: AnimatedSwitcher(
           duration: const Duration(milliseconds: 220),
           switchInCurve: Curves.easeOutCubic,
@@ -4184,11 +3423,13 @@ class _ProviderModelTile extends StatelessWidget {
                     if (_hasModelCapabilities(
                       summary.capabilities,
                       contextLabel,
+                      model.custom,
                     )) ...<Widget>[
                       const SizedBox(height: 4),
                       _ModelCapabilityCapsules(
                         capabilities: summary.capabilities,
                         contextLengthLabel: contextLabel,
+                        custom: model.custom,
                       ),
                     ],
                   ],
@@ -6658,7 +5899,9 @@ class _TestModelPillButton extends StatelessWidget {
 bool _hasModelCapabilities(
   core_proxy.ModelCapabilities? capabilities, [
   String? contextLengthLabel,
+  bool custom = false,
 ]) =>
+    custom ||
     contextLengthLabel != null ||
     (capabilities != null &&
         (capabilities.toolCall ||
@@ -6672,10 +5915,12 @@ class _ModelCapabilityCapsules extends StatelessWidget {
   const _ModelCapabilityCapsules({
     required this.capabilities,
     this.contextLengthLabel,
+    this.custom = false,
   });
 
   final core_proxy.ModelCapabilities capabilities;
   final String? contextLengthLabel;
+  final bool custom;
 
   @override
   Widget build(BuildContext context) {
@@ -6684,6 +5929,12 @@ class _ModelCapabilityCapsules extends StatelessWidget {
         Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
 
     final capsules = <Widget>[
+      if (custom)
+        _CapabilityCapsule(
+          label: l10n.settingsModelCustomBadge,
+          tooltip: l10n.settingsModelCustomModel,
+          tint: _CapsuleTint.neutral,
+        ),
       if (contextLengthLabel != null)
         _CapabilityCapsule(
           label: contextLengthLabel!,
@@ -7586,12 +6837,14 @@ class _AddProviderModelErrorDialog extends StatelessWidget {
     required this.showCustomAction,
     this.onCustom,
     this.onDismiss,
+    this.title,
   });
 
   final VoidCallback? onCustom;
   final VoidCallback? onDismiss;
   final core_proxy.CoreProxyErrorDetails errorDetails;
   final String providerName;
+  final String? title;
 
   /// Shows the model import error dialog.
   static Future<_AddProviderModelErrorAction?> show({
@@ -7599,6 +6852,7 @@ class _AddProviderModelErrorDialog extends StatelessWidget {
     required core_proxy.CoreProxyErrorDetails errorDetails,
     required String providerName,
     bool showCustomAction = false,
+    String? title,
   }) {
     return showDialog<_AddProviderModelErrorAction>(
       context: context,
@@ -7606,6 +6860,7 @@ class _AddProviderModelErrorDialog extends StatelessWidget {
         errorDetails: errorDetails,
         providerName: providerName,
         showCustomAction: showCustomAction,
+        title: title,
       ),
     );
   }
@@ -7633,7 +6888,7 @@ class _AddProviderModelErrorDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: Text(l10n.settingsModelAddModel),
+      title: Text(title ?? l10n.settingsModelAddModel),
       content: SizedBox(
         width: 520,
         child: CommonNetworkErrorView(
@@ -8131,53 +7386,6 @@ bool _functionModelSupported(
       summary.capabilities.directVideo,
     _ => true,
   };
-}
-
-/// Returns whether this option came from a live provider listing.
-bool _availableProviderModelIsFetched(core_proxy.AvailableProviderModel model) {
-  return model.source != core_proxy.AvailableProviderModelSource.catalog;
-}
-
-/// Builds the add-model row subtitle from source, capabilities, and context.
-String _availableModelSubtitle(
-  AppLocalizations l10n,
-  core_proxy.AvailableProviderModel model, {
-  bool includeSource = false,
-}) {
-  final labels = <String>[];
-  if (includeSource) {
-    labels.add(
-      _availableProviderModelIsFetched(model)
-          ? l10n.settingsModelAvailableSourceFetched
-          : l10n.settingsModelAvailableSourceHistory,
-    );
-  }
-  final capabilities = model.capabilities;
-  if (capabilities != null) {
-    if (capabilities.directImage) {
-      labels.add(l10n.settingsModelDirectImage);
-    }
-    if (capabilities.directAudio) {
-      labels.add(l10n.settingsModelDirectAudio);
-    }
-    if (capabilities.directVideo) {
-      labels.add(l10n.settingsModelDirectVideo);
-    }
-    if (capabilities.toolCall) {
-      labels.add(l10n.settingsModelToolCall);
-    }
-  }
-  if (model.builtinTools.isNotEmpty) {
-    labels.add(l10n.settingsModelBuiltinTools);
-  }
-  final context = model.context;
-  if (context != null) {
-    final formatted = _formatContextLength(context.maxContextTokens);
-    if (formatted != null) {
-      labels.add(formatted);
-    }
-  }
-  return labels.isEmpty ? '-' : labels.join(' · ');
 }
 
 String _builtinToolSubtitle(

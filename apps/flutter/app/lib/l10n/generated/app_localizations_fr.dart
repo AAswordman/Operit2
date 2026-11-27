@@ -2189,6 +2189,43 @@ class AppLocalizationsFr extends AppLocalizations {
   String get settingsModelAddModelShort => 'Ajouter';
 
   @override
+  String get settingsModelSyncModels => 'Synchroniser les modèles';
+
+  @override
+  String get settingsModelSyncingModels => 'Synchronisation...';
+
+  @override
+  String get settingsModelSyncModelsTooltip =>
+      'Récupérer la dernière liste de modèles et supprimer les anciens modèles non personnalisés';
+
+  @override
+  String get settingsModelCustomBadge => 'Personnalisé';
+
+  @override
+  String settingsModelSyncUpToDate(int total) {
+    return 'La liste des modèles est à jour ($total au total)';
+  }
+
+  @override
+  String settingsModelSyncSummary(int added, int removed, int keptCustom) {
+    return 'Synchronisé : +$added, -$removed, $keptCustom personnalisés conservés';
+  }
+
+  @override
+  String settingsModelSyncSwitchedBinding(
+    int added,
+    int removed,
+    String target,
+  ) {
+    return 'Synchronisé (+$added, -$removed) ; le modèle lié supprimé a été basculé vers $target';
+  }
+
+  @override
+  String settingsModelSyncMissingBinding(int removed) {
+    return 'Synchronisé (-$removed) ; le modèle lié a été supprimé et aucun modèle ne reste';
+  }
+
+  @override
   String get settingsModelAvailableFetchedOnly => 'Récupérés uniquement';
 
   @override

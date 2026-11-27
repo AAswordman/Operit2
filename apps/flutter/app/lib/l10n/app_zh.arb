@@ -976,6 +976,54 @@
   "settingsModelEditProvider": "编辑供应商",
   "settingsModelAddModel": "添加模型",
   "settingsModelAddModelShort": "添加",
+  "settingsModelSyncModels": "同步模型",
+  "settingsModelSyncingModels": "同步中...",
+  "settingsModelSyncModelsTooltip": "拉取最新模型列表并自动清理已下线的非自定义模型",
+  "settingsModelCustomBadge": "自定义",
+  "settingsModelSyncUpToDate": "模型列表已是最新（共 {total} 个）",
+  "@settingsModelSyncUpToDate": {
+    "placeholders": {
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelSyncSummary": "同步完成：新增 {added} 个，移除 {removed} 个，保留 {keptCustom} 个自定义模型",
+  "@settingsModelSyncSummary": {
+    "placeholders": {
+      "added": {
+        "type": "int"
+      },
+      "removed": {
+        "type": "int"
+      },
+      "keptCustom": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelSyncSwitchedBinding": "同步完成（+{added}，-{removed}），已下线的绑定模型已自动切换为 {target}",
+  "@settingsModelSyncSwitchedBinding": {
+    "placeholders": {
+      "added": {
+        "type": "int"
+      },
+      "removed": {
+        "type": "int"
+      },
+      "target": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelSyncMissingBinding": "同步完成（移除 {removed} 个），原绑定模型已下线且当前无可用模型，请重新选择或添加",
+  "@settingsModelSyncMissingBinding": {
+    "placeholders": {
+      "removed": {
+        "type": "int"
+      }
+    }
+  },
   "settingsModelAvailableFetchedOnly": "仅拉取到的",
   "settingsModelAvailableIncludeHistory": "包含历史",
   "settingsModelAvailableSourceFetched": "已拉取",

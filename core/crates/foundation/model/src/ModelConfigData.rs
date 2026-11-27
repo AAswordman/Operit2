@@ -593,6 +593,27 @@ impl AvailableProviderModel {
     }
 }
 
+/// Reports one function model binding adjusted when syncing a provider removes its target model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ModelBindingAdjustment {
+    pub functionType: crate::FunctionType::FunctionType,
+    pub previousModelId: String,
+    /// New model ID assigned on the same provider, or `None` when the provider has no models left.
+    pub newModelId: Option<String>,
+}
+
+/// Reports the result of syncing a provider's configured models against its live listing.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ProviderModelSyncResult {
+    pub addedCount: i32,
+    pub removedCount: i32,
+    pub keptCustomCount: i32,
+    pub totalCount: i32,
+    pub bindingAdjustments: Vec<ModelBindingAdjustment>,
+}
+
 /// One configured model.
 ///
 /// The `*Override` fields hold only what the user set. Every field left unset takes what
@@ -602,6 +623,9 @@ impl AvailableProviderModel {
 #[allow(non_snake_case)]
 pub struct ModelProfile {
     pub id: String,
+    /// Whether the user added this model explicitly by ID rather than syncing from the provider list.
+    #[serde(default)]
+    pub custom: bool,
     pub pricingOverride: Option<ModelPricing>,
     pub contextOverride: Option<ModelContextSpec>,
     #[serde(default)]
@@ -628,6 +652,7 @@ impl ModelProfile {
     pub fn new(id: String) -> Self {
         Self {
             id,
+            custom: false,
             pricingOverride: None,
             contextOverride: None,
             capabilitiesOverride: ModelCapabilityOverrides::default(),

@@ -997,6 +997,54 @@
   "settingsModelEditProvider": "Edit provider",
   "settingsModelAddModel": "Add model",
   "settingsModelAddModelShort": "Add",
+  "settingsModelSyncModels": "Sync models",
+  "settingsModelSyncingModels": "Syncing...",
+  "settingsModelSyncModelsTooltip": "Fetch the latest provider models and remove obsolete non-custom ones",
+  "settingsModelCustomBadge": "Custom",
+  "settingsModelSyncUpToDate": "Model list is up to date ({total} total)",
+  "@settingsModelSyncUpToDate": {
+    "placeholders": {
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelSyncSummary": "Synced: +{added}, -{removed}, {keptCustom} custom kept",
+  "@settingsModelSyncSummary": {
+    "placeholders": {
+      "added": {
+        "type": "int"
+      },
+      "removed": {
+        "type": "int"
+      },
+      "keptCustom": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelSyncSwitchedBinding": "Synced (+{added}, -{removed}); removed binding switched to {target}",
+  "@settingsModelSyncSwitchedBinding": {
+    "placeholders": {
+      "added": {
+        "type": "int"
+      },
+      "removed": {
+        "type": "int"
+      },
+      "target": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelSyncMissingBinding": "Synced (-{removed}); bound model was removed and no models remain",
+  "@settingsModelSyncMissingBinding": {
+    "placeholders": {
+      "removed": {
+        "type": "int"
+      }
+    }
+  },
   "settingsModelAvailableFetchedOnly": "Fetched only",
   "settingsModelAvailableIncludeHistory": "Include history",
   "settingsModelAvailableSourceFetched": "Fetched",

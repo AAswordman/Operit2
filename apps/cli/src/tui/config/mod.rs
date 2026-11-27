@@ -340,7 +340,7 @@ impl ConfigUi {
         );
     }
 
-    fn render_model_list(&self, area: Rect, frame: &mut Frame, _text: TuiText) {
+    fn render_model_list(&self, area: Rect, frame: &mut Frame, text: TuiText) {
         let provider = self.current_model_provider();
         let items: Vec<ListItem> = self
             .filtered_indices
@@ -360,6 +360,13 @@ impl ConfigUi {
                     Span::styled(marker, Style::default().fg(theme::ACCENT_STRONG)),
                     Span::styled(&model.id, Style::default().add_modifier(Modifier::BOLD)),
                 ];
+                if model.custom {
+                    line1.push(Span::raw("  "));
+                    line1.push(Span::styled(
+                        format!("[{}]", text.config_custom_model_badge()),
+                        Style::default().fg(theme::TEXT_SUBTLE),
+                    ));
+                }
 
                 // Show the capabilities and context the model runs with, catalog values included.
                 let summary = provider.and_then(|p| {
@@ -1048,6 +1055,40 @@ impl ConfigUi {
                         Err(e) => {
                             self.status_message = Some(text.config_test_failed(e.to_string()));
                         }
+                    }
+                }
+            }
+            (ConfigState::ModelList { .. }, KC::Char('r'))
+                if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                let pid = match &self.state {
+                    ConfigState::ModelList { provider_id, .. } => provider_id.clone(),
+                    _ => return Ok(false),
+                };
+                match core
+                    .preferences_model_config_manager()
+                    .syncProviderModels(&pid)
+                    .await
+                {
+                    Ok(result) => {
+                        self.refresh_providers(core).await;
+                        if let Ok(binding) = core
+                            .preferences_functional_config_manager()
+                            .getModelBindingForFunction(model_editor::EditorState::CHAT_FUNCTION)
+                            .await
+                        {
+                            self.chat_provider_id = binding.providerId;
+                            self.chat_model_id = binding.modelId;
+                        }
+                        self.status_message = Some(text.config_models_synced(
+                            result.addedCount,
+                            result.removedCount,
+                            result.keptCustomCount,
+                            result.totalCount,
+                        ));
+                    }
+                    Err(error) => {
+                        self.error_message = Some(error.to_string());
                     }
                 }
             }

@@ -1,7 +1,7 @@
 
 use std::path::PathBuf;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use operit_providers::chat::llmprovider::ApiKeyProvider::{ApiKeyOutcome, ApiKeyPoolState};
 
@@ -24,6 +24,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::data::preferences::ApiPreferences::ApiPreferences;
+use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelSpecResolver::{ModelSpecResolver, ResolvedThinking};
 use crate::services::ModelCatalogService;
 use operit_local_models::LocalEngineManifest::LocalPlatformTarget;
@@ -32,10 +33,10 @@ use operit_local_models::LocalModelRegistryStore::LocalModelRegistryStore;
 use operit_model::ModelCatalog::ModelCatalog;
 use operit_model::ModelConfigData::{
     default_deepseek_model, default_deepseek_provider, ApiProviderType,
-    AvailableProviderModel, AvailableProviderModelSource, ModelCapabilities,
-    ModelCapabilityOverrides, ModelCatalogStatus, ModelConfigDefaults, ModelContextSpec,
-    ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderModelSummary, ProviderProfile,
-    ResolvedModelConfig,
+    AvailableProviderModel, AvailableProviderModelSource, ModelBindingAdjustment,
+    ModelCapabilities, ModelCapabilityOverrides, ModelCatalogStatus, ModelConfigDefaults,
+    ModelContextSpec, ModelProfile, ModelRequestSpec, ModelSummarySettings,
+    ProviderModelSummary, ProviderModelSyncResult, ProviderProfile, ResolvedModelConfig,
 };
 use operit_model::ModelParameter::ModelParameter;
 use operit_model::ModelThinking::{
@@ -88,6 +89,8 @@ pub enum ModelConfigError {
     InvalidThinkingLevel(String),
     #[error("API key pool error: {0}")]
     ApiKeyPool(String),
+    #[error("functional config error: {0}")]
+    FunctionalConfig(String),
 }
 
 /// Reports the result of importing model configuration backup data.
@@ -119,7 +122,7 @@ struct StoredModelConnectionTest {
 /// Stores provider profiles, model profiles, and resolved model configuration.
 #[derive(Clone)]
 pub struct ModelConfigManager {
-    storage: Arc<dyn operit_host_api::RuntimeStorageHost>,
+    pub(crate) storage: Arc<dyn operit_host_api::RuntimeStorageHost>,
     modelConfigDataStore: PreferencesDataStore,
     connectionTestDataStore: CoreNodeStateStore,
     keyPoolState: Arc<Mutex<ApiKeyPoolState>>,
@@ -156,7 +159,8 @@ impl ModelConfigManager {
             storage: storage.clone(),
             keyPoolState: keyPoolState(&storage),
             modelConfigDataStore: Self::preferenceStore(storage.clone(), operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH),
-            connectionTestDataStore: CoreNodeStateStore::newWithStorage(storage, operit_util::RuntimeStorageLayout::RUNTIME_MODEL_CONNECTION_TESTS_PATH),
+            connectionTestDataStore: CoreNodeStateStore::newWithStorage(storage.clone(), operit_util::RuntimeStorageLayout::RUNTIME_MODEL_CONNECTION_TESTS_PATH),
+            storage,
         }
     }
     /// Persists the default provider and model before a default function binding is used.
@@ -433,7 +437,7 @@ impl ModelConfigManager {
         Ok(())
     }
 
-    /// Creates a model profile under an existing provider from a user-entered model id.
+    /// Creates a custom model profile under an existing provider from a user-entered model id.
     pub fn createProviderModel(
         &self,
         providerId: &str,
@@ -447,6 +451,7 @@ impl ModelConfigManager {
         self.updateProviderInternalResult(providerId, |mut provider| {
             Self::assertProviderModelDoesNotExist(&provider, &modelId)?;
             let mut model = ModelProfile::new(modelId.clone());
+            model.custom = true;
             model.builtinToolsOverride = builtinTools.clone();
             resolver.initializeNewModel(&mut model);
             provider.models.push(model);
@@ -481,15 +486,14 @@ impl ModelConfigManager {
     pub(crate) fn availableProviderModelsLocal(&self, providerId: &str)
         -> Result<Vec<AvailableProviderModel>, ModelConfigError> {
         let provider = self.getProviderProfile(providerId)?;
+        let resolver = ModelSpecResolver::new(&provider)?;
         if provider.providerType == ApiProviderType::LOCAL_MODEL {
-            let resolver = ModelSpecResolver::new(&provider)?;
             return Ok(provider
                 .models
                 .iter()
                 .map(|model| resolver.configured(model, AvailableProviderModelSource::Local))
                 .collect());
         }
-        let resolver = ModelSpecResolver::new(&provider)?;
         let mut models: Vec<AvailableProviderModel> = Vec::new();
         let mut seenModelIds = HashSet::new();
         if provider.providerType != ApiProviderType::OPENAI_CODEX {
@@ -535,6 +539,193 @@ impl ModelConfigManager {
             }
         }
         Ok(models)
+    }
+
+    /// Syncs a provider's configured models against its live listing, replacing stale fetched
+    /// models while keeping user-added custom models and existing per-model settings.
+    pub fn syncProviderModels(
+        &self,
+        providerId: &str,
+    ) -> Result<ProviderModelSyncResult, ModelConfigError> {
+        let provider = self.getProviderProfile(providerId)?;
+        if provider.providerType == ApiProviderType::LOCAL_MODEL {
+            return Err(ModelConfigError::ModelListFetch(
+                "local model provider uses installed local models".to_string(),
+            ));
+        }
+        let resolver = ModelSpecResolver::new(&provider)?;
+        let liveModels = self.fetchRemoteProviderModels(&provider, &resolver, true)?;
+        self.syncProviderModelsWithFetched(providerId, liveModels)
+    }
+
+    /// Fetches the provider's live model listing (or fixed list for Codex).
+    fn fetchRemoteProviderModels(
+        &self,
+        provider: &ProviderProfile,
+        resolver: &ModelSpecResolver,
+        requireListOperation: bool,
+    ) -> Result<Vec<AvailableProviderModel>, ModelConfigError> {
+        // The Codex plan serves no model list; its fixed list is what it serves.
+        if provider.providerType == ApiProviderType::OPENAI_CODEX {
+            return Ok(resolver
+                .catalogModelIds()
+                .into_iter()
+                .map(|modelId| {
+                    resolver.available(modelId, AvailableProviderModelSource::Remote, None)
+                })
+                .collect());
+        }
+        let providerCatalog = ModelCatalog::provider(&provider.providerTypeId)
+            .map_err(ModelConfigError::ModelListFetch)?;
+        if requireListOperation
+            && !providerCatalog
+                .operations
+                .iter()
+                .any(|operation| operation.operationType == "list_models")
+        {
+            return Err(ModelConfigError::ModelListFetch(format!(
+                "{} does not support fetching a model list",
+                provider.providerTypeId
+            )));
+        }
+        let reserveManager = self.clone();
+        let reportManager = self.clone();
+        let reserveId = provider.id.clone();
+        let reportId = reserveId.clone();
+        let getter = operit_providers::chat::llmprovider::ApiKeyProvider::KeyGetter::from_callbacks(
+            Arc::new(move || {
+                reserveManager
+                    .reserveProviderApiKey(&reserveId)
+                    .map_err(|error| error.to_string())
+            }),
+            Arc::new(move |key, started, outcome| {
+                reportManager
+                    .reportProviderApiKey(&reportId, key, started, outcome)
+                    .map_err(|error| error.to_string())
+            }),
+        );
+        let remoteModels = ModelListFetcher::fetch(provider, &providerCatalog, getter)
+            .map_err(ModelConfigError::ModelListFetch)?;
+        let mut seenModelIds = HashSet::new();
+        let mut models = Vec::new();
+        for remoteModel in remoteModels {
+            if seenModelIds.insert(remoteModel.modelId.to_ascii_lowercase()) {
+                let listed = ModelSpecResolver::listedSpec(&remoteModel);
+                models.push(resolver.available(
+                    remoteModel.modelId,
+                    AvailableProviderModelSource::Remote,
+                    listed,
+                ));
+            }
+        }
+        Ok(models)
+    }
+
+    pub(crate) fn syncProviderModelsWithFetched(
+        &self,
+        providerId: &str,
+        liveModels: Vec<AvailableProviderModel>,
+    ) -> Result<ProviderModelSyncResult, ModelConfigError> {
+        let provider = self.getProviderProfile(providerId)?;
+        let resolver = ModelSpecResolver::new(&provider)?;
+        let mut addedCount = 0i32;
+        let mut keptCustomCount = 0i32;
+        let mut removedModelIds = Vec::new();
+
+        let updatedProvider = self.updateProviderInternalResult(providerId, |mut provider| {
+            addedCount = 0;
+            keptCustomCount = 0;
+            removedModelIds.clear();
+
+            let mut liveById = HashMap::with_capacity(liveModels.len());
+            for model in &liveModels {
+                liveById.entry(model.modelId.clone()).or_insert(model);
+            }
+
+            let mut existingById = HashMap::with_capacity(provider.models.len());
+            let mut customModels = Vec::new();
+            for existing in provider.models {
+                if existing.custom {
+                    customModels.push(existing);
+                } else {
+                    if !liveById.contains_key(&existing.id) {
+                        removedModelIds.push(existing.id.clone());
+                    }
+                    existingById.insert(existing.id.clone(), existing);
+                }
+            }
+
+            let mut nextModels = Vec::with_capacity(customModels.len() + liveModels.len());
+            let mut seenIds = HashSet::with_capacity(customModels.len() + liveModels.len());
+
+            for mut customModel in customModels {
+                if let Some(live) = liveById.get(&customModel.id) {
+                    customModel.listed = live.listed.clone();
+                }
+                if seenIds.insert(customModel.id.clone()) {
+                    keptCustomCount += 1;
+                    nextModels.push(customModel);
+                }
+            }
+
+            for live in &liveModels {
+                if !seenIds.insert(live.modelId.clone()) {
+                    continue;
+                }
+                if let Some(mut existing) = existingById.remove(&live.modelId) {
+                    existing.listed = live.listed.clone();
+                    nextModels.push(existing);
+                } else {
+                    let mut profile = ModelProfile::new(live.modelId.clone());
+                    profile.listed = live.listed.clone();
+                    profile.builtinToolsOverride = Some(live.builtinTools.clone());
+                    resolver.initializeNewModel(&mut profile);
+                    addedCount += 1;
+                    nextModels.push(profile);
+                }
+            }
+
+            provider.models = nextModels;
+            Ok(provider)
+        })?;
+
+        for removedId in &removedModelIds {
+            self.connectionTestDataStore
+                .removeEntry(&Self::connectionTestKey(providerId, removedId))?;
+        }
+
+        let remainingModelIds: Vec<String> = updatedProvider
+            .models
+            .iter()
+            .map(|model| model.id.clone())
+            .collect();
+        let bindingAdjustments: Vec<ModelBindingAdjustment> = if removedModelIds.is_empty() {
+            Vec::new()
+        } else {
+            let preferredChatModelId = updatedProvider
+                .models
+                .iter()
+                .find(|model| !model.id.to_ascii_lowercase().contains("autoglm"))
+                .or_else(|| updatedProvider.models.first())
+                .map(|model| model.id.as_str());
+            let generalReplacementId = updatedProvider.models.first().map(|model| model.id.as_str());
+            FunctionalConfigManager::forModelConfig(self.clone())
+                .reconcileRemovedProviderModels(
+                    providerId,
+                    &remainingModelIds,
+                    preferredChatModelId,
+                    generalReplacementId,
+                )
+                .map_err(|error| ModelConfigError::FunctionalConfig(error.to_string()))?
+        };
+
+        Ok(ProviderModelSyncResult {
+            addedCount,
+            removedCount: removedModelIds.len() as i32,
+            keptCustomCount,
+            totalCount: remainingModelIds.len() as i32,
+            bindingAdjustments,
+        })
     }
 
     /// Adds a model chosen from `getAvailableProviderModels`, keeping what the provider's
@@ -3132,6 +3323,285 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Off, Enabled]
         );
+    }
+
+    #[test]
+    fn sync_provider_models_replaces_stale_keeps_custom_and_preserves_overrides() {
+        use operit_model::ModelConfigData::{ModelContextSpec, ModelListedSpec, ModelProfile};
+        use operit_model::ModelThinking::ThinkingLevel;
+
+        let root = unique_test_root("sync_replaces_stale_keeps_custom");
+        setup_test_runtime(root.clone());
+        {
+            let manager = ModelConfigManager::default();
+            let providerId = manager
+                .createProvider(
+                    "Sync Test Provider".to_string(),
+                    ApiProviderType::OPENAI.name().to_string(),
+                    "https://api.openai.com/v1/chat/completions".to_string(),
+                )
+                .expect("create provider");
+
+            let mut legacyValue = serde_json::to_value(ModelProfile::new(
+                "legacy-no-custom-field".to_string(),
+            ))
+            .expect("serialize legacy model");
+            legacyValue.as_object_mut().unwrap().remove("custom");
+            let legacyNoCustomField: ModelProfile = serde_json::from_value(legacyValue)
+                .expect("deserialize legacy model without custom field");
+            assert!(!legacyNoCustomField.custom);
+
+            let mut keptModel = ModelProfile::new("gpt-kept".to_string());
+            keptModel.thinkingLevel = Some(ThinkingLevel::High);
+            keptModel.capabilitiesOverride.toolCall = Some(false);
+
+            manager
+                .updateProviderInternal(&providerId, |mut provider| {
+                    provider.models = vec![
+                        ModelProfile::new("legacy-stale".to_string()),
+                        legacyNoCustomField,
+                        keptModel.clone(),
+                    ];
+                    provider
+                })
+                .expect("seed non-custom models");
+
+            manager
+                .createProviderModel(&providerId, "user-custom-1".to_string())
+                .expect("create first custom model");
+            manager
+                .createProviderModel(&providerId, "user-custom-listed".to_string())
+                .expect("create second custom model");
+
+            manager
+                .connectionTestDataStore
+                .setTypedEntry(
+                    &ModelConfigManager::connectionTestKey(&providerId, "legacy-stale"),
+                    &serde_json::json!({"stale": true}),
+                )
+                .expect("seed stale test record");
+            manager
+                .connectionTestDataStore
+                .setTypedEntry(
+                    &ModelConfigManager::connectionTestKey(&providerId, "gpt-kept"),
+                    &serde_json::json!({"kept": true}),
+                )
+                .expect("seed kept test record");
+
+            let keptListed = ModelListedSpec {
+                context: Some(ModelContextSpec {
+                    maxContextTokens: 128_000,
+                }),
+                ..ModelListedSpec::default()
+            };
+            let newListed = ModelListedSpec {
+                context: Some(ModelContextSpec {
+                    maxContextTokens: 256_000,
+                }),
+                ..ModelListedSpec::default()
+            };
+            let customListed = ModelListedSpec {
+                context: Some(ModelContextSpec {
+                    maxContextTokens: 64_000,
+                }),
+                ..ModelListedSpec::default()
+            };
+
+            let result = manager
+                .syncProviderModelsWithFetched(
+                    &providerId,
+                    vec![
+                        available_model("gpt-kept", Some(keptListed.clone())),
+                        available_model("gpt-new", Some(newListed.clone())),
+                        available_model("user-custom-listed", Some(customListed.clone())),
+                    ],
+                )
+                .expect("sync provider models");
+
+            assert_eq!(result.addedCount, 1);
+            assert_eq!(result.removedCount, 2);
+            assert_eq!(result.keptCustomCount, 2);
+            assert_eq!(result.totalCount, 4);
+            assert!(result.bindingAdjustments.is_empty());
+
+            let updated = manager.getProviderProfile(&providerId).expect("updated provider");
+            let ids: Vec<&str> = updated.models.iter().map(|m| m.id.as_str()).collect();
+            assert_eq!(
+                ids,
+                vec!["user-custom-1", "user-custom-listed", "gpt-kept", "gpt-new"]
+            );
+
+            assert!(updated.models[0].custom);
+            assert!(updated.models[1].custom);
+            assert_eq!(updated.models[1].listed, Some(customListed));
+
+            assert!(!updated.models[2].custom);
+            assert_eq!(updated.models[2].thinkingLevel, Some(ThinkingLevel::High));
+            assert_eq!(updated.models[2].capabilitiesOverride.toolCall, Some(false));
+            assert_eq!(updated.models[2].listed, Some(keptListed));
+
+            assert!(!updated.models[3].custom);
+            assert_eq!(updated.models[3].listed, Some(newListed));
+
+            let storedEntries: Vec<String> = manager
+                .connectionTestDataStore
+                .typedEntries::<serde_json::Value>()
+                .expect("read test entries")
+                .into_iter()
+                .map(|(key, _)| key)
+                .collect();
+            assert!(!storedEntries.contains(&ModelConfigManager::connectionTestKey(&providerId, "legacy-stale")));
+            assert!(storedEntries.contains(&ModelConfigManager::connectionTestKey(&providerId, "gpt-kept")));
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sync_provider_models_reconciles_chat_and_function_bindings() {
+        use operit_model::FunctionType::FunctionType;
+        use operit_model::ModelConfigData::ModelProfile;
+
+        let root = unique_test_root("sync_reconciles_bindings");
+        setup_test_runtime(root.clone());
+        {
+            let manager = ModelConfigManager::default();
+            let functional = FunctionalConfigManager::forModelConfig(manager.clone());
+            let providerId = manager
+                .createProvider(
+                    "Binding Sync Provider".to_string(),
+                    ApiProviderType::OPENAI.name().to_string(),
+                    "https://api.openai.com/v1/chat/completions".to_string(),
+                )
+                .expect("create provider");
+
+            manager
+                .updateProviderInternal(&providerId, |mut provider| {
+                    provider.models = vec![
+                        ModelProfile::new("old-chat".to_string()),
+                        ModelProfile::new("old-summary".to_string()),
+                        ModelProfile::new("autoglm-vision".to_string()),
+                        ModelProfile::new("kept-chat".to_string()),
+                    ];
+                    provider
+                })
+                .expect("seed models");
+
+            functional
+                .setModelForFunction(
+                    FunctionType::CHAT,
+                    providerId.clone(),
+                    "old-chat".to_string(),
+                )
+                .expect("bind chat");
+            functional
+                .setFunctionFollowChat(FunctionType::MEMORY)
+                .expect("memory follows chat");
+            functional
+                .setModelForFunction(
+                    FunctionType::SUMMARY,
+                    providerId.clone(),
+                    "old-summary".to_string(),
+                )
+                .expect("bind summary");
+
+            let result = manager
+                .syncProviderModelsWithFetched(
+                    &providerId,
+                    vec![
+                        available_model("autoglm-vision", None),
+                        available_model("kept-chat", None),
+                    ],
+                )
+                .expect("sync remaining models");
+
+            assert_eq!(result.removedCount, 2);
+            assert_eq!(result.totalCount, 2);
+
+            let chatBinding = functional
+                .getModelBindingForFunction(FunctionType::CHAT)
+                .expect("chat binding");
+            assert_eq!(chatBinding.modelId, "kept-chat");
+
+            let memoryBinding = functional
+                .getModelBindingForFunction(FunctionType::MEMORY)
+                .expect("memory binding");
+            assert_eq!(memoryBinding.modelId, "kept-chat");
+
+            let summaryBinding = functional
+                .getModelBindingForFunction(FunctionType::SUMMARY)
+                .expect("summary binding");
+            assert_eq!(summaryBinding.modelId, "autoglm-vision");
+
+            assert!(result.bindingAdjustments.iter().any(|item| {
+                item.functionType == FunctionType::CHAT
+                    && item.previousModelId == "old-chat"
+                    && item.newModelId.as_deref() == Some("kept-chat")
+            }));
+            assert!(result.bindingAdjustments.iter().any(|item| {
+                item.functionType == FunctionType::SUMMARY
+                    && item.previousModelId == "old-summary"
+                    && item.newModelId.as_deref() == Some("autoglm-vision")
+            }));
+
+            let emptyResult = manager
+                .syncProviderModelsWithFetched(&providerId, Vec::new())
+                .expect("sync empty models");
+            assert_eq!(emptyResult.totalCount, 0);
+            assert_eq!(emptyResult.removedCount, 2);
+            assert!(emptyResult
+                .bindingAdjustments
+                .iter()
+                .all(|item| item.newModelId.is_none()));
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sync_provider_models_handles_fixed_codex_and_rejects_unsupported() {
+        let root = unique_test_root("sync_codex_and_rejects_unsupported");
+        setup_test_runtime(root.clone());
+        {
+            let manager = ModelConfigManager::default();
+            let localId = local_provider(&manager);
+            assert!(matches!(
+                manager.syncProviderModels(&localId),
+                Err(ModelConfigError::ModelListFetch(_))
+            ));
+
+            let baiduId = manager
+                .createProvider(
+                    "Baidu Provider".to_string(),
+                    ApiProviderType::BAIDU.name().to_string(),
+                    "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/completions".to_string(),
+                )
+                .expect("create baidu provider");
+            assert!(matches!(
+                manager.syncProviderModels(&baiduId),
+                Err(ModelConfigError::ModelListFetch(_))
+            ));
+
+            let codexId = manager
+                .createProvider(
+                    "Codex Provider".to_string(),
+                    ApiProviderType::OPENAI_CODEX.name().to_string(),
+                    "https://chatgpt.com/backend-api/codex/responses".to_string(),
+                )
+                .expect("create codex provider");
+            manager
+                .createProviderModel(&codexId, "custom-codex".to_string())
+                .expect("create custom codex model");
+
+            let syncResult = manager
+                .syncProviderModels(&codexId)
+                .expect("sync fixed codex catalog");
+            assert!(syncResult.addedCount > 0);
+            assert_eq!(syncResult.keptCustomCount, 1);
+
+            let codex = manager.getProviderProfile(&codexId).expect("codex profile");
+            assert!(codex.models.iter().any(|m| m.id == "custom-codex" && m.custom));
+            assert!(codex.models.iter().any(|m| !m.custom));
+        }
+        let _ = fs::remove_dir_all(root);
     }
 
     fn unique_test_root(name: &str) -> std::path::PathBuf {
