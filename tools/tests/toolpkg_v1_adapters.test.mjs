@@ -256,11 +256,11 @@ test('v1 intent search retains its defaults and result mapping through current g
     assert.equal(result.env, 'linux');
     assert.equal(result.searchPath, '/work');
     assert.equal(result.matches[0].filePath, '/work/found.txt');
-    await tools.Files.grepContext('/work', 'text', { max_results: 3 });
+    await tools.Files.grepContext('/work', 'text', { environment: 'linux', max_results: 3 });
     assert.equal(calls.at(-1).args[2].max_results, 3);
     /** Preserves the original host rejection without retrying or converting it. */
     current.grep = async () => { throw failure; };
-    await assert.rejects(legacy.grepContext('/work', 'text'), error => error === failure);
+    await assert.rejects(legacy.grepContext('/work', 'text', { environment: 'linux' }), error => error === failure);
   }
 });
 
