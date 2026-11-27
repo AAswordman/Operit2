@@ -989,3 +989,33 @@ fn incomplete_import_cannot_commit_a_message_without_parts() {
     assert_eq!(manager.loadChatMessagesRange("older".to_string(), "asc".to_string(), 0, 79).unwrap(), before);
     assert_eq!(manager.syncClock().unwrap(), clockBefore);
 }
+
+/// Aggregates input and clamped cached input tokens per chat cleanly.
+#[test]
+fn cached_token_totals_aggregate_and_clamp_per_chat() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (manager, _) = chatOrderFixture("cached-token-totals");
+
+    let mut msg1 = ChatMessage::new_with_markdown_timestamp("ai".into(), "a".into(), 10);
+    msg1.inputTokens = 1000;
+    msg1.cachedInputTokens = 650;
+    manager.addMessage("recent".into(), msg1).unwrap();
+
+    let mut msg2 = ChatMessage::new_with_markdown_timestamp("ai".into(), "b".into(), 20);
+    msg2.inputTokens = 500;
+    msg2.cachedInputTokens = 900;
+    manager.addMessage("recent".into(), msg2).unwrap();
+
+    let mut unmeasured = ChatMessage::new_with_markdown_timestamp("ai".into(), "c".into(), 30);
+    unmeasured.inputTokens = 0;
+    unmeasured.cachedInputTokens = 200;
+    manager.addMessage("recent".into(), unmeasured).unwrap();
+
+    let mut other = ChatMessage::new_with_markdown_timestamp("ai".into(), "d".into(), 40);
+    other.inputTokens = 400;
+    other.cachedInputTokens = 100;
+    manager.addMessage("older".into(), other).unwrap();
+
+    assert_eq!(manager.getChatCachedTokenTotals("recent").unwrap(), (1500, 1150));
+    assert_eq!(manager.getChatCachedTokenTotals("older").unwrap(), (400, 100));
+}

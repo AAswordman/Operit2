@@ -1872,6 +1872,14 @@ impl ChatHistoryManager {
         Ok(self.messageDao.renameRoleName(&oldName, &newName)?)
     }
 
+    /// Sums persisted input and cached input tokens across measured messages in a chat.
+    pub fn getChatCachedTokenTotals(
+        &self,
+        chatId: &str,
+    ) -> ChatHistoryManagerResult<(i64, i64)> {
+        Ok(self.messageDao.getChatCachedTokenTotals(chatId)?)
+    }
+
     fn touchChatMetadata(&self, chatId: &str) -> ChatHistoryManagerResult<()> {
         if let Some(chat) = self.chatDao.getChatById(chatId)? {
             self.chatDao.updateChatMetadata(

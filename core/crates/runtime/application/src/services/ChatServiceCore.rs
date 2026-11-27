@@ -135,9 +135,15 @@ pub struct ChatInputMenuSummary {
     pub currentWindowSize: i64,
     pub inputTokenCount: i64,
     pub outputTokenCount: i64,
+    #[serde(default)]
+    pub cachedInputTokenCount: Option<i64>,
+    #[serde(default)]
+    pub cacheHitRate: Option<f64>,
     pub maxContextTokens: i64,
     #[serde(default)]
     pub breakdown: Option<ContextWindowBreakdown>,
+    #[serde(default)]
+    pub summaryThresholdRatio: Option<f64>,
 }
 
 /// Bounded read-only plugin projection for the chat's execution Core.
@@ -3215,12 +3221,37 @@ impl ChatServiceCore {
         } else {
             None
         };
+        let summaryThresholdRatio = if config.summary.enableSummary {
+            let ratio = config.summary.tokenThresholdRatio();
+            (ratio.is_finite() && ratio > 0.0).then_some(ratio)
+        } else {
+            None
+        };
+        let (measuredInputTokens, cachedTokens) = match &chatId {
+            Some(id) => self
+                .chatHistoryDelegate
+                .chatHistoryManager
+                .getChatCachedTokenTotals(id)
+                .map_err(|e| e.to_string())?,
+            None => (0, 0),
+        };
+        let (cachedInputTokenCount, cacheHitRate) = if measuredInputTokens > 0 {
+            (
+                Some(cachedTokens),
+                Some((cachedTokens as f64 / measuredInputTokens as f64).clamp(0.0, 1.0)),
+            )
+        } else {
+            (None, None)
+        };
         Ok(ChatInputMenuSummary {
             currentWindowSize: if liveWindowSize > 0 { liveWindowSize } else { persistedWindowSize },
             inputTokenCount: chat.as_ref().map(|c| c.inputTokens).unwrap_or(0),
             outputTokenCount: chat.as_ref().map(|c| c.outputTokens).unwrap_or(0),
+            cachedInputTokenCount,
+            cacheHitRate,
             maxContextTokens: i64::from(config.context.maxContextTokens),
             breakdown,
+            summaryThresholdRatio,
         })
     }
 
@@ -4147,6 +4178,7 @@ mod chat_input_menu_summary_tests {
         let summary = core.chatInputMenuSummary(Some("summary-stale".into())).await.unwrap();
         assert_eq!(summary.currentWindowSize, 1000);
         assert_eq!((summary.inputTokenCount, summary.outputTokenCount), (111, 22));
+        assert!((summary.summaryThresholdRatio.unwrap() - 0.85).abs() < 1e-6);
 
         // Live breakdown cached in TokenStatisticsDelegate flows into ChatInputMenuSummary and is
         // cleared cleanly when clearContextBreakdown invalidates the chat's cache.
@@ -4190,12 +4222,32 @@ mod chat_input_menu_summary_tests {
         database.chatDao().insertChat(other).unwrap();
         let summary = core.chatInputMenuSummary(Some("summary-other".into())).await.unwrap();
         assert_eq!(summary.currentWindowSize, 2000);
+        assert_eq!((summary.cachedInputTokenCount, summary.cacheHitRate), (None, None));
+
+        // Persisted message cached tokens determine per-chat cache hit totals cleanly.
+        let mut cachedMsg1 = ChatMessage::new_with_markdown_timestamp("ai".into(), "r1".into(), 100);
+        cachedMsg1.inputTokens = 1000;
+        cachedMsg1.cachedInputTokens = 600;
+        core.chatHistoryDelegate.addMessageToChat(cachedMsg1, Some("summary-stale".into()));
+        let mut cachedMsg2 = ChatMessage::new_with_markdown_timestamp("ai".into(), "r2".into(), 101);
+        cachedMsg2.inputTokens = 1000;
+        cachedMsg2.cachedInputTokens = 1200;
+        core.chatHistoryDelegate.addMessageToChat(cachedMsg2, Some("summary-stale".into()));
+        let summary = core.chatInputMenuSummary(Some("summary-stale".into())).await.unwrap();
+        assert_eq!(summary.cachedInputTokenCount, Some(1600));
+        assert!((summary.cacheHitRate.unwrap() - 0.8).abs() < 1e-6);
 
         // No selected conversation keeps returning zeros instead of the active chat's estimate.
         let summary = core.chatInputMenuSummary(None).await.unwrap();
         assert_eq!(
-            (summary.currentWindowSize, summary.inputTokenCount, summary.outputTokenCount),
-            (0, 0, 0)
+            (
+                summary.currentWindowSize,
+                summary.inputTokenCount,
+                summary.outputTokenCount,
+                summary.cachedInputTokenCount,
+                summary.cacheHitRate,
+            ),
+            (0, 0, 0, None, None)
         );
     }
 }
