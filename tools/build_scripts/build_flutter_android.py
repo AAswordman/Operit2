@@ -118,7 +118,7 @@ def publish_android_apk(apk_path: Path, dist_dir: Path) -> Path:
 # Builds and verifies the ABI-specific Android release before publishing it.
 def main() -> int:
     args = parse_args()
-    prepare_plugin_assets()
+    prepare_plugin_assets(flutter_assets=True)
     if not args.skip_signing:
         ensure_android_signing()
     flutter = flutter_command()

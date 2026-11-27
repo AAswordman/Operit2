@@ -8,6 +8,26 @@ use std::sync::Arc;
 
 /// Contains a JSON object with complete values preserved by the native JSON parser.
 pub type JsonObject = BTreeMap<String, serde_json::Value>;
+
+/// Explicitly separates a package tool's display value from its model value.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolResultPresentation<TDisplay, TModel> {
+    /// Marks this value as a presentation contract rather than ordinary business JSON.
+    #[serde(rename = "$operitToolResult")]
+    pub presentation: ToolResultContent<TDisplay, TModel>,
+}
+
+/// Carries independently authored JSON values for the user and the model.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolResultContent<TDisplay, TModel> {
+    /// Retains the full display value, including data used by a declared result renderer.
+    pub display: TDisplay,
+    /// Contains exactly the result value intended for model context.
+    pub model: TModel,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 /// Stores a scalar or JSON value assigned to an arbitrary tool parameter.

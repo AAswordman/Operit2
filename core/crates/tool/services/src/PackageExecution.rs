@@ -117,9 +117,7 @@ impl PackageExecutionManager {
                 let currentPending = selected.is_some_and(|execution|
                     !execution.state.lock().expect("Package execution is poisoned").finalDelivered);
                 if pending > usize::from(currentPending) {
-                    if let ToolResultData::JsonResultData(data) = &mut result.result {
-                        data.value["pending_execution_count"] = json!(pending);
-                    }
+                    addPendingExecutionCount(&mut result.result, pending);
                 }
                 return Ok(result);
             }
@@ -134,6 +132,38 @@ impl PackageExecutionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Keeps presentation channels through foreground completion, output receipts, and package_wait.
+    #[test]
+    fn package_presentations_survive_receipts_and_wait_without_display_leaks() {
+        use crate::ConversationMarkupManager::ConversationMarkupManager;
+        use operit_model::MessagePartCodec::MessagePartCodec;
+        let manager = PackageExecutionManager::default();
+        let execution = execution(&manager, "presentation", "chat");
+        let presented = ToolResultData::fromPackageValue(json!({"$operitToolResult":{
+            "display":{"diff":"+private source"}, "model":{"changed":1}
+        }})).unwrap();
+        execution.finish(Ok(vec![ToolResult {
+            toolName: "third_party:mutate".into(), success: true, result: presented, error: None,
+        }]));
+        let foreground = execution.receipt(false);
+        assert_eq!(foreground.result.modelData().toBusinessValue(), json!({"changed":1}));
+        execution.state.lock().unwrap().output.push("progress".into());
+        for forWait in [false, true] {
+            let mut receipt = execution.receipt(forWait);
+            addPendingExecutionCount(&mut receipt.result, 2);
+            let display = receipt.result.toBusinessValue();
+            let model = receipt.result.modelData().toBusinessValue();
+            assert_eq!(display["result"], json!({"diff":"+private source"}));
+            assert_eq!(model["result"], json!({"changed":1}));
+            assert_eq!(model["pending_execution_count"], 2);
+            assert_eq!(display["pending_execution_count"], 2);
+            let markup = ConversationMarkupManager::formatToolResultForDisplay(&receipt, None);
+            let parts = MessagePartCodec::parseAssistantMarkup(&markup).unwrap();
+            assert!(!MessagePartCodec::assistantMarkup(&parts).contains("private source"));
+            assert!(!ConversationMarkupManager::formatToolResultForMessage(&receipt).contains("private source"));
+        }
+    }
 
     /// Reads the public JSON payload rather than the retained execution state.
     fn payload(result: ToolResult) -> Value {
@@ -417,46 +447,62 @@ impl PackageExecution {
         let mut value = json!({"execution_id": self.id, "tool_name": self.toolName, "status": status});
         if !output.is_empty() { value["output"] = json!(output); }
         if hasMore { value["has_more_output"] = json!(true); }
-        match &state.result {
-            Some(Ok(results)) if results.len() == 1 => {
-                let result = &results[0];
-                if result.success || !matches!(&result.result, ToolResultData::StringResultData(data) if data.value.is_empty()) {
-                    value["result"] = modelResultValue(&result.result);
+        let mut modelValue = value.clone();
+        for (value, forModel) in [(&mut value, false), (&mut modelValue, true)] {
+            match &state.result {
+                Some(Ok(results)) if results.len() == 1 => {
+                    let result = &results[0];
+                    if result.success || !matches!(&result.result, ToolResultData::StringResultData(data) if data.value.is_empty()) {
+                        value["result"] = receiptResultValue(&result.result, forModel);
+                    }
+                    if forWait {
+                        if let Some(error) = &result.error { value["error"] = json!(error); }
+                    }
                 }
-                if forWait {
-                    if let Some(error) = &result.error { value["error"] = json!(error); }
-                }
+                Some(Ok(results)) => value["results"] = Value::Array(results.iter().map(|result| {
+                    let mut entry = json!({"tool_name": result.toolName, "success": result.success,
+                        "result": receiptResultValue(&result.result, forModel)});
+                    if forWait {
+                        if let Some(error) = &result.error { entry["error"] = json!(error); }
+                    }
+                    entry
+                }).collect()),
+                Some(Err(error)) if forWait => value["error"] = json!(error),
+                Some(Err(_)) => {},
+                None => {},
             }
-            Some(Ok(results)) => value["results"] = Value::Array(results.iter().map(|result| {
-                let mut entry = json!({"tool_name": result.toolName, "success": result.success,
-                    "result": modelResultValue(&result.result)});
-                if forWait {
-                    if let Some(error) = &result.error { entry["error"] = json!(error); }
-                }
-                entry
-            }).collect()),
-            Some(Err(error)) if forWait => value["error"] = json!(error),
-            Some(Err(_)) => {},
-            None => {}
         }
+        let data = if value == modelValue {
+            ToolResultData::JsonResultData(JsonResultData { value })
+        } else {
+            ToolResultData::presented(
+                ToolResultData::JsonResultData(JsonResultData { value }),
+                ToolResultData::JsonResultData(JsonResultData { value: modelValue }),
+            )
+        };
         ToolResult { toolName: if forWait { "package_wait".into() } else { self.toolName.clone() },
-            success, result: ToolResultData::JsonResultData(JsonResultData { value }), error }
+            success, result: data, error }
     }
 }
 
-/// Keeps business JSON structured and removes only the native result's own serialization tag.
-fn modelResultValue(result: &ToolResultData) -> Value {
+/// Projects receipt business data before embedding it in package execution metadata.
+fn receiptResultValue(result: &ToolResultData, forModel: bool) -> Value {
+    if forModel {
+        result.modelData().toBusinessValue()
+    } else {
+        result.toBusinessValue()
+    }
+}
+
+/// Adds queue metadata to both receipt projections without exposing either channel to the other.
+fn addPendingExecutionCount(result: &mut ToolResultData, pending: usize) {
     match result {
-        ToolResultData::JsonResultData(data) => data.value.clone(),
-        ToolResultData::StringResultData(data) => json!(data.value),
-        ToolResultData::BooleanResultData(data) => json!(data.value),
-        ToolResultData::IntResultData(data) => json!(data.value),
-        ToolResultData::BinaryResultData(_) => json!(result.toString()),
-        _ => {
-            let mut value = serde_json::to_value(result).expect("Tool result must serialize");
-            value.as_object_mut().expect("Native result is an object").remove("__type");
-            value
+        ToolResultData::PresentedResultData(data) => {
+            addPendingExecutionCount(&mut data.display, pending);
+            addPendingExecutionCount(&mut data.model, pending);
         }
+        ToolResultData::JsonResultData(data) => data.value["pending_execution_count"] = json!(pending),
+        _ => unreachable!("Package receipts contain JSON objects"),
     }
 }
 

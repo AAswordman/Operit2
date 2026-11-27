@@ -19,6 +19,7 @@ async function fixture(t, packagePath, output, injectedPath = cleanOnExit) {
   const sessions = new Map();
   const logs = [];
   const completions = [];
+  const intermediate = [];
   function resolve(vfsPath) {
     if (!vfsPath.startsWith('/operitapp/data/')) {
       throw new Error(`Unknown VFS root: ${vfsPath}`);
@@ -32,7 +33,7 @@ async function fixture(t, packagePath, output, injectedPath = cleanOnExit) {
     console: { log() {}, error: (...args) => logs.push(args) },
     complete: (result) => completions.push(result),
     /** Accepts stream events independently of the final tool output. */
-    sendIntermediateResult() {},
+    sendIntermediateResult(event) { intermediate.push(structuredClone(event)); },
     toolCall: async () => ({ statusCode: 200, content: output, contentType: 'application/json' }),
     Tools: {
       Files: {
@@ -55,6 +56,7 @@ async function fixture(t, packagePath, output, injectedPath = cleanOnExit) {
           async *runStream(request) {
             const created = await this.create(request.sessionName, 'bash');
             yield {type:'start', ...created};
+            yield {type:'chunk', ...created, chunk:output, chunkIndex:0, receivedChars:output.length};
             yield {type:'completed', result:await this.exec(created.sessionId)};
           },
           /** Creates a fixture session with the explicitly requested interpreter. */
@@ -76,13 +78,14 @@ async function fixture(t, packagePath, output, injectedPath = cleanOnExit) {
     vm.runInContext(stripTypeScriptTypes(source), context);
     tools = context.exports;
   }
-  return { tools, calls, sessions, logs, completions, resolve, runtimeRoot };
+  return { tools, calls, sessions, logs, completions, intermediate, resolve, runtimeRoot };
 }
 
-test('bash short output stays inline and does not create temporary directories', async (t) => {
+test('bash short output is streamed once and does not create temporary directories', async (t) => {
   const f = await fixture(t, 'plugins/packages/buildin/super_admin/src/tools.ts', 'x'.repeat(12000));
   const result = await f.tools.terminal({ command: 'printf small' });
-  assert.equal(result.output.length, 12000);
+  assert.equal(Object.hasOwn(result, 'output'), false);
+  assert.equal(f.intermediate.filter(event => event.type === 'chunk').map(event => event.chunk).join('').length, 12000);
   assert.deepEqual(f.calls, []);
   assert.deepEqual(f.logs, []);
 });
@@ -93,7 +96,7 @@ test('bash large output is readable under the active identity, reusing its sessi
   // The first call creates a missing temp tree; later calls use the existing tree.
   for (let i = 0; i < 5; i++) {
     const result = await f.tools.terminal({ command: 'printf large' });
-    assert.equal(result.output, '(saved_to_file)');
+    assert.equal(Object.hasOwn(result, 'output'), false);
     assert.equal(result.output_chars, output.length);
     assert.equal(result.operit_clean_on_exit_dir, cleanOnExit);
     assert.ok(result.output_saved_to.startsWith(`${cleanOnExit}/terminal_output_`));
@@ -101,6 +104,7 @@ test('bash large output is readable under the active identity, reusing its sessi
     assert.equal(result.sessionId, 'session-1');
   }
   assert.equal(f.sessions.size, 1);
+  assert.equal(f.intermediate.filter(event => event.type === 'chunk').map(event => event.chunk).join(''), output.repeat(5));
   assert.equal(f.calls.length, 10);
   assert.deepEqual(f.logs, []);
 });

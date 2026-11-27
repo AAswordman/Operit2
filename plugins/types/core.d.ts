@@ -6,6 +6,30 @@
 export type JsonObject = Record<string, unknown>;
 
 /**
+ * Explicitly separates a package tool's display value from its model value.
+ */
+export interface ToolResultPresentation<TDisplay, TModel> {
+  /**
+   * Marks this value as a presentation contract rather than ordinary business JSON.
+   */
+  $operitToolResult: ToolResultContent<TDisplay, TModel>;
+}
+
+/**
+ * Carries independently authored JSON values for the user and the model.
+ */
+export interface ToolResultContent<TDisplay, TModel> {
+  /**
+   * Retains the full display value, including data used by a declared result renderer.
+   */
+  display: TDisplay;
+  /**
+   * Contains exactly the result value intended for model context.
+   */
+  model: TModel;
+}
+
+/**
  * Stores a scalar or JSON value assigned to an arbitrary tool parameter.
  */
 export type ToolParamsAdditionalValue = string | number | boolean | unknown;

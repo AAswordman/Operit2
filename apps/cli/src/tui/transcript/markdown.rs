@@ -1275,7 +1275,6 @@ fn tool_leading_symbol(tool_name: &str) -> &'static str {
         | BuiltinToolName::IoExecute
         | BuiltinToolName::MakeDirectory
         | BuiltinToolName::FindFiles
-        | BuiltinToolName::GrepContext
         | BuiltinToolName::BrowserClick
         | BuiltinToolName::BrowserClose
         | BuiltinToolName::BrowserCloseAll

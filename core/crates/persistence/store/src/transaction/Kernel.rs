@@ -253,18 +253,22 @@ impl<'a> Registry<'a> {
                 owner.validate.as_ref()?.as_ref()(operation).err().map(|error|(index,error)));
             let count = invalid.as_ref().map_or(operations.len(), |(index,_)|*index);
             if count > 0 {
-                let timing = std::time::Instant::now();
+                let scheduler = operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost();
+                let started = scheduler.monotonicTimeMillis().map_err(|error| error.to_string())?;
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
                     (owner.apply)(&operations[..count], &report.aliases)))
                     .unwrap_or_else(|_| Err(ApplyError::Capability(format!("Owner panicked: {path}"))));
-                let apply_ms = timing.elapsed().as_millis();
+                let apply_ms = scheduler.monotonicTimeMillis()
+                    .map_err(|error| error.to_string())?.saturating_sub(started);
                 match result {
                     Ok(aliases) => {
                         report.aliases.extend(aliases.clone());
                         report.outcomes.insert(path.clone(), Ok(aliases));
-                        if timing.elapsed().as_millis() >= 100 {
+                        let total_ms = scheduler.monotonicTimeMillis()
+                            .map_err(|error| error.to_string())?.saturating_sub(started);
+                        if total_ms >= 100 {
                             operit_util::AppLogger::AppLogger::trace("CoreSyncTrace", &format!(
-                                "sync_owner.stages owner={path} operations={count} applyMs={apply_ms} totalMs={}", timing.elapsed().as_millis()));
+                                "sync_owner.stages owner={path} operations={count} applyMs={apply_ms} totalMs={total_ms}"));
                         }
                     }
                     Err(error) => {

@@ -49,6 +49,17 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
             "",
             vec![
                 tool(
+                    "create_file",
+                    "Create a new file with full content. (write_file is preferred for all writing/creating operations)",
+                    "",
+                    vec![
+                        param("path", "string", "VFS file path", true, None),
+                        param("new", "string", "full file content for the new file", true, None)
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
                     "get_terminal_info",
                     "Get terminal platform info and supported terminal types.",
                     "",
@@ -1287,6 +1298,17 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
             "内部工具",
             "",
             vec![
+                tool(
+                    "create_file",
+                    "创建并写入新文件。（推荐统一使用 write_file 处理写入与创建）",
+                    "",
+                    vec![
+                        param("path", "string", "VFS 文件路径", true, None),
+                        param("new", "string", "新文件的完整内容", true, None)
+                    ],
+                    "",
+                    "",
+                ),
                 tool(
                     "get_terminal_info",
                     "获取终端平台信息和支持的终端类型。",

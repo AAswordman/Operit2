@@ -153,9 +153,21 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
 
 
 /** Exercises the shared profile tools independently of platform-specific names. */
-test('one execution entry point advertises discovery without platform presets', () => {
+test('one execution entry point shares tools with platform-selected path advice', () => {
   const metadata = JSON.parse(source('plugins/packages/buildin/super_admin/src/tools.ts').match(/\/\* METADATA\s*([\s\S]*?)\*\//)[1]);
-  assert.equal(metadata.states, undefined);
+  assert.equal(metadata.tools.find(tool => tool.name === 'usage_advice').advice, true);
+  assert.deepEqual(metadata.states.map(state => state.id), ['windows', 'linux', 'macos', 'android', 'ios', 'ohos', 'web']);
+  for (const state of metadata.states) {
+    assert.equal(state.condition, `platform.${state.id}`);
+    assert.equal(state.inheritTools, true);
+    assert.equal(state.tools.length, 1);
+    const advice = state.tools[0];
+    assert.equal(advice.name, 'platform_paths');
+    assert.equal(advice.advice, true);
+    assert.deepEqual(advice.parameters, []);
+    const platformPaths = [...advice.description.en.matchAll(/\/virtual\/([a-z]+)\//g)].map(match => match[1]);
+    assert.ok(platformPaths.every(platform => platform === state.id));
+  }
   assert.ok(metadata.tools.some(tool => tool.name === 'terminal'));
   assert.ok(metadata.tools.some(tool => tool.name === 'list_terminals'));
   assert.ok(metadata.tools.some(tool => tool.name === 'close'));
@@ -244,6 +256,7 @@ test('profile execution streams session identity and output without a terminal w
   const f = managedFixture({output:'x'.repeat(12001)});
   const first = await f.tools.terminal({command:'printf large'});
   assert.equal(first.status, 'completed');
+  assert.equal(Object.hasOwn(first, 'output'), false);
   assert.equal(f.files.get(first.output_saved_to).length,12001);
   const system = await f.tools.terminal({command:'id',profileId:'system'});
   assert.equal(system.terminal,'android-system');
@@ -290,18 +303,50 @@ test('terminal AI results project execution data instead of forwarding SDK recei
       assert.equal(result.terminal, session.terminal);
       assert.equal(result.terminalType, session.terminalType);
       if (result.type) continue;
+      assert.equal(Object.hasOwn(result, 'output'), false);
       if (output.length > 12000) {
-        assert.equal(result.output, '(saved_to_file)');
         assert.equal(result.output_chars, output.length);
         assert.equal(f.files.get(result.output_saved_to), output);
-      } else {
-        assert.equal(result.output, output);
       }
     }
+    assert.equal(f.intermediate.filter(event => event.type === 'chunk').map(event => event.chunk).join(''), output);
+    assert.equal(session.receipt.output, output, 'The SDK receipt must retain its complete output');
     assert.equal(first.status, 'completed');
     assert.equal(first.exitCode, 0);
     assert.equal(first.timedOut, false);
     assert.equal(f.calls.filter(call => call.operation === 'observe').length, 1);
+  }
+});
+
+/** Delivers each chunk once across early reads and completion, including repeated text and Unicode. */
+test('completion metadata does not replay streamed output before or after foreground expiry', async () => {
+  for (const chunks of [[], ['same\n', 'same\n', '雪🌍\r\n'], ['short output']]) {
+    const output = chunks.join('');
+    const f = managedFixture({output, timedOut:true});
+    const original = f.context.Tools.System.terminal.runStream;
+    f.context.Tools.System.terminal.runStream = async function*(request) {
+      for await (const event of original.call(this, request)) {
+        if (event.type !== 'chunk') { yield event; continue; }
+        let receivedChars = 0;
+        for (const [chunkIndex, chunk] of chunks.entries()) {
+          receivedChars += chunk.length;
+          yield {...event, chunk, chunkIndex, receivedChars};
+        }
+      }
+    };
+    const running = f.tools.terminal({command:'test output'});
+    await new Promise(setImmediate);
+    const receivedBeforeCompletion = f.intermediate.splice(0);
+    const session = [...f.sessions.values()][0];
+    session.finish();
+    const result = await running;
+    const delivered = [...receivedBeforeCompletion, ...f.intermediate];
+    assert.equal(delivered.filter(event => event.type === 'chunk').map(event => event.chunk).join(''), output);
+    assert.deepEqual(delivered.filter(event => event.type === 'chunk').map(event => event.chunkIndex), chunks.map((_, index) => index));
+    assert.equal(Object.hasOwn(result, 'output'), false);
+    assert.equal(session.receipt.output, output);
+    assert.equal(result.status, 'completed');
+    assert.equal(result.exitCode, 0);
   }
 });
 
@@ -343,7 +388,7 @@ test('terminal projection does not strip script text from actual stdout', async 
   const command = 'printf "SCRIPT_OUTPUT"';
   const f = managedFixture({output:command});
   const result = await f.tools.terminal({command});
-  assert.equal(result.output, command);
+  assert.equal(Object.hasOwn(result, 'output'), false);
   assert.equal(f.intermediate.find(event => event.type === 'chunk').chunk, command);
   assert.equal(Object.hasOwn(result, 'command'), false);
 });

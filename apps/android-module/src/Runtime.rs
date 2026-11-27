@@ -388,6 +388,7 @@ fn run_core(
             model,
             language,
             secretRoot: user.join("secrets"),
+            applicationPackage: module.join("system/app/Operit/Operit.apk"),
         },
     })?);
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;

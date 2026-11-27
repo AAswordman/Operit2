@@ -1348,53 +1348,6 @@ impl StandardFileSystemTools {
     }
 
     #[allow(non_snake_case)]
-    /// Searches text and returns matches with surrounding context.
-    pub async fn grepContext(&self, tool: &AITool) -> ToolResult {
-        let tool = &match self.fileRouting.prepare(tool, &["path"]) {
-            Ok(PreparedFileToolCall::Local(call)) => call,
-            Ok(PreparedFileToolCall::Remote { call, nodeId, typedPath, nodePrefix }) => {
-                return self
-                    .fileRouting.dispatchRemote(call, nodeId, &typedPath, &nodePrefix)
-                    .await;
-            }
-            Err(error) => return toolError(tool, String::new(), error),
-        };
-        let path = parameterValue(tool, "path");
-        let intent = parameterValue(tool, "intent");
-        let vfs = self.vfs();
-        if intent.trim().is_empty() {
-            return toolError(
-                tool,
-                String::new(),
-                "Intent parameter is required".to_string(),
-            );
-        }
-
-        let request = GrepCodeRequest {
-            path: path.clone(),
-            pattern: intent.clone(),
-            filePattern: match optionalParameterValue(tool, "file_pattern") {
-                Some(value) if !value.trim().is_empty() => value,
-                _ => "*".to_string(),
-            },
-            caseInsensitive: true,
-            contextLines: parameterValue(tool, "context_lines")
-                .parse::<usize>()
-                .unwrap_or(8),
-            maxResults: parameterValue(tool, "max_results")
-                .parse::<usize>()
-                .unwrap_or(10),
-        };
-        match vfs.grepCode(request) {
-            Ok(result) => successData(
-                tool,
-                ToolResultData::GrepResultData(grepResultData(&path, &intent, &result)),
-            ),
-            Err(errorValue) => toolError(tool, String::new(), errorValue),
-        }
-    }
-
-    #[allow(non_snake_case)]
     /// Downloads a URL into a file-system destination.
     pub async fn downloadFile(&self, tool: &AITool) -> ToolResult {
         let tool = &match self.fileRouting.prepare(tool, &["destination"]) {
@@ -1936,7 +1889,6 @@ pub enum FileSystemToolOperation {
     FindFiles,
     FileInfo,
     GrepCode,
-    GrepContext,
     DownloadFile,
     ApplyFile,
     CreateFile,
@@ -1964,8 +1916,7 @@ impl AsyncToolExecutor for FileSystemToolExecutor {
             | FileSystemToolOperation::FileExists
             | FileSystemToolOperation::FindFiles
             | FileSystemToolOperation::FileInfo
-            | FileSystemToolOperation::GrepCode
-            | FileSystemToolOperation::GrepContext => ToolAccessSpec {
+            | FileSystemToolOperation::GrepCode => ToolAccessSpec {
                 effect: ToolEffect::READ,
                 boundary: ToolBoundary::FilePath {
                     effect: ToolEffect::READ,
@@ -2053,7 +2004,6 @@ impl AsyncToolExecutor for FileSystemToolExecutor {
                                 FileSystemToolOperation::FindFiles => tools.findFiles(tool).await,
                                 FileSystemToolOperation::FileInfo => tools.fileInfo(tool).await,
                                 FileSystemToolOperation::GrepCode => tools.grepCode(tool).await,
-                                FileSystemToolOperation::GrepContext => tools.grepContext(tool).await,
                                 FileSystemToolOperation::DownloadFile => tools.downloadFile(tool).await,
                                 FileSystemToolOperation::ApplyFile => return tools.applyFile(tool).await,
                                 FileSystemToolOperation::CreateFile => tools.createFile(tool).await,
@@ -2162,7 +2112,6 @@ fn requiredParameters(operation: &FileSystemToolOperation) -> &'static [&'static
         FileSystemToolOperation::FindFiles | FileSystemToolOperation::GrepCode => {
             &["path", "pattern"]
         }
-        FileSystemToolOperation::GrepContext => &["path", "intent"],
         FileSystemToolOperation::DownloadFile => &["destination"],
         FileSystemToolOperation::ApplyFile => &["path"],
         FileSystemToolOperation::CreateFile => &["path", "new"],

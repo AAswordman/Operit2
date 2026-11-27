@@ -8,6 +8,10 @@ use std::sync::Arc;
 #[cfg(target_os = "android")]
 use operit_host_api::HostManager::HostManager;
 mod audio_playback;
+#[cfg(target_os = "android")]
+mod bundled_resources;
+#[cfg(target_os = "android")]
+pub use bundled_resources::AndroidBundledResourceHost;
 mod bluetooth;
 mod document_filesystem;
 mod filesystem;

@@ -33,6 +33,7 @@ base64 = "0.22"
 operit-host-local-inference = { path = "../../../../hosts/common/operit-host-local-inference" }
 operit-host-data-rescue = { path = "../../../../hosts/common/operit-host-data-rescue" }
 operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common" }
+operit-host-native-filesystem = { path = "../../../../hosts/common/operit-host-native-filesystem" }
 axum = { version = "0.7", features = ["ws"] }
 futures-util = "0.3"
 operit-node-runtime = { path = "../../../../core/crates/node/runtime" }
@@ -75,9 +76,6 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 tokio = { version = "1", default-features = false, features = ["macros", "sync"] }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-operit-host-native-filesystem = { path = "../../../../hosts/common/operit-host-native-filesystem" }
-
 [profile.dev.package.operit-plugin-theme]
 opt-level = 2
 
@@ -119,17 +117,3 @@ opt-level = 2
 opt-level = "s"
 lto = "fat"
 codegen-units = 1
-
-# Strip only on Android. This profile is shared by every desktop/mobile/web
-# build of the bridge; Windows resolves crash stacks through the deployed PDB
-# and Apple/Linux symbolication relies on the ELF/Mach-O symbol table, so their
-# release artifacts must keep symbols. cdylib exports live in .dynsym and are
-# unaffected by stripping the Android .symtab.
-[target.aarch64-linux-android.profile.release]
-strip = "symbols"
-
-[target.armv7-linux-androideabi.profile.release]
-strip = "symbols"
-
-[target.x86_64-linux-android.profile.release]
-strip = "symbols"

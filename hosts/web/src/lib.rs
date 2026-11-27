@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 mod data_rescue;
+mod bundled_resources;
+pub use bundled_resources::WebBundledResourceHost;
 pub use data_rescue::executeDataRescue;
 
 use std::sync::Arc;

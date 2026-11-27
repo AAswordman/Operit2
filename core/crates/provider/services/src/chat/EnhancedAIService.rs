@@ -1023,8 +1023,15 @@ impl EnhancedAIService {
         enableThinking: bool,
         stream: bool,
         isSubTask: bool,
-    ) -> HashMap<String, Value> {
-        HashMap::from([
+    ) -> Result<HashMap<String, Value>, AiServiceError> {
+        let context = self.tool_handler.getContext();
+        let outputPath = match (context.runtimeStorageHost.as_ref(), chatId.as_deref()) {
+            (Some(storage), Some(chat)) => operit_store::ChatOutputStore::ChatOutputStore::new(storage.clone())
+                .directory(chat).map_err(AiServiceError::RequestFailed)?,
+            _ => None,
+        };
+        Ok(HashMap::from([
+            ("outputPath".to_string(), json!(outputPath)),
             ("workspacePath".to_string(), json!(workspacePath)),
             ("enableThinking".to_string(), json!(enableThinking)),
             ("stream".to_string(), json!(stream)),
@@ -1034,7 +1041,7 @@ impl EnhancedAIService {
                 "executionContext".to_string(),
                 json!({ "chatId": chatId, "participantId": participantId }),
             ),
-        ])
+        ]))
     }
 
     /// Reconciles finalized input with the current user turn before counting or sending.
@@ -1255,7 +1262,7 @@ impl EnhancedAIService {
         metadata.extend(self.buildPromptFinalizeMetadata(
             sendOptions.chatId, sendOptions.executionParticipantId, options.workspacePath.clone(),
             true, true, false,
-        ));
+        )?);
         let finalized = self.applyPromptFinalizeHooks(PromptHookContext {
             stage: "before_finalize_prompt".into(), chat_id: Some(chatId.to_string()),
             function_type: Some(function_type_name(&FunctionType::CHAT).into()),
@@ -1497,7 +1504,7 @@ impl EnhancedAIService {
             false,
             false,
             false,
-        ));
+        )?);
         let context = PromptHookContext {
             stage: "before_finalize_prompt".into(),
             chat_id: chatId,
@@ -2078,7 +2085,7 @@ impl EnhancedAIService {
             enableThinking,
             stream,
             isSubTask,
-        ));
+        )?);
         let beforeFinalizeContext = self
             .applyPromptFinalizeHooks(
                 PromptHookContext {

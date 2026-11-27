@@ -33,6 +33,7 @@ pub(crate) enum StartupMetadata {
         model: String,
         language: String,
         secretRoot: PathBuf,
+        applicationPackage: PathBuf,
     },
     OpenHarmonyDevice {
         model: String,

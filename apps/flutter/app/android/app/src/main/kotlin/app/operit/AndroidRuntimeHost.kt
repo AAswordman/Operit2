@@ -46,6 +46,10 @@ class AndroidRuntimeHost(context: Context) {
     /** JNI worker entry point for capability-backed filesystem resources. */
     fun fileSystemResourceOperation(request: String): String = documentFileSystem.execute(request)
 
+    /** Reads an immutable Flutter asset directly from the installed application package. */
+    fun readBundledResource(key: String): ByteArray =
+        applicationContext.assets.open("flutter_assets/$key").use { it.readBytes() }
+
     /** Executes a process-owned browser visit without requiring a Flutter engine or Activity. */
     fun webVisitOperation(request: String): String =
         io.flutter.plugins.webviewflutter.HostWebVisitManager.getInstance().execute(applicationContext, request)

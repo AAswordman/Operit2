@@ -1011,7 +1011,11 @@ impl OperitApplication {
     /// Durably receives originals and materializes independent owners without acknowledging failed application.
     #[allow(non_snake_case)]
     pub fn syncApplyOperations(&self, operations: serde_json::Value) -> Result<serde_json::Value,String> {
-        let timing = std::time::Instant::now();
+        let scheduler = self.hostManager.hostRuntimeTaskSchedulerHost.as_ref()
+            .ok_or("Runtime scheduler is required for synchronization timing")?;
+        let started = scheduler.monotonicTimeMillis().map_err(|error| error.to_string())?;
+        let elapsed = || scheduler.monotonicTimeMillis()
+            .map(|now| now.saturating_sub(started)).map_err(|error| error.to_string());
         let operations: Vec<SyncOperation> = serde_json::from_value(operations).map_err(|e|e.to_string())?;
         let received = operations.len();
         let files = self.runtimeFileSyncStore()?;
@@ -1026,9 +1030,9 @@ impl OperitApplication {
         }).collect::<Vec<_>>();
         let journal = self.runtimeSyncOperationStore()?;
         let application = journal.lockApplication().map_err(|e|e.to_string())?;
-        let locked_ms = timing.elapsed().as_millis();
+        let locked_ms = elapsed()?;
         journal.receiveOperations(&operations).map_err(|e|e.to_string())?;
-        let received_ms = timing.elapsed().as_millis();
+        let received_ms = elapsed()?;
         let pending = journal.pendingOperations().map_err(|e|e.to_string())?;
         journal.observeOperations(pending.iter().filter(|op| op.domain == "preferences")).map_err(|e|e.to_string())?;
         files.prepareSyncedOperations(&pending)?;
@@ -1041,9 +1045,9 @@ impl OperitApplication {
         if let Err(error) = PreferenceSpaceMerge::prepareLayout(storage.clone()) { errors.push(format!("layout: {error}")); }
         let schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
-        let prepared_ms = timing.elapsed().as_millis();
+        let prepared_ms = elapsed()?;
         let mut report = registry.apply_pending()?;
-        let applied_ms = timing.elapsed().as_millis();
+        let applied_ms = elapsed()?;
         errors.append(&mut report.errors);
         let pending_owners = pending.iter().filter(|op|report.pending.contains(&op.opId)).map(|op|registry.target(op))
             .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
@@ -1053,11 +1057,12 @@ impl OperitApplication {
         if let Err(error) = self.dispatchSynchronizedChatChanges(chats) {
             AppLogger::e("CoreSyncTrace", &format!("sync_apply.chat_refresh: {error}"));
         }
-        if timing.elapsed().as_millis() >= 100 {
+        let total_ms = elapsed()?;
+        if total_ms >= 100 {
             AppLogger::trace("CoreSyncTrace", &format!(
                 "sync_apply.stages received={received} pending={} lockHydrateMs={locked_ms} receiveMs={} prepareMs={} applyMs={} refreshMs={} totalMs={}",
                 pending.len(), received_ms-locked_ms, prepared_ms-received_ms, applied_ms-prepared_ms,
-                timing.elapsed().as_millis()-applied_ms, timing.elapsed().as_millis()));
+                total_ms-applied_ms, total_ms));
         }
         Ok(serde_json::json!({"received":received,"applied":report.applied.len(),"skipped":report.skipped,"pending":report.pending.len(),
             "pendingOperationIds":report.pending,"pendingOwners":pending_owners,"failedOperationIds":failedOperationIds,"errors":errors}))

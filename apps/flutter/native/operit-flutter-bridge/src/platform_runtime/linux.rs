@@ -15,6 +15,11 @@ use crate::FlutterHostAdapters::FlutterWebVisitBridge;
 
 /// Creates the Linux host bundle with the native terminal implementation.
 pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager, String> {
+    operit_host_api::HostManager::setDefaultBundledResourceHost(Arc::new(
+        operit_host_native_filesystem::DirectoryBundledResourceHost::besideExecutable(
+            "data/flutter_assets",
+        ).map_err(|error| error.to_string())?,
+    ));
     Ok(createRuntimeHostManager(
         startup.runtimeRoot.clone(),
         startup.workspaceRoot.clone(),

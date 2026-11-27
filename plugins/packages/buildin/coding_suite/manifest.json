@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.coding_suite",
+  "version": "0.1.1",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": { "zh": "编程套装", "en": "Coding Suite" },
+  "description": { "zh": "可编辑编程提示词、工作区 AGENTS.md 与后台追加的项目记忆。启用期间暂停角色卡及其依赖插件。", "en": "Editable coding instructions, workspace AGENTS.md and an append-only project timeline. Suspends characters and their dependent plugins while enabled." },
+  "enabled_by_default": false,
+  "suspends": ["com.operit.character_cards"],
+  "subpackages": [],
+  "resources": []
+}

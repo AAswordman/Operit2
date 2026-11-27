@@ -30,6 +30,7 @@ target_link_libraries(
   operit_runtime_ohos
   PUBLIC
     libace_napi.z.so
+    librawfile.z.so
     dl
     "${OHOS_SDK_NATIVE}/llvm/lib/${CMAKE_CXX_COMPILER_TARGET}/libc++_shared.so"
 )

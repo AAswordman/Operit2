@@ -7,6 +7,7 @@ publish.workspace = true
 
 [features]
 default = ["javascript"]
+embedded-plugin-assets = []
 javascript = ["dep:operit-js-bridge", "operit-tools/javascript"]
 
 [dependencies]
@@ -62,7 +63,6 @@ operit-host-native-filesystem = { path = "../../../../hosts/common/operit-host-n
 sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-zip.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }

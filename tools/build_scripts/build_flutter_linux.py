@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
 # Builds the Linux Flutter app and writes a release archive.
 def main() -> int:
     args = parse_args()
-    prepare_plugin_assets()
+    prepare_plugin_assets(flutter_assets=True)
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
     command = [flutter_command(), "build", "linux", "--release", "--no-pub"]
     if args.build_name:

@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -13,7 +12,7 @@ const SKILL_INCLUDE_FILE: &str = "skill.include.json";
 const PLUGIN_ASSET_SYNC_HINT: &str =
     "Run: python3 plugins/tools/sync_plugin_packages.py --source runtime --no-hot-reload";
 
-struct BuildinAsset {
+struct PluginAssetFile {
     name: String,
     path: PathBuf,
 }
@@ -56,50 +55,14 @@ fn main() {
     emit_rerun_for_asset_tree(&source_dir);
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
-    let packaged_dir = out_dir.join("buildin_plugins");
-    fs::create_dir_all(&packaged_dir).expect("create buildin plugin output directory");
-
-    let mut assets = Vec::new();
-    if source_dir.is_dir() {
-        let mut entries = fs::read_dir(&source_dir)
-            .expect("read assets/plugins/buildin")
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .collect::<Vec<_>>();
-        entries.sort_by_key(|path| path.file_name().map(|name| name.to_os_string()));
-        for path in entries {
-            if path.is_file() && is_syncable_file(&path) {
-                let name = path
-                    .file_name()
-                    .expect("buildin plugin file name")
-                    .to_string_lossy()
-                    .to_string();
-                assets.push(BuildinAsset { name, path });
-                continue;
-            }
-            if path.is_dir() && has_manifest(&path) {
-                let name = format!(
-                    "{}.toolpkg",
-                    path.file_name()
-                        .expect("buildin plugin directory name")
-                        .to_string_lossy()
-                );
-                let destination = packaged_dir.join(&name);
-                pack_toolpkg_folder(&path, &destination);
-                assets.push(BuildinAsset {
-                    name,
-                    path: destination,
-                });
-            }
-        }
-    }
+    let assets = collect_packaged_plugin_assets(&source_dir);
 
     let generated = out_dir.join("builtin_plugin_assets.rs");
     let mut code = String::new();
-    push_plugin_asset_struct(&mut code);
+    push_plugin_asset_imports(&mut code);
     code.push_str("pub static BUILTIN_PLUGIN_ASSETS: &[PluginAsset] = &[\n");
     for asset in &assets {
-        push_plugin_asset(&mut code, asset);
+        push_plugin_asset(&mut code, asset, "buildin");
     }
     code.push_str("];\n");
     code.push_str("\n");
@@ -109,7 +72,7 @@ fn main() {
     );
     code.push_str("pub static BUNDLED_EXTERNAL_PLUGIN_ASSETS: &[PluginAsset] = &[\n");
     for asset in &external_assets {
-        push_plugin_asset(&mut code, asset);
+        push_plugin_asset(&mut code, asset, "external");
     }
     code.push_str("];\n");
     fs::write(generated, code).expect("write builtin plugin asset list");
@@ -118,27 +81,30 @@ fn main() {
     generate_bundled_external_skill_assets(&manifest_dir, &out_dir);
 }
 
-/// Embeds each immutable package fingerprint alongside its exact compiled bytes.
-fn push_plugin_asset(code: &mut String, asset: &BuildinAsset) {
+/// Generates one immutable index entry using the storage selected by the application build.
+fn push_plugin_asset(code: &mut String, asset: &PluginAssetFile, kind: &str) {
     let bytes = fs::read(&asset.path).expect("read packaged plugin asset");
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let source = if env::var_os("CARGO_FEATURE_EMBEDDED_PLUGIN_ASSETS").is_some() {
+        format!("BundledAssetSource::Embedded(include_bytes!({:?}))", asset.path.to_string_lossy())
+    } else {
+        format!("BundledAssetSource::Packaged {{ key: {:?}, length: {} }}",
+            format!("assets/operit/plugins/{kind}/{}", asset.name), bytes.len())
+    };
     code.push_str(&format!(
-        "    PluginAsset {{ name: {:?}, bytes: include_bytes!({:?}), sha256: {:?} }},\n",
-        asset.name, asset.path.to_string_lossy(), sha256,
+        "    PluginAsset {{ name: {:?}, source: {}, sha256: {:?} }},\n",
+        asset.name, source, sha256,
     ));
 }
 
-/// Declares the compiled package metadata shared by both asset collections.
-fn push_plugin_asset_struct(code: &mut String) {
-    code.push_str("#[derive(Clone, Copy)]\n");
-    code.push_str("pub struct PluginAsset {\n");
-    code.push_str("    pub name: &'static str,\n");
-    code.push_str("    pub bytes: &'static [u8],\n");
-    code.push_str("    pub sha256: &'static str,\n");
-    code.push_str("}\n\n");
+/// Imports the shared asset descriptor used by both package collections.
+fn push_plugin_asset_imports(code: &mut String) {
+    code.push_str("use operit_host_api::BundledAssetSource::BundledAssetSource;\n");
+    code.push_str("use operit_tools::runtime_support::RuntimePluginAsset as PluginAsset;\n\n");
 }
 
-fn collect_packaged_plugin_assets(source_dir: &Path) -> Vec<BuildinAsset> {
+/// Collects only prepared package files; packaging source folders belongs to the sync tool.
+fn collect_packaged_plugin_assets(source_dir: &Path) -> Vec<PluginAssetFile> {
     emit_rerun_for_asset_tree(source_dir);
     let mut assets = Vec::new();
     if !source_dir.is_dir() {
@@ -157,7 +123,7 @@ fn collect_packaged_plugin_assets(source_dir: &Path) -> Vec<BuildinAsset> {
             .expect("packaged plugin file name")
             .to_string_lossy()
             .to_string();
-        assets.push(BuildinAsset { name, path });
+        assets.push(PluginAssetFile { name, path });
     }
     assets
 }
@@ -234,7 +200,7 @@ fn expected_asset_names(source_dir: &Path) -> BTreeSet<String> {
     names
 }
 
-/// Reads the assets the compiler would embed, including legacy loose package folders.
+/// Reads the prepared file set shared by the resource index and application packaging.
 fn actual_asset_names(asset_dir: &Path) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     let Ok(entries) = fs::read_dir(asset_dir) else {
@@ -245,10 +211,7 @@ fn actual_asset_names(asset_dir: &Path) -> BTreeSet<String> {
         let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if path.is_dir() {
-            if has_manifest(&path) {
-                names.insert(format!("{file_name}.toolpkg"));
-            }
+        if !path.is_file() {
             continue;
         }
         let lower_name = file_name.to_ascii_lowercase();
@@ -301,30 +264,6 @@ fn has_manifest(folder: &Path) -> bool {
     MANIFEST_FILENAMES
         .iter()
         .any(|file_name| folder.join(file_name).is_file())
-}
-
-fn pack_toolpkg_folder(source_folder: &Path, destination_file: &Path) {
-    let file = fs::File::create(destination_file).expect("create buildin toolpkg archive");
-    let mut archive = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-    let mut files = Vec::new();
-    collect_files(source_folder, source_folder, &mut files);
-    files.sort_by_key(|(_, relative)| relative.clone());
-    for (file_path, relative_path) in files {
-        archive
-            .start_file(relative_path.replace('\\', "/"), options)
-            .expect("start buildin toolpkg archive file");
-        let mut source = fs::File::open(file_path).expect("open buildin plugin source file");
-        let mut buffer = Vec::new();
-        source
-            .read_to_end(&mut buffer)
-            .expect("read buildin plugin source file");
-        archive
-            .write_all(&buffer)
-            .expect("write buildin toolpkg archive file");
-    }
-    archive.finish().expect("finish buildin toolpkg archive");
 }
 
 fn collect_files(base: &Path, current: &Path, files: &mut Vec<(PathBuf, String)>) {

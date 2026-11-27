@@ -17,6 +17,11 @@ use operit_host_api::{
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
+/// Calls the worker-owned immutable application resource provider.
+pub(crate) fn call_bundled_resources(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
+    call_function(&bridge_module("bundledResources")?, method, args)
+}
+
 pub(crate) fn call_file_system(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
     let module = bridge_module("fileSystem")?;
     call_function(&module, method, args)

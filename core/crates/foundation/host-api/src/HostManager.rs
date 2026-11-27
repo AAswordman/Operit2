@@ -33,6 +33,18 @@ pub fn defaultTcpHost() -> crate::HostResult<Arc<dyn TcpHost>> {
 }
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
+static DEFAULT_BUNDLED_RESOURCE_HOST: OnceLock<Arc<dyn crate::BundledResourceHost::BundledResourceHost>> = OnceLock::new();
+
+/// Registers the immutable resource provider selected by the application entry point.
+pub fn setDefaultBundledResourceHost(host: Arc<dyn crate::BundledResourceHost::BundledResourceHost>) {
+    let _ = DEFAULT_BUNDLED_RESOURCE_HOST.set(host);
+}
+
+/// Requires an application resource provider for assets built without embedded bytes.
+pub fn defaultBundledResourceHost() -> Result<Arc<dyn crate::BundledResourceHost::BundledResourceHost>, String> {
+    DEFAULT_BUNDLED_RESOURCE_HOST.get().cloned()
+        .ok_or_else(|| "The application has not registered its bundled resource Host".to_string())
+}
 static DEFAULT_SERIAL_PORT_HOST: OnceLock<Arc<dyn SerialPortHost>> = OnceLock::new();
 
 #[allow(non_snake_case)]

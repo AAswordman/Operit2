@@ -142,7 +142,8 @@ impl MessagePartCodec {
         );
         part.toolName = attr_value(opening, "name");
         part.toolCallId = attr_value(opening, "call_id");
-        part.attributes = Self::openingAttributes(opening, &["status", "display", "result_data"]);
+        part.attributes = Self::openingAttributes(opening, &["status"]);
+        Self::readToolResultMetadata(&mut part, opening);
         for (start, end) in tag_ranges(&raw[opening.len()..], "content") {
             let content = &raw[opening.len() + start..opening.len() + end];
             if let Some(body) = unfinishedTagBody(content, "content") {
@@ -173,7 +174,13 @@ impl MessagePartCodec {
             status,
             payload,
         );
-        for name in ["display", "result_data"] {
+        Self::readToolResultMetadata(&mut part, raw);
+        Ok(part)
+    }
+
+    /// Retains display data and the independent model projection across persistence and streaming.
+    fn readToolResultMetadata(part: &mut MessagePart, raw: &str) {
+        for name in ["display", "result_data", "model_content"] {
             if let Some(value) = attr_value(raw, name) {
                 let decoded = value.replace("&quot;", "\"")
                     .replace("&apos;", "'")
@@ -183,7 +190,6 @@ impl MessagePartCodec {
                 part.attributes.insert(name.to_string(), decoded);
             }
         }
-        Ok(part)
     }
 
     /// Extracts the received tag body without requiring a closing delimiter.
@@ -260,12 +266,12 @@ impl MessagePartCodec {
             markup.push('\"');
         }
         let providerAttributes = part.attributes.iter()
-            .filter(|(name, _)| !matches!(name.as_str(), "display" | "result_data"))
+            .filter(|(name, _)| !matches!(name.as_str(), "display" | "result_data" | "model_content"))
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
         Self::appendAttributes(markup, &providerAttributes);
         markup.push_str("><content>");
-        markup.push_str(&part.content);
+        markup.push_str(part.attributes.get("model_content").unwrap_or(&part.content));
         markup.push_str("</content></tool_result>");
     }
 

@@ -39,22 +39,6 @@ class OperitApplication : Application() {
         if (isCrashProcess) return
         if (isMaintenanceProcess) return
 
-        // Warm the bridge ELF off the startup critical path. Loading it lazily in
-        // OperitRuntimeNative's init serializes dlopen behind Flutter's first frame,
-        // so cold starts stall on random page faults. Class initialization is guarded
-        // by the JVM, so later ensureRuntimeHandle() callers simply join this load.
-        if (!BuildConfig.OPERIT_EXTERNAL_RUNTIME) {
-            Thread({
-                try {
-                    Class.forName("app.operit.OperitRuntimeNative")
-                } catch (error: Throwable) {
-                    Log.w("OperitApplication", "bridge preload failed; will retry on demand", error)
-                }
-            }, "operit-bridge-preload").apply {
-                priority = Thread.NORM_PRIORITY - 1
-            }.start()
-        }
-
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             Log.e("OperitApplication", "Unhandled Android exception on ${thread.name}", error)
             try {

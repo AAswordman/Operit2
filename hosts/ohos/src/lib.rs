@@ -9,6 +9,10 @@ mod audio_playback;
 mod bluetooth;
 pub mod documents;
 mod filesystem;
+#[cfg(target_env = "ohos")]
+mod bundled_resources;
+#[cfg(target_env = "ohos")]
+pub use bundled_resources::OhosBundledResourceHost;
 mod http;
 mod local_inference;
 mod managed_runtime;

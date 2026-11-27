@@ -142,7 +142,7 @@ def main() -> int:
     if args.output is None:
         args.output = DIST_DIR / release_asset_name("app", "ohos", target.artifact_arch, "hap")
     verify_ohos_sdk_preflight(target)
-    prepare_plugin_assets()
+    prepare_plugin_assets(flutter_assets=True)
     build_ohos_rust_bridge(target)
     env = ohos_hvigor_env()
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)

@@ -25,6 +25,10 @@ export function loadSuperAdmin(context) {
     },
     /** Captures the actual periodic Host registration. */
     registerHostEventHook(hook) { hooks.push(hook); },
+    /** Captures model prompt registration separately from periodic cleanup. */
+    registerPromptFinalizeHook() {},
+    /** Captures estimation registration without changing cleanup assertions. */
+    registerPromptEstimateFinalizeHook() {},
   };
   /** Resolves the plugin's real CommonJS module graph with a shared module cache. */
   function load(name) {

@@ -21,6 +21,16 @@ use crate::FlutterOwnerCapabilities::{
 
 /// Creates Android hosts and binds operations owned by the Flutter application.
 pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager, String> {
+    let resources: Arc<dyn operit_host_api::BundledResourceHost::BundledResourceHost> = match &startup.metadata {
+        StartupMetadata::AndroidPrivileged { applicationPackage, .. } => Arc::new(
+            operit_host_native_filesystem::ArchiveBundledResourceHost::new(
+                applicationPackage.clone(), "assets/flutter_assets/",
+            ),
+        ),
+        StartupMetadata::AndroidDevice { .. } => Arc::new(operit_host_android_native::AndroidBundledResourceHost),
+        _ => return Err("Android startup requires its application resource owner".into()),
+    };
+    operit_host_api::HostManager::setDefaultBundledResourceHost(resources);
     let module = match &startup.metadata {
         StartupMetadata::AndroidPrivileged {
             language,

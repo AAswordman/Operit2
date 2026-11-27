@@ -235,6 +235,35 @@ test('v1 nested and search results restore environments and paths', async () => 
   assert.deepEqual(plain(grep.matches[0].lineMatches[0]), { lineNumber: 1, lineContent: 'text' });
 });
 
+/** Keeps the legacy search functional when the current SDK only provides regex grep. */
+test('v1 intent search retains its defaults and result mapping through current grep', async () => {
+  for (const version of ['1.0.0', '1.0.1']) {
+    const { context, tools, calls } = engine(version);
+    const failure = new Error('Search host failed');
+    const current = {
+      /** Provides only the supported current search operation. */
+      async grep(...args) {
+        calls.push({ name: 'grep', args });
+        return { searchPath: args[0], pattern: args[1], totalMatches: 1, filesSearched: 1,
+          matches: [{ filePath: args[0] + '/found.txt', lineMatches: [] }] };
+      },
+    };
+    const legacy = context.__operitCreateV1Files(current);
+    const result = await legacy.grepContext('/work', 'text', { environment: 'linux', file_pattern: '*.txt' });
+    assert.deepEqual(plain(calls.at(-1)), { name: 'grep', args: ['/virtual/linux/work', 'text', {
+      file_pattern: '*.txt', case_insensitive: true, context_lines: 8, max_results: 10,
+    }] });
+    assert.equal(result.env, 'linux');
+    assert.equal(result.searchPath, '/work');
+    assert.equal(result.matches[0].filePath, '/work/found.txt');
+    await tools.Files.grepContext('/work', 'text', { max_results: 3 });
+    assert.equal(calls.at(-1).args[2].max_results, 3);
+    /** Preserves the original host rejection without retrying or converting it. */
+    current.grep = async () => { throw failure; };
+    await assert.rejects(legacy.grepContext('/work', 'text'), error => error === failure);
+  }
+});
+
 /** Checks headers remain the third current argument rather than the legacy environment. */
 test('v1 download supports both handwritten overloads', async () => {
   const { tools, calls } = engine();

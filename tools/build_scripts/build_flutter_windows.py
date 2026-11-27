@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
 # Builds the Windows Flutter app and writes its MSI installer.
 def main() -> int:
     args = parse_args()
-    prepare_plugin_assets()
+    prepare_plugin_assets(flutter_assets=True)
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
     command = [flutter_command(), "build", "windows", "--release", "--no-pub"]
     if args.build_name:

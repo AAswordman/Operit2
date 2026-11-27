@@ -117,7 +117,6 @@ pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
     JsToolBinding { namespace: "Files", method: "exists", target: BuiltinToolName::FileExists, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Files", method: "find", target: BuiltinToolName::FindFiles, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Files", method: "grep", target: BuiltinToolName::GrepCode, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
-    JsToolBinding { namespace: "Files", method: "grepContext", target: BuiltinToolName::GrepContext, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Files", method: "info", target: BuiltinToolName::FileInfo, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Files", method: "list", target: BuiltinToolName::ListFiles, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Files", method: "mkdir", target: BuiltinToolName::MakeDirectory, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },

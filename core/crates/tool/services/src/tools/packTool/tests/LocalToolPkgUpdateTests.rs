@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use super::*;
+use operit_host_api::BundledAssetSource::BundledAssetSource;
 use crate::runtime_support::*;
 use crate::tools::AIToolHandler::AIToolHandler;
 use operit_host_api::{
@@ -1035,7 +1036,7 @@ async fn failed_restoration_reports_both_errors_and_keeps_recovery_backups() {
 
 fn bundledAsset(name: &'static str, bytes: Vec<u8>) -> &'static [RuntimePluginAsset] {
     Box::leak(vec![RuntimePluginAsset {
-        name, bytes: Box::leak(bytes.into_boxed_slice()), sha256: "local-update-test-asset",
+        name, source: BundledAssetSource::Embedded(Box::leak(bytes.into_boxed_slice())), sha256: "local-update-test-asset",
     }].into_boxed_slice())
 }
 

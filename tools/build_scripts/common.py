@@ -26,6 +26,7 @@ PLUGIN_MANIFEST_FILENAMES = ("manifest.hjson", "manifest.json")
 PLUGIN_SYNCABLE_SUFFIXES = (".js", ".toolpkg")
 _fvm_sdk_prepared = False
 _plugin_assets_prepared = False
+_flutter_plugin_assets_prepared = False
 
 
 def run(command: list[str | Path], cwd: Path = REPO_ROOT, env: dict[str, str] | None = None) -> None:
@@ -282,10 +283,10 @@ def prepared_python_path() -> Path:
     return REPO_ROOT / ".venv" / "bin" / "python"
 
 
-# Regenerates the gitignored ToolPkg assets that operit-runtime embeds at compile time.
-def prepare_plugin_assets() -> None:
-    global _plugin_assets_prepared
-    if _plugin_assets_prepared:
+# Regenerates the prepared ToolPkg files used by the CLI binary and App resource bundle.
+def prepare_plugin_assets(*, flutter_assets: bool = False) -> None:
+    global _plugin_assets_prepared, _flutter_plugin_assets_prepared
+    if _plugin_assets_prepared and (not flutter_assets or _flutter_plugin_assets_prepared):
         return
     prepare_python_command()
     run(
@@ -295,10 +296,12 @@ def prepare_plugin_assets() -> None:
             "--source",
             "runtime",
             "--no-hot-reload",
+            *(["--flutter-assets"] if flutter_assets else []),
         ],
         cwd=REPO_ROOT,
     )
     _plugin_assets_prepared = True
+    _flutter_plugin_assets_prepared = _flutter_plugin_assets_prepared or flutter_assets
 
 
 # Mirrors sync_plugin_packages.py's plan so builds can assert the generated asset set.

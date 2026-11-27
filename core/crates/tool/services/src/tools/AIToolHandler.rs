@@ -1402,21 +1402,9 @@ impl JsExecutionHost for AIToolHandler {
                 Err(error) => Self::failedInvocation(&call.toLegacyTool(), error),
             };
             let data = match result.result {
-                ToolResultData::JsonResultData(data) => JsToolCallResultData::Value(data.value),
+                data @ ToolResultData::PresentedResultData(_) => JsToolCallResultData::Value(data.presentationValue()),
                 ToolResultData::BinaryResultData(data) => JsToolCallResultData::Binary(data.value),
-                ToolResultData::StringResultData(data) => {
-                    JsToolCallResultData::Value(serde_json::Value::String(data.value))
-                }
-                ToolResultData::BooleanResultData(data) => {
-                    JsToolCallResultData::Value(serde_json::Value::Bool(data.value))
-                }
-                ToolResultData::IntResultData(data) => JsToolCallResultData::Value(
-                    serde_json::Value::Number(serde_json::Number::from(data.value)),
-                ),
-                data => JsToolCallResultData::Value(
-                    serde_json::to_value(data)
-                        .expect("ToolResultData structured conversion must succeed"),
-                ),
+                data => JsToolCallResultData::Value(data.toBusinessValue()),
             };
             JsToolCallResult {
                 success: result.success,
@@ -1987,6 +1975,7 @@ impl ToolExecutor for FnToolExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use operit_host_api::BundledAssetSource::BundledAssetSource;
     use crate::runtime_support::*;
     use crate::ToolExecutionManager::{PreparedToolInvocation, ToolExposureMode, ToolRuntimeContext};
     use operit_model::ToolPrompt::SystemToolPromptCategory;
@@ -2376,7 +2365,7 @@ mod tests {
         }
         let assets = Box::leak(vec![RuntimePluginAsset {
             name: "scan_probe.toolpkg", sha256: "scan-probe-v1",
-            bytes: Box::leak(zip.finish().unwrap().into_inner().into_boxed_slice()),
+            source: BundledAssetSource::Embedded(Box::leak(zip.finish().unwrap().into_inner().into_boxed_slice())),
         }].into_boxed_slice());
         PipelineFixture::configure_package_scheduler();
         let provider = Arc::new(CountingPackageProvider {
@@ -2491,7 +2480,7 @@ mod tests {
         }
         let assets = Box::leak(vec![RuntimePluginAsset {
             name: "update_probe.toolpkg", sha256: "",
-            bytes: Box::leak(archive("2.0.0", "bundled copy").into_boxed_slice()),
+            source: BundledAssetSource::Embedded(Box::leak(archive("2.0.0", "bundled copy").into_boxed_slice())),
         }].into_boxed_slice());
         let fixture = PipelineFixture::with_package_assets(Some(assets));
         fixture.handler.inner.lock().unwrap().context.systemOperationHost = Some(Arc::new(LanguageHost));
@@ -2766,10 +2755,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn package_activation_is_read_only_but_package_execution_requires_write_approval() {
         static ASSETS: &[RuntimePluginAsset] = &[RuntimePluginAsset {
-            name: "clock_probe.js", sha256: "", bytes: br#"/* METADATA
+            name: "clock_probe.js", sha256: "", source: BundledAssetSource::Embedded(br#"/* METADATA
             {"name":"clock_probe","description":"Clock query tools","enabledByDefault":true,
              "tools":[{"name":"get_current_date","description":"Get the current date and time","parameters":[],"display":{"label":{"en":"Clock","fr":"Horloge"},"icon":"time"}}]}
-            */"#,
+            */"#),
         }];
         operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
             operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
@@ -2870,7 +2859,7 @@ mod tests {
         }
         let assets = Box::leak(vec![RuntimePluginAsset {
             name: "configuration_probe.toolpkg", sha256: "",
-            bytes: Box::leak(zip.finish().unwrap().into_inner().into_boxed_slice()),
+            source: BundledAssetSource::Embedded(Box::leak(zip.finish().unwrap().into_inner().into_boxed_slice())),
         }].into_boxed_slice());
         operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
             operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
@@ -2951,14 +2940,14 @@ mod tests {
             Box::leak(zip.finish().unwrap().into_inner().into_boxed_slice())
         }
         let assets = Box::leak(vec![
-            RuntimePluginAsset { name: "healthy.toolpkg", sha256: "", bytes: archive(serde_json::json!({
+            RuntimePluginAsset { name: "healthy.toolpkg", sha256: "", source: BundledAssetSource::Embedded(archive(serde_json::json!({
                 "toolpkg_id":"healthy_plugin", "resources":[{"key":"text","path":"data.txt","mime":"text/plain"}]
-            })) },
-            RuntimePluginAsset { name: "broken_theme.toolpkg", sha256: "", bytes: archive(serde_json::json!({
+            }))) },
+            RuntimePluginAsset { name: "broken_theme.toolpkg", sha256: "", source: BundledAssetSource::Embedded(archive(serde_json::json!({
                 "toolpkg_id":"broken_theme", "themes":[{"id":"default","path":"theme.json","preview":"preview.png","files":[
                     {"path":"theme.json","mediaType":"application/json"}, {"path":"preview.png","mediaType":"image/png"}
                 ]}]
-            })) },
+            }))) },
         ].into_boxed_slice());
         operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
             operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
@@ -3062,6 +3051,42 @@ mod tests {
     fn probeRequest(parameters: Value) -> JsToolCallRequest {
         JsToolCallRequest { tool_type: "default".into(), tool_name: "pipeline_probe".into(),
             parameters: serde_json::from_value(parameters).unwrap(), device: None }
+    }
+
+    /// Removes native serialization tags at the public SDK boundary while preserving package contracts.
+    #[tokio::test]
+    async fn sdk_results_omit_native_type_tags_and_forward_presentations() {
+        use operit_plugin_sdk::js_sdk::results::{FileOperationData, JsonResultData};
+        operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
+            operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
+        ));
+        let mut fixture = PipelineFixture::new();
+        let native = ToolResultData::FileOperationData(FileOperationData {
+            operation: "write".into(), path: "/a".into(), successful: true, details: "written".into(),
+        });
+        let business = json!({"__type":"PackageOwnedType", "value":42});
+        let presentation = json!({"$operitToolResult":{"display":{"diff":"+source"},"model":"changed"}});
+        for (data, expected) in [
+            (native.clone(), native.toBusinessValue()),
+            (ToolResultData::JsonResultData(JsonResultData { value: business.clone() }), business),
+            (ToolResultData::fromPackageValue(presentation.clone()).unwrap(), presentation),
+        ] {
+            fixture.handler.registerAsyncTool("pipeline_probe".into(), Box::new(AsyncFnToolExecutor {
+                validate: Arc::new(|_| ToolValidationResult { valid: true, errorMessage: String::new() }),
+                invoke: Arc::new(move |_, _| {
+                    let data = data.clone();
+                    Box::pin(async move { ToolResult {
+                        toolName: "pipeline_probe".into(), success: true, result: data, error: None,
+                    } })
+                }), effect: ToolEffect::READ,
+            }));
+            let reply = fixture.handler.execute_tool_call(probeRequest(json!({}))).await;
+            assert!(reply.success, "{:?}", reply.error);
+            let JsToolCallResultData::Value(value) = reply.data else { panic!("Expected JSON") };
+            assert_eq!(value, expected);
+        }
+        assert!(native.toBusinessValue().get("__type").is_none());
+        assert!(serde_json::to_value(native).unwrap().get("__type").is_some());
     }
 
     /// Exercises typed screen conversion and Host callback delivery through the actual tool pipeline.
@@ -3618,7 +3643,7 @@ mod tests {
         }
         let assets = Box::leak(vec![RuntimePluginAsset {
             name: "parallel_probe.toolpkg", sha256: "",
-            bytes: Box::leak(archive.finish().unwrap().into_inner().into_boxed_slice()),
+            source: BundledAssetSource::Embedded(Box::leak(archive.finish().unwrap().into_inner().into_boxed_slice())),
         }].into_boxed_slice());
         operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
             operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
@@ -3954,7 +3979,7 @@ mod tests {
     #[tokio::test]
     async fn package_wait_receives_real_javascript_intermediate_output_and_final_result() {
         static ASSETS: &[RuntimePluginAsset] = &[RuntimePluginAsset {
-            name: "execution_probe.js", sha256: "", bytes: br#"/* METADATA
+            name: "execution_probe.js", sha256: "", source: BundledAssetSource::Embedded(br#"/* METADATA
             {"name":"execution_probe","description":"Execution output probe","enabledByDefault":true,
              "tools":[{"name":"run","description":"Emit output around a native dependency","parameters":[]}]}
             */
@@ -3964,7 +3989,7 @@ mod tests {
                 sendIntermediateResult({phase: 'last'});
                 return 'finished';
             };
-            "#,
+            "#),
         }];
         operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
             operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),

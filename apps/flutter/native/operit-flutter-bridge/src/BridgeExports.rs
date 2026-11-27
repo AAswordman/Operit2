@@ -117,7 +117,16 @@ pub unsafe extern "C" fn operit_flutter_bridge_create_ohos(
     workspace_root: *const c_char,
     system_language_code: *const c_char,
     device_model: *const c_char,
+    resource_manager: *mut std::ffi::c_void,
 ) -> *mut OperitFlutterBridge {
+    let resources = match operit_host_ohos_native::OhosBundledResourceHost::new(resource_manager) {
+        Ok(resources) => resources,
+        Err(error) => {
+            set_last_create_error(error.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    operit_host_api::HostManager::setDefaultBundledResourceHost(Arc::new(resources));
     if runtime_root.is_null() {
         set_last_create_error("runtime storage root pointer is null".to_string());
         return std::ptr::null_mut();

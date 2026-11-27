@@ -110,7 +110,7 @@ set(OPERIT_PLUGIN_SYNC_STAMP
   "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/sync_operit_plugins-$<CONFIG>.stamp")
 add_custom_command(OUTPUT "${OPERIT_PLUGIN_SYNC_STAMP}"
   COMMAND ${CMAKE_COMMAND} -E env ${OPERIT_RUSTUP_ENV}
-    "${OPERIT_PLUGIN_SYNC_PYTHON}" "${OPERIT_PLUGIN_SYNC_SCRIPT}" --source runtime --no-hot-reload
+    "${OPERIT_PLUGIN_SYNC_PYTHON}" "${OPERIT_PLUGIN_SYNC_SCRIPT}" --source runtime --no-hot-reload --flutter-assets
   WORKING_DIRECTORY "${OPERIT_REPO_ROOT}"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles"
   COMMAND "${CMAKE_COMMAND}" -E touch "${OPERIT_PLUGIN_SYNC_STAMP}"

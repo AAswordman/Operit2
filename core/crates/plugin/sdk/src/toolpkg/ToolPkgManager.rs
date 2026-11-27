@@ -474,9 +474,24 @@ impl ToolPkgManager {
         Some(())
     }
 
-    /// Checks whether a container and its transitive prerequisites can execute.
+    /// Checks the same effective graph used by hooks, APIs and package discovery.
     #[allow(non_snake_case)]
     pub fn isEnabledToolPkgContainer(
+        &self,
+        packageName: &str,
+        enabledPackageNames: &[String],
+    ) -> bool {
+        let hasExclusions = self.containers.read().expect("toolpkg container runtime lock poisoned")
+            .values().any(|runtime| !runtime.suspends.is_empty()
+                && container_activated(runtime, |name| enabledPackageNames.iter().any(|enabled| enabled == name)));
+        if !hasExclusions { return self.isRequestedToolPkgContainer(packageName, enabledPackageNames); }
+        self.getEnabledToolPkgContainerRuntimes(enabledPackageNames)
+            .iter().any(|runtime| runtime.packageName == packageName.trim())
+    }
+
+    /// Checks requested activation and prerequisites before applying environment exclusions.
+    #[allow(non_snake_case)]
+    fn isRequestedToolPkgContainer(
         &self,
         packageName: &str,
         enabledPackageNames: &[String],
@@ -518,14 +533,22 @@ impl ToolPkgManager {
         let names = BTreeSet::from_iter(enabledPackageNames.iter().map(String::as_str));
         let enabled = pending.values().filter(|runtime| container_activated(runtime, |name| names.contains(name)))
             .map(|runtime| runtime.packageName.clone()).collect::<BTreeSet<_>>();
+        let mut suspendedBy = BTreeMap::new();
+        for runtime in pending.values().filter(|runtime| !runtime.suspends.is_empty()
+            && self.isRequestedToolPkgContainer(&runtime.packageName, enabledPackageNames)) {
+            for target in &runtime.suspends {
+                suspendedBy.insert(target.clone(), runtime.packageName.clone());
+            }
+        }
         let mut issues = BTreeMap::new();
         for runtime in pending.values() {
-            let dependencyIssues = runtime.requires.iter().filter_map(|requirement| {
+            let mut dependencyIssues: Vec<_> = runtime.requires.iter().filter_map(|requirement| {
                 let id = requirement.id.trim();
                 let dependency = pending.get(id);
                 let code = match dependency {
                     None => "missing",
                     Some(dependency) if !dependency_version_matches(requirement, &dependency.version) => "version_incompatible",
+                    Some(_) if suspendedBy.contains_key(id) => "suspended",
                     Some(_) if !enabled.contains(id) => "disabled",
                     Some(_) => return None,
                 };
@@ -537,6 +560,12 @@ impl ToolPkgManager {
                     enabled: enabled.contains(id),
                 })
             }).collect();
+            if let Some(owner) = suspendedBy.get(&runtime.packageName) {
+                dependencyIssues.push(ToolPkgDependencyIssue {
+                    id: owner.clone(), code: "suspended_by".into(), enabled: true,
+                    ..Default::default()
+                });
+            }
             issues.insert(runtime.packageName.clone(), dependencyIssues);
         }
         for runtime in pending.values_mut() {
@@ -1859,6 +1888,28 @@ mod tests {
         assert_eq!(manager.getEnabledToolPkgContainerRuntimes(&enabled).iter()
             .map(|runtime| runtime.packageName.as_str()).collect::<Vec<_>>(), ["z", "b", "c", "a"]);
         assert!(manager.resolveToolPkgDependencies(&enabled).iter().all(|runtime| runtime.dependencyIssues.is_empty()));
+    }
+
+    /// Suspends an owner, its children and all dependent plugins without changing requested activation.
+    #[test]
+    fn environment_suspension_preserves_activation_preferences() {
+        let manager = dependency_manager(&[("coding", &[]), ("characters", &[]),
+            ("waifu", &["characters"]), ("voice", &["waifu"]), ("terminal", &[])]);
+        manager.containers.write().unwrap().get_mut("coding").unwrap().suspends = vec!["characters".into()];
+        manager.containers.write().unwrap().get_mut("characters").unwrap().subpackages.push(ToolPkgSubpackageRuntime {
+            packageName: "memory".into(), containerPackageName: "characters".into(), ..Default::default()
+        });
+        let requested = vec!["characters".into(), "waifu".into(), "voice".into(), "terminal".into(), "memory".into()];
+        assert_eq!(manager.getEnabledToolPkgContainerRuntimes(&requested).len(), 4);
+        let mut coding = requested.clone();
+        coding.push("coding".into());
+        assert_eq!(manager.getEnabledToolPkgContainerRuntimes(&coding).iter()
+            .map(|runtime| runtime.packageName.as_str()).collect::<Vec<_>>(), ["coding", "terminal"]);
+        for owner in ["characters", "waifu", "voice"] {
+            assert!(!manager.isEnabledToolPkgContainer(owner, &coding));
+            assert!(manager.getToolPkgMainScriptInternal(owner, &coding).is_none());
+        }
+        assert_eq!(manager.getEnabledToolPkgContainerRuntimes(&requested).len(), 4);
     }
 
     #[test]

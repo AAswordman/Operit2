@@ -68,7 +68,12 @@ the `sessionId` for input, screen and close while execution continues.
 
 Super Admin projects SDK start/chunk events and final command receipts into an
 explicit AI result contract: session identity, platform/interpreter, streamed
-output and final output, exit code and execution state. SDK receipts retain the original command
+output, exit code and execution state. Command output is delivered only in chunk
+events; the final AI result omits `output` and contains completion metadata and,
+for large retained output, its file reference. Unread chunks remain in the
+package execution and are collected through `package_wait`, even after completion.
+No text comparison is used to deduplicate output: identical consecutive chunks
+are still distinct output. SDK receipts retain complete output and the original command
 for programmatic consumers, but the AI result never forwards that `command` or
 unlisted SDK fields. The submitted script already belongs to the tool call;
 returning it again on each observation needlessly duplicates it in model history.

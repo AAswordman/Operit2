@@ -177,7 +177,12 @@ function __operitCreateV1Files(current) {
         /** Adapts intent-based searches with the same environment/path rules. */
         async grepContext(path, intent, options = {}) {
             var { environment = 'android', ...rest } = options;
-            return searched(await current.grepContext(address(path, environment), intent, rest), path, environment, options.file_pattern);
+            return searched(await current.grep(address(path, environment), intent, {
+                ...rest,
+                case_insensitive: true,
+                context_lines: rest.context_lines === undefined ? 8 : rest.context_lines,
+                max_results: rest.max_results === undefined ? 10 : rest.max_results,
+            }), path, environment, options.file_pattern);
         },
         /** Reads file metadata while preserving the legacy environment field. */
         async info(path, environment = 'android') {

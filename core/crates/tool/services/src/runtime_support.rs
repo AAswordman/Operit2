@@ -49,8 +49,24 @@ pub type CoreRouteChangeHandler = Arc<
 #[derive(Clone, Copy)]
 pub struct RuntimePluginAsset {
     pub name: &'static str,
-    pub bytes: &'static [u8],
+    pub source: operit_host_api::BundledAssetSource::BundledAssetSource,
     pub sha256: &'static str,
+}
+
+impl RuntimePluginAsset {
+    /// Reads this package through its build-selected storage without retaining an extra copy.
+    pub fn readBytes(&self) -> Result<std::borrow::Cow<'static, [u8]>, String> {
+        use operit_host_api::BundledAssetSource::BundledAssetSource;
+        use sha2::{Digest, Sha256};
+
+        let bytes = self.source.read()?;
+        if matches!(self.source, BundledAssetSource::Packaged { .. })
+            && format!("{:x}", Sha256::digest(&bytes)) != self.sha256
+        {
+            return Err(format!("Bundled plugin fingerprint mismatch: {}", self.name));
+        }
+        Ok(bytes)
+    }
 }
 
 /// Bundled external skill asset exposed by the runtime crate.

@@ -22,6 +22,35 @@ SPEC.loader.exec_module(SYNC)
 
 
 class PluginPackageSyncTests(unittest.TestCase):
+    # Publishes exact package bytes and removes obsolete generated packages without touching markers.
+    def test_flutter_resource_staging_matches_prepared_packages(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, output = root / "prepared", root / "flutter-assets"
+            source.mkdir()
+            output.mkdir()
+            (source / "desktop_pet.toolpkg").write_bytes(b"package contents")
+            (source / "helper.js").write_bytes(b"script contents")
+            (source / "manifest.json").write_text("{}", encoding="utf-8")
+            (output / "obsolete.toolpkg").write_bytes(b"old package")
+            (output / ".gitkeep").touch()
+            SYNC._stage_flutter_assets(source, output, dry_run=False)
+            self.assertEqual({path.name for path in output.iterdir()},
+                             {"desktop_pet.toolpkg", "helper.js", ".gitkeep"})
+            for name in ("desktop_pet.toolpkg", "helper.js"):
+                self.assertEqual((source / name).read_bytes(), (output / name).read_bytes())
+            (source / "desktop_pet.toolpkg").write_bytes(b"updated contents")
+            SYNC._stage_flutter_assets(source, output, dry_run=False)
+            self.assertEqual((output / "desktop_pet.toolpkg").read_bytes(), b"updated contents")
+
+    # A clean build must prepare resources explicitly instead of publishing an empty bundle.
+    def test_flutter_resource_staging_rejects_missing_input(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaises(FileNotFoundError):
+                SYNC._stage_flutter_assets(root / "missing", root / "output", dry_run=False)
+            self.assertFalse((root / "output").exists())
+
     # Rejects official app builds before invoking Flutter, even when Flutter's asset hook is cached.
     def test_app_build_entry_points_require_package_parsing(self):
         sys.path.insert(0, str(REPO_ROOT / "tools/build_scripts"))

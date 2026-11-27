@@ -566,6 +566,9 @@ pub struct ToolPkgContainerRuntime {
     #[serde(rename = "publicApis", default)]
     pub publicApis: Vec<ToolPkgRegisteredFunctionHook>,
     pub requires: Vec<ToolPkgManifestRequirement>,
+    /// Suspends these containers and their dependents while this container is executable.
+    #[serde(default)]
+    pub suspends: Vec<String>,
     /// Public API providers that may be absent or disabled without blocking this package.
     #[serde(rename = "optional_requires", default)]
     pub optionalRequires: Vec<ToolPkgManifestRequirement>,
@@ -695,6 +698,9 @@ pub struct ToolPkgManifest {
     pub publicApi: Option<String>,
     #[serde(default)]
     pub requires: Vec<ToolPkgManifestRequirement>,
+    /// Declares containers temporarily excluded by this package's working environment.
+    #[serde(default)]
+    pub suspends: Vec<String>,
     /// Public API providers that may be absent or disabled without blocking this package.
     #[serde(rename = "optional_requires", default)]
     pub optionalRequires: Vec<ToolPkgManifestRequirement>,
@@ -976,6 +982,7 @@ impl ToolPkgArchiveParser {
             containerRuntime: ToolPkgContainerRuntime {
                 packageName: manifest.toolpkgId, displayName, description,
                 version: manifest.version, apiVersion: apiVersion.to_string(), requires, optionalRequires,
+                suspends: manifest.suspends,
                 author: manifest.author, sourceType, sourcePath: sourcePath.into(),
                 mainEntry, subpackages, resources, logoResource, manifestExtensions,
                 themes: manifest.themes, license: manifest.license,
@@ -1720,6 +1727,7 @@ impl ToolPkgArchiveParser {
             publicApi,
             publicApis: mainRegistration.publicApis.clone(),
             requires,
+            suspends: manifest.suspends.clone(),
             optionalRequires,
             dependencyIssues: Vec::new(),
             manifestExtensions,
@@ -2768,8 +2776,16 @@ fn validateDeclaredPackagePath(path: &str) -> Result<(), String> {
 #[allow(non_snake_case)]
 /// Parses the manifest as declared by the author.
 fn parseToolPkgManifest(content: &str, manifestEntryName: &str) -> Result<ToolPkgManifest, String> {
-    serde_json::from_value(parseToolPkgManifestValue(content, manifestEntryName)?)
-        .map_err(|error| error.to_string())
+    let manifest: ToolPkgManifest = serde_json::from_value(parseToolPkgManifestValue(content, manifestEntryName)?)
+        .map_err(|error| error.to_string())?;
+    let mut targets = BTreeSet::new();
+    for target in &manifest.suspends {
+        if target.trim().is_empty() || target.trim() != target || target == &manifest.toolpkgId
+            || !targets.insert(target) || manifest.requires.iter().any(|required| &required.id == target) {
+            return Err("manifest.suspends must contain unique exact package IDs outside self and required dependencies".into());
+        }
+    }
+    Ok(manifest)
 }
 
 #[allow(non_snake_case)]
@@ -2863,6 +2879,24 @@ fn finishArchiveFixture<T>(future: impl std::future::Future<Output = T>) -> T {
         std::task::Poll::Ready(value) => value,
         std::task::Poll::Pending => panic!("archive fixture unexpectedly suspended"),
     }
+}
+
+/// Rejects ambiguous environment exclusions before registration or execution.
+#[cfg(test)]
+#[test]
+fn suspension_manifest_requires_exact_distinct_non_dependency_ids() {
+    for (targets, required) in [
+        (serde_json::json!([""]), serde_json::json!([])),
+        (serde_json::json!([" target"]), serde_json::json!([])),
+        (serde_json::json!(["coding"]), serde_json::json!([])),
+        (serde_json::json!(["target", "target"]), serde_json::json!([])),
+        (serde_json::json!(["target"]), serde_json::json!([{"id":"target"}])),
+    ] {
+        let manifest = serde_json::json!({"toolpkg_id":"coding", "suspends":targets, "requires":required});
+        assert!(parseToolPkgManifest(&manifest.to_string(), "manifest.json").is_err());
+    }
+    let manifest = parseToolPkgManifest(r#"{"toolpkg_id":"coding","suspends":["characters"]}"#, "manifest.json").unwrap();
+    assert_eq!(manifest.suspends, ["characters"]);
 }
 
 #[cfg(test)]

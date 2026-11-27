@@ -4486,6 +4486,21 @@ exec /bin/sh ${session.launch.command === null ? "-i" : "-c " + quote(session.la
         storageDelete(filePrefix, source, true); deleteFileDirectory(source, true);
       },
     }),
+    bundledResources: registerWorkerHostModule({
+      /** Reads a packaged Flutter asset in the Core worker without preloading every package. */
+      read(key: string): Uint8Array {
+        if (!isRuntimeWorker()) throw new Error("Bundled resources require the Core worker");
+        if (!key || key.split("/").some(part => !part || part === "." || part === "..") || /[\\:\u0000]/.test(key)) {
+          throw new Error("Invalid bundled resource key");
+        }
+        const request = new XMLHttpRequest();
+        request.open("GET", new URL(`../assets/${key}`, import.meta.url).href, false);
+        request.responseType = "arraybuffer";
+        request.send();
+        if (request.status !== 200) throw new Error(`Bundled resource read failed: ${key} (${request.status})`);
+        return new Uint8Array(request.response as ArrayBuffer);
+      },
+    }),
     fileSystem: registerWorkerHostModule({
       validatePath() {},
       listFiles(path: string) {

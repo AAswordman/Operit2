@@ -1452,12 +1452,6 @@ fn registerFileSystemTools(handler: &mut AIToolHandler, fileSystemTools: Standar
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        BuiltinToolName::CreateFile,
-        FileSystemToolOperation::CreateFile,
-    );
-    registerFileSystemTool(
-        handler,
-        &fileSystemTools,
         BuiltinToolName::EditFile,
         FileSystemToolOperation::EditFile,
     );
@@ -1494,14 +1488,16 @@ fn registerFileSystemTools(handler: &mut AIToolHandler, fileSystemTools: Standar
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        BuiltinToolName::GrepContext,
-        FileSystemToolOperation::GrepContext,
-    );
-    registerFileSystemTool(
-        handler,
-        &fileSystemTools,
         BuiltinToolName::DownloadFile,
         FileSystemToolOperation::DownloadFile,
+    );
+    handler.registerBuiltinTool(
+        BuiltinToolName::CreateFile,
+        RegisteredToolExecutor::Asynchronous(Box::new(FileSystemToolExecutor {
+            tools: fileSystemTools.clone(),
+            operation: FileSystemToolOperation::CreateFile,
+        })),
+        ToolRegistrationVisibility::INTERNAL,
     );
     handler.registerBuiltinTool(
         BuiltinToolName::ApplyFile,

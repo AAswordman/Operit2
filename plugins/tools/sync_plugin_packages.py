@@ -807,6 +807,21 @@ def _sync(source_dir: Path, output_dir: Path, *, dry_run: bool) -> tuple[int, in
     return copied, packed, deleted
 
 
+def _stage_flutter_assets(source_dir: Path, output_dir: Path, *, dry_run: bool) -> None:
+    """Stages the exact prepared package set for Flutter's application resource bundle."""
+    if not source_dir.is_dir():
+        raise FileNotFoundError(f"Prepared plugin assets not found: {source_dir}")
+    sources = sorted(path for path in source_dir.iterdir()
+                     if path.is_file() and path.suffix.lower() in SYNCABLE_SUFFIXES)
+    if not dry_run:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    _delete_unplanned_outputs(output_dir, {path.name for path in sources}, dry_run=dry_run)
+    for source in sources:
+        destination = output_dir / source.name
+        if not dry_run:
+            shutil.copy2(source, destination)
+
+
 def main() -> int:
     plugins_root = _plugins_root()
     repo_root = _repo_root()
@@ -830,6 +845,8 @@ def main() -> int:
         default=str(plugins_root / ".out" / "examples"),
     )
     parser.add_argument("--no-hot-reload", action="store_true")
+    parser.add_argument("--flutter-assets", action="store_true",
+                        help="Stage prepared runtime packages in Flutter's application assets.")
     parser.add_argument("--vm-service", help="Authenticated VM Service URL printed by fvm flutter run")
     parser.add_argument("--hot-reload-timeout", type=float, default=5.0)
     args = parser.parse_args()
@@ -854,6 +871,12 @@ def main() -> int:
         total_deleted += deleted
 
     _validate_plugin_packages(repo_root, jobs, dry_run=args.dry_run)
+
+    if args.flutter_assets:
+        asset_root = repo_root / "apps/flutter/app/assets/operit/plugins"
+        for source_dir, output_dir in jobs:
+            if source_dir.name in {"buildin", "external"}:
+                _stage_flutter_assets(output_dir, asset_root / source_dir.name, dry_run=args.dry_run)
 
     if args.source in {"buildin", "runtime", "all"}:
         _maybe_hot_reload_output(

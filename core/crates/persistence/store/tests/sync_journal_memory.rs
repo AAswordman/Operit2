@@ -50,6 +50,9 @@ static ALLOCATOR: MeasuredAllocator = MeasuredAllocator;
 // This binary intentionally has one test, so measurements do not include other tests.
 #[test]
 fn small_pages_and_metadata_queries_do_not_materialize_or_pin_business_history() {
+    operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(
+        operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new(),
+    ));
     production_sync_memory_budget();
     let root = std::env::temp_dir().join(format!("operit-journal-memory-{}", uuid::Uuid::new_v4()));
     let runtime = root.join("runtime");

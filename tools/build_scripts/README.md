@@ -83,14 +83,45 @@ binaries with `.venv/Scripts/python.exe tools/build_scripts/windows_bash.py --de
 
 ## Generated plugin assets
 
-Every App/CLI build embeds the ToolPkg assets generated from `plugins/packages/`
-into `core/crates/runtime/application/assets/plugins/{buildin,external}`.
+Every App/CLI build prepares ToolPkg files from `plugins/packages/`
+in `core/crates/runtime/application/assets/plugins/{buildin,external}`.
 `prepare_plugin_assets()` in `common.py` runs
 `plugins/tools/sync_plugin_packages.py --source runtime --no-hot-reload`; the
-CLI entry points call it before `cargo build`, and Flutter builds trigger it
-from their native hooks. `verify_cli_plugin_assets()` rejects a packaged CLI
+CLI entry points call it before `cargo build`. CLI explicitly enables
+`operit-runtime/embedded-plugin-assets` to keep its bundled packages inside the
+executable. Flutter hooks also pass `--flutter-assets`, which stages the same
+prepared files in `apps/flutter/app/assets/operit/plugins/{buildin,external}`.
+Flutter packages those files as application resources; its Rust bridge contains
+only their names, resource keys, byte lengths and SHA-256 fingerprints.
+`verify_cli_plugin_assets()` rejects a packaged CLI
 whose binary omits any generated asset name. Do not commit or reuse stale
 asset directories across machines.
+
+Core reads packages on demand through `BundledAssetSource` and the registered
+`BundledResourceHost`. Android reads APK assets; the privileged Android module
+reads the same entries directly from its deployed APK. Windows/Linux and Apple
+apps read their installed Flutter resource bundle. OpenHarmony owns a native
+resource manager, and Web reads static Flutter assets in the Core worker.
+Packaged reads validate length and SHA-256 against the compiled index. Missing,
+stale or inaccessible resources are reported as package errors. Resources are
+neither copied into mutable storage at startup nor retained as a second complete
+package set in memory. Installed and user-updated plugins continue to use the VFS.
+
+## Flutter bridge release loading
+
+The bridge release profile uses size optimization, fat LTO and one codegen unit.
+This targets Rust code size; startup time and throughput still need measurements
+on each platform. Android's Gradle release/profile tasks set
+`CARGO_PROFILE_RELEASE_STRIP=symbols`; Cargo does not support per-target profile
+tables in `Cargo.toml`. Other platforms retain their existing symbol settings,
+and the bridge keeps panic unwinding for its JNI and transport error boundaries.
+
+Android packages JNI libraries uncompressed and page-aligned inside the APK with
+`useLegacyPackaging=false`. The bridge loads through `OperitRuntimeNative` when
+the runtime first needs it. Application startup does not preinitialize that class:
+a failed JVM class initializer cannot be retried by accessing the same class again.
+Compare the packaged library size and real device cold-start timings before
+claiming a size or latency reduction.
 
 ## OpenHarmony native libraries
 

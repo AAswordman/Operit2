@@ -1,5 +1,6 @@
 #include <dlfcn.h>
 #include <node_api.h>
+#include <rawfile/raw_file_manager.h>
 
 #include <cstdint>
 #include <cstring>
@@ -13,7 +14,7 @@ namespace {
 
 using BridgeHandle = void*;
 using BridgeCreateOhos =
-    BridgeHandle (*)(const char*, const char*, const char*, const char*);
+    BridgeHandle (*)(const char*, const char*, const char*, const char*, void*);
 using BridgeCreateError = char* (*)();
 using BridgeDestroy = void (*)(BridgeHandle);
 
@@ -73,9 +74,10 @@ class OperitBridgeLibrary {
 
   /// Creates one Rust runtime bridge handle.
   BridgeHandle Create(const std::string& runtime_root, const std::string& workspace_root,
-                      const std::string& system_language_code, const std::string& device_model) {
+                      const std::string& system_language_code, const std::string& device_model,
+                      NativeResourceManager* resources) {
     return create_with_storage_roots_(runtime_root.c_str(), workspace_root.c_str(),
-                                      system_language_code.c_str(), device_model.c_str());
+                                      system_language_code.c_str(), device_model.c_str(), resources);
   }
 
   /// Returns the last Rust runtime bridge creation error.
@@ -307,6 +309,8 @@ struct OwnerWork {
   std::string request;
   std::string response;
   std::string error;
+  std::unique_ptr<NativeResourceManager, decltype(&OH_ResourceManager_ReleaseNativeResourceManager)>
+      resources{nullptr, OH_ResourceManager_ReleaseNativeResourceManager};
 
   /// Releases an owned runtime reference unless creation transferred it to the caller.
   ~OwnerWork() { if (handle != nullptr) g_bridge_library.Destroy(handle); }
@@ -319,7 +323,8 @@ void ExecuteOwnerWork(napi_env, void* data) {
     switch (work->operation) {
       case OwnerOperation::CreateRuntime:
         work->handle = g_bridge_library.Create(work->root, work->workspace_root,
-                                               work->system_language_code, work->device_model);
+                                               work->system_language_code, work->device_model,
+                                               work->resources.release());
         if (work->handle == nullptr) work->error = g_bridge_library.CreateError();
         break;
       case OwnerOperation::DataRescue:
@@ -368,9 +373,11 @@ napi_value QueueOwnerWork(napi_env env, std::unique_ptr<OwnerWork> work) {
 /// Creates the runtime on a native worker with immutable owner metadata.
 napi_value Create(napi_env env, napi_callback_info info) {
   if (!EnsureBridgeReady(env)) return nullptr;
-  auto args = CallbackArgs(env, info, 4);
-  if (args.size() != 4) return ThrowError(env, "create expects runtime root, workspace root, system language, and device model");
+  auto args = CallbackArgs(env, info, 5);
+  if (args.size() != 5) return ThrowError(env, "create expects storage roots, system language, device model, and resource manager");
   auto work = std::make_unique<OwnerWork>();
+  work->resources.reset(OH_ResourceManager_InitNativeResourceManager(env, args[4]));
+  if (work->resources == nullptr) return ThrowError(env, "Cannot retain application resource manager");
   work->operation = OwnerOperation::CreateRuntime;
   work->root = ReadString(env, args[0]);
   work->workspace_root = ReadString(env, args[1]);

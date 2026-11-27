@@ -14,7 +14,7 @@ Package loaders that need a native archive receive a path resolved by VFS. Resou
 
 ## Code search
 
-`grep_code` and `grep_context` use the shared native filesystem search engine on Android native paths, Windows, Linux and Apple hosts. The engine uses ripgrep's matcher, streaming searcher and ignore-aware directory walker. It collects matching lines and their before/after context directly from search callbacks; it never reopens a matching file to read its full contents for context.
+`grep_code` uses the shared native filesystem search engine on Android native paths, Windows, Linux and Apple hosts. The engine uses ripgrep's matcher, streaming searcher and ignore-aware directory walker. It collects matching lines and their before/after context directly from search callbacks; it never reopens a matching file to read its full contents for context.
 
 `max_results` limits matching lines across the whole request. Ripgrep's `max_matches` setting is per file, so each file receives only the remaining request budget. Once that budget is exhausted, the sink collects only the last admitted match's trailing context and stops. Matches encountered within that trailing context do not add results or extend the context window. No further files are visited. A zero budget performs no search. `totalMatches` and `filesSearched` describe the work actually performed, not a full-tree count beyond the budget.
 

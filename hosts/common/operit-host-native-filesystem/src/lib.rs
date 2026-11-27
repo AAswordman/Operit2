@@ -1,4 +1,6 @@
 mod grep;
+mod bundled_resources;
+pub use bundled_resources::{ArchiveBundledResourceHost, DirectoryBundledResourceHost};
 
 pub use grep::grepCode;
 

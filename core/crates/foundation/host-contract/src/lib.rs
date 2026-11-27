@@ -2,6 +2,7 @@
 
 pub mod AtomicCounter;
 pub mod FileSystemResource;
+pub mod BundledResourceHost;
 pub mod HostFileSystemRoots;
 pub use FileSystemResource::{FileSource, FileTarget};
 pub mod RuntimeStorageLayout;

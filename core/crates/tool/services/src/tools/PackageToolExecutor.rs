@@ -4,7 +4,7 @@ use operit_plugin_sdk::javascript::{JsPackageToolCallRequest, JsPackageToolCallR
 
 use crate::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use crate::tools::ToolJsRuntime::PackageManagerJsRuntime;
-use crate::tools::ToolResultDataClasses::{stringResultData, JsonResultData, ToolResultData};
+use crate::tools::ToolResultDataClasses::{stringResultData, ToolResultData};
 use crate::ConversationMarkupManager::ToolResult;
 use crate::ToolExecutionManager::{
     AITool, AsyncToolExecutor, ToolAccessSpec, ToolBoundary, ToolEffect, ToolInvocationFuture,
@@ -106,8 +106,8 @@ fn packageToolCallRequest(tool: &AITool) -> JsPackageToolCallRequest {
 #[allow(non_snake_case)]
 fn packageToolResult(result: JsPackageToolCallResult) -> ToolResult {
     let data = if result.success {
-        match serde_json::from_str(&result.result) {
-            Ok(value) => ToolResultData::JsonResultData(JsonResultData { value }),
+        match serde_json::from_str(&result.result).and_then(ToolResultData::fromPackageValue) {
+            Ok(value) => value,
             Err(error) => return ToolResult { toolName: result.tool_name, success: false,
                 result: stringResultData(""), error: Some(format!("Invalid package result JSON: {error}")) },
         }
@@ -129,12 +129,67 @@ mod tests {
     #[test]
     fn package_results_decode_objects_arrays_scalars_and_json_looking_strings_once() {
         for value in [json!({"__type":"BusinessType", "nested":[null,false]}), json!([1,2]),
-            json!(null), json!(false), json!(42), json!("{\"looks\":\"like JSON\"}")] {
+            json!(null), json!(false), json!(42), json!("{\"looks\":\"like JSON\"}"),
+            json!({"display":"ordinary display key", "model":"ordinary model key"})] {
             let result = packageToolResult(JsPackageToolCallResult { tool_name: "example:read".into(),
                 success: true, result: value.to_string(), error: None });
             assert!(result.success);
             let ToolResultData::JsonResultData(data) = result.result else { panic!("Expected structured JSON") };
             assert_eq!(data.value, value);
+        }
+    }
+
+    /// Accepts an explicit presentation from any package without inspecting names or business types.
+    #[test]
+    fn package_presentation_keeps_display_model_and_forwarding_contract() {
+        use operit_model::MessagePartCodec::MessagePartCodec;
+        use crate::ConversationMarkupManager::ConversationMarkupManager;
+        let value = json!({"$operitToolResult": {
+            "display": {"path":"/third-party/file", "diffContent":"+private source"},
+            "model": "Updated file: +1 line",
+        }});
+        let result = packageToolResult(JsPackageToolCallResult {
+            tool_name: "third_party:arbitrary_name".into(), success: true,
+            result: value.to_string(), error: None,
+        });
+        assert!(result.success);
+        assert_eq!(result.result.presentationValue(), value);
+        assert_eq!(result.result.toModelString(), "Updated file: +1 line");
+        let renderer = operit_plugin_sdk::js_sdk::tool_display::ToolDisplayDeclaration {
+            result_renderer: operit_plugin_sdk::js_sdk::tool_display::ToolResultRenderer::FileDiff,
+            ..Default::default()
+        };
+        let display = ConversationMarkupManager::formatToolResultForDisplay(&result, Some(&renderer));
+        assert!(display.contains("private source"));
+        let parts = MessagePartCodec::parseAssistantMarkup(&display).unwrap();
+        let toolPart = parts.iter().find(|part| part.kind == operit_model::MessagePart::MessagePartKind::ToolResult).unwrap();
+        let displayed: serde_json::Value = serde_json::from_str(&toolPart.attributes["result_data"]).unwrap();
+        assert_eq!(displayed, value["$operitToolResult"]["display"]);
+        let model = MessagePartCodec::assistantMarkup(&parts);
+        assert!(model.contains("Updated file: +1 line"));
+        assert!(!model.contains("private source"));
+        assert!(!model.contains("$operitToolResult"));
+    }
+
+    /// Rejects incomplete explicit contracts while accepting empty, null, and structured model values.
+    #[test]
+    fn package_presentation_is_strict_and_preserves_explicit_empty_values() {
+        for model in [json!(""), json!(null), json!({"changed":1}), json!([false, 0])] {
+            let result = packageToolResult(JsPackageToolCallResult {
+                tool_name: "example:operation".into(), success: true,
+                result: json!({"$operitToolResult":{"display":"large display", "model":model}}).to_string(), error: None,
+            });
+            assert!(result.success);
+            assert_eq!(result.result.modelData().toBusinessValue(), model);
+        }
+        for value in [json!({"$operitToolResult":{"display":"missing model"}}),
+            json!({"$operitToolResult":null}),
+            json!({"$operitToolResult":{"display":"x","model":"y"},"extra":true})] {
+            let result = packageToolResult(JsPackageToolCallResult {
+                tool_name: "example:operation".into(), success: true,
+                result: value.to_string(), error: None,
+            });
+            assert!(!result.success);
         }
     }
 

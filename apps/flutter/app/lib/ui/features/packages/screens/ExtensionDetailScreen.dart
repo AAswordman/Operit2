@@ -1696,6 +1696,8 @@ String _dependencyIssueStatus(core_proxy.ToolPkgDependencyIssue issue) {
     'disabled' => '未启用',
     'version_incompatible' => '版本不兼容',
     'unresolved' => '依赖无法解析',
+    'suspended' => '前置插件已暂停',
+    'suspended_by' => '被其他插件暂停',
     _ => throw StateError(
       'Unsupported ToolPkg dependency issue code: ${issue.code}',
     ),
@@ -1709,6 +1711,8 @@ String _dependencyIssueDescription(core_proxy.ToolPkgDependencyIssue issue) {
     'disabled' => '前置插件已安装，但当前未启用。',
     'version_incompatible' => '前置插件的版本不满足 manifest 声明的范围。',
     'unresolved' => '前置插件存在循环依赖或其依赖无法满足，当前插件已停止加载。',
+    'suspended' => '前置插件被当前启用的工作环境暂停，停用该工作环境后按原启用设置恢复。',
+    'suspended_by' => '被 ${issue.id} 的工作环境暂停，插件数据和原有启用设置保留。',
     _ => throw StateError(
       'Unsupported ToolPkg dependency issue code: ${issue.code}',
     ),

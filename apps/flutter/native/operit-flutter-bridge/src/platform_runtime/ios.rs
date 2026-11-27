@@ -20,6 +20,11 @@ use crate::FlutterOwnerCapabilities::{
 
 /// Creates iOS hosts around one retained terminal and managed runtime instance.
 pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager, String> {
+    operit_host_api::HostManager::setDefaultBundledResourceHost(Arc::new(
+        operit_host_native_filesystem::DirectoryBundledResourceHost::besideExecutable(
+            "Frameworks/App.framework/flutter_assets",
+        ).map_err(|error| error.to_string())?,
+    ));
     let terminal = Arc::new(IosTerminalHost::new());
     let managed = Arc::new(IosManagedRuntimeHost::new(terminal.clone()));
     let mut context = createRuntimeHostManager(

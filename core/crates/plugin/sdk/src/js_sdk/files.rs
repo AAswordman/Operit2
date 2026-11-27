@@ -17,14 +17,6 @@ pub struct FilesHostGrepOptions {
     pub max_results: Option<f64>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// Configures intent-based content searches in the virtual file system.
-pub struct FilesHostGrepContextOptions {
-    /// Restricts directory searches to file names matching this glob pattern.
-    pub file_pattern: Option<String>,
-    /// Limits the number of relevant content regions returned.
-    pub max_results: Option<f64>,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
 /// Identifies a remote resource and its destination for a file download.
 pub struct FilesHostDownloadOptions {
     /// Provides a direct URL to download.
@@ -162,20 +154,6 @@ pub trait FilesHost: Send + Sync {
         path: String,
         pattern: String,
         options: Option<FilesHostGrepOptions>,
-    ) -> JsFuture<GrepResultData>;
-    ///
-    ///Search for relevant content based on intent/context understanding
-    ///@param path - VFS directory or file path
-    ///@param intent - Intent or context description string
-    ///@param options - Search options
-    ///@param options.file_pattern - File filter pattern for directory mode (e.g., "*.kt"), default "*"
-    ///@param options.max_results - Maximum number of items to return, default 10
-    ///
-    fn grepContext(
-        &self,
-        path: String,
-        intent: String,
-        options: Option<FilesHostGrepContextOptions>,
     ) -> JsFuture<GrepResultData>;
     ///
     ///Get information about a file

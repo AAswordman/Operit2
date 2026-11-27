@@ -49,6 +49,16 @@ return values are decoded at the JavaScript JSON boundary, so objects and arrays
 remain structured instead of becoming JSON-encoded strings. JSON-looking strings
 remain strings, and package-owned keys (including `__type`) are preserved.
 
+Packages may opt into separate user and model results by returning
+`{ "$operitToolResult": { "display": fullValue, "model": conciseValue } }`,
+including through `complete(...)`. Ordinary return values keep their existing
+behavior. The explicit contract is decoded once at the package boundary and
+retained when one package forwards another package's result. Foreground results,
+background receipts, `package_wait`, and persisted chat history select the same
+model projection; result renderers receive the display projection. Empty and
+null model values are preserved. See [tool display semantics](tool-display-semantics.md)
+for the TypeScript contract and validation rules.
+
 Running calls return a flat receipt, for example:
 
 ```json
@@ -125,6 +135,12 @@ actual final receipt. Super Admin projects start and chunk events without their
 submitted command or internal metadata, forwards them to its package execution
 and retains its function and session lease until completion or failure. Closing an output
 iterator detaches observation while the session still owns the running command.
+The final AI terminal result omits the SDK receipt's cumulative `output`: chunk
+events are the sole delivery channel for command output. Completion returns exit
+status, session metadata and any large-output file reference. Unread chunks
+remain available through the existing execution cursor and `has_more_output`,
+so receiving completion does not discard pending output. Repeated text in
+distinct chunks is preserved without content-based deduplication.
 The existing SDK `run`, `wait` and `execStream` interfaces retain their contracts.
 
 Slow or suspended tasks may retain resources. Foreground expiry does not imply

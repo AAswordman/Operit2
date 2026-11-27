@@ -61,10 +61,13 @@ impl PackageRegistryScanner {
             let mut result = match self.builtInPackageScanCache.get(asset.name)
                 .filter(|entry| entry.signature == signature && activation.matches(&entry.result)) {
                 Some(entry) => entry.result.clone(),
-                None => self.parseCandidate(
-                    asset.name, Ok(asset.bytes), ToolPkgSourceType::ASSET,
-                    Ok(ToolPkgConfigScope::Device), Some(activation),
-                ).await,
+                None => {
+                    let bytes = asset.readBytes();
+                    self.parseCandidate(
+                        asset.name, bytes.as_deref().map_err(Clone::clone), ToolPkgSourceType::ASSET,
+                        Ok(ToolPkgConfigScope::Device), Some(activation),
+                    ).await
+                }
             };
             let packageName = RuntimePackageManager::packageNameFromScanResult(&result);
             let selected = match packageName.as_deref() {

@@ -68,7 +68,7 @@ pub fn generate_builtin_tool_names(
         "    /// Reports whether a successful runtime payload matches this tool's public contract.\n",
     );
     output.push_str(
-        "    pub fn accepts_runtime_result(self, result: &ToolResultData) -> bool {\n        match self {\n",
+        "    pub fn accepts_runtime_result(self, result: &ToolResultData) -> bool {\n        let result = result.displayData();\n        match self {\n",
     );
     for (_, variant, result_variant) in &variants {
         let pattern = match (variant.as_str(), result_variant) {

@@ -63,7 +63,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     os.environ.setdefault("RUSTFLAGS", "-Awarnings")
-    prepare_plugin_assets()
+    prepare_plugin_assets(flutter_assets=True)
     require_command("cargo")
     flutter = flutter_command()
     if not args.skip_proxy_generation:

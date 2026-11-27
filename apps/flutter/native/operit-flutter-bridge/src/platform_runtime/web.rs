@@ -11,6 +11,9 @@ use super::{BridgeStartup, StartupMetadata};
 
 /// Creates the browser host bundle supplied by the Web host crate.
 pub(crate) fn create_host_context(_startup: &BridgeStartup) -> Result<HostManager, String> {
+    operit_host_api::HostManager::setDefaultBundledResourceHost(std::sync::Arc::new(
+        operit_host_web::WebBundledResourceHost,
+    ));
     let mut context = operit_host_web::createRuntimeHostManager();
     context.webVisitHost = Some(std::sync::Arc::new(
         crate::FlutterHostAdapters::FlutterWebVisitBridge::new(),

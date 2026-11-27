@@ -401,6 +401,7 @@ val syncOperitPlugins = tasks.register<Exec>("syncOperitPlugins") {
         "--source",
         "runtime",
         "--no-hot-reload",
+        "--flutter-assets",
     )
 }
 
@@ -484,6 +485,8 @@ androidComponents {
                 )
                 if (rustProfile == "release") {
                     cargoArguments.add("--release")
+                    // Cargo profiles are workspace-wide; scope symbol stripping to Android tasks.
+                    environment("CARGO_PROFILE_RELEASE_STRIP", "symbols")
                 }
                 if (operitExternalRuntime) {
                     cargoArguments.addAll(listOf("--features", "android-module-app"))

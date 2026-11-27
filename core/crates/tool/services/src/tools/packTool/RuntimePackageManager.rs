@@ -170,14 +170,14 @@ impl ToolPkgExecutionEngineFactory for RuntimeToolPkgExecutionEngineFactory {
     }
 }
 
-/// Exposes runtime-owned embedded plugin assets to the SDK package manager.
+/// Exposes build-selected bundled plugin assets to the SDK package manager.
 #[derive(Clone)]
 struct RuntimeToolPkgAssetSource {
     runtimeSupport: Arc<dyn ToolRuntimeSupport>,
 }
 
 impl ToolPkgAssetSource for RuntimeToolPkgAssetSource {
-    /// Returns one embedded ToolPkg archive as owned bytes.
+    /// Reads one bundled ToolPkg archive and reports resource failures to diagnostics.
     #[allow(non_snake_case)]
     fn toolPkgAssetBytes(&self, assetName: &str) -> Option<Vec<u8>> {
         self.runtimeSupport
@@ -185,7 +185,13 @@ impl ToolPkgAssetSource for RuntimeToolPkgAssetSource {
             .iter()
             .chain(self.runtimeSupport.bundledExternalPluginAssets().iter())
             .find(|asset| asset.name == assetName)
-            .map(|asset| asset.bytes.to_vec())
+            .and_then(|asset| match asset.readBytes() {
+                Ok(bytes) => Some(bytes.into_owned()),
+                Err(error) => {
+                    AppLogger::e(PACKAGE_MANAGER_LOG_TAG, &error);
+                    None
+                }
+            })
     }
 }
 
@@ -1066,8 +1072,7 @@ impl RuntimePackageManager {
             );
         }
 
-        let enabledPackageNames = self.getEnabledPackageNames();
-        if enabledPackageNames.contains(&normalizedPackageName) {
+        if self.isPackageEnabled(&normalizedPackageName) {
             let Some(toolPackage) = self
                 .availablePackages()
                 .get(&normalizedPackageName)
@@ -1206,7 +1211,15 @@ impl RuntimePackageManager {
 
     #[allow(non_snake_case)]
     pub(crate) fn getEnabledPackageNameSetInternal(&self) -> BTreeSet<String> {
-        BTreeSet::from_iter(self.getEnabledPackageNames())
+        let requested = self.getEnabledPackageNames();
+        let active = self.toolPkgManager().getEnabledToolPkgContainerRuntimes(&requested)
+            .into_iter().map(|runtime| runtime.packageName).collect::<BTreeSet<_>>();
+        let containers = self.toolPkgManager().getToolPkgContainerRuntimeMap();
+        let children = self.toolPkgSubpackageByPackageNameInternal();
+        requested.into_iter().filter(|name| {
+            if let Some(child) = children.get(name) { return active.contains(&child.containerPackageName); }
+            !containers.contains_key(name) || active.contains(name)
+        }).collect()
     }
 
     /// Applies persisted child preferences to their manifest-declared initial states.
@@ -1222,7 +1235,16 @@ impl RuntimePackageManager {
     /// Returns the package's effective state from the shared enabled-package projection.
     #[operit_route_macros::operit_plugin_sdk_expose]
     pub fn isPackageEnabled(&self, packageName: &str) -> bool {
-        self.getEnabledPackageNameSetInternal().contains(&self.normalizePackageName(packageName))
+        let name = self.normalizePackageName(packageName);
+        let requested = self.getEnabledPackageNames();
+        if !requested.contains(&name) { return false; }
+        if let Some(child) = self.toolPkgManager().resolveToolPkgSubpackageRuntimeInternal(&name) {
+            return self.toolPkgManager().isEnabledToolPkgContainer(&child.containerPackageName, &requested);
+        }
+        if self.isToolPkgContainer(&name) {
+            return self.toolPkgManager().isEnabledToolPkgContainer(&name, &requested);
+        }
+        true
     }
 
     #[allow(non_snake_case)]
@@ -2183,7 +2205,7 @@ impl RuntimePackageManager {
             }
             // Catalog display must never create an engine or execute an uninstalled plugin.
             let candidate = if asset.name.to_ascii_lowercase().ends_with(".toolpkg") {
-                match bundledToolPkgCatalogCandidate(asset.name, asset.bytes) {
+                match asset.readBytes().and_then(|bytes| bundledToolPkgCatalogCandidate(asset.name, &bytes)) {
                     Ok(candidate) => candidate,
                     Err(error) => {
                         self.recordAndReturnPackageError(asset.name, "toolpkg_manifest", &error, "toolpkg");
@@ -2363,9 +2385,9 @@ impl RuntimePackageManager {
             );
         }
         let destinationFile = packagesDir.join(&sourceFileName);
-        if let Err(error) = self
+        if let Err(error) = sourceAsset.readBytes().and_then(|bytes| self
             .filesystem
-            .writeFileBytes(&vfsPathString(&destinationFile), sourceAsset.bytes)
+            .writeFileBytes(&vfsPathString(&destinationFile), &bytes))
         {
             return self.recordAndReturnPackageError(
                 &sourcePath,
@@ -2448,6 +2470,7 @@ impl RuntimePackageManager {
     /// Returns package tools with active state applied.
     #[operit_route_macros::operit_plugin_sdk_expose]
     pub fn getEffectivePackageTools(&self, packageName: &str) -> Option<ToolPackage> {
+        if !self.isPackageEnabled(packageName) { return None; }
         self.pluginPackageManager.effectivePackage(packageName)
     }
 
@@ -2455,6 +2478,7 @@ impl RuntimePackageManager {
     /// Resolves one executable without materializing the complete effective package.
     pub(crate) fn selectPackageTool(&self, packageName: &str, functionName: &str)
         -> Result<operit_plugin_sdk::package::PackageTool, String> {
+        if !self.isPackageEnabled(packageName) { return Err(format!("Package is disabled: {packageName}")); }
         self.pluginPackageManager.effectiveTool(packageName, functionName)
     }
 
@@ -3030,8 +3054,9 @@ impl RuntimePackageManager {
     /// Parses bundled metadata without activating an installation.
     #[allow(non_snake_case)]
     fn parseBundledExternalPackageAsset(&self, asset: &RuntimePluginAsset) -> PackageScanCandidateResult {
+        let bytes = asset.readBytes();
         self.registryScanner().parseCatalogCandidate(
-            asset.name, Ok(asset.bytes), ToolPkgSourceType::EXTERNAL,
+            asset.name, bytes.as_deref().map_err(Clone::clone), ToolPkgSourceType::EXTERNAL,
             Ok(ToolPkgConfigScope::Device), None,
         )
     }
@@ -3666,7 +3691,7 @@ impl RuntimePackageManager {
         let support = self.toolHandler.runtimeSupport();
         for asset in support.bundledExternalPluginAssets().iter().chain(support.builtinPluginAssets()) {
             if hasToolPkgExtension(asset.name) && packageSourceFileName(asset.name) == record.sourceName
-                && Self::readToolPkgImportManifest(asset.bytes)?.manifest.toolpkgId == id
+                && Self::readToolPkgImportManifest(&asset.readBytes()?)?.manifest.toolpkgId == id
             {
                 return Err(format!("Bundled ToolPkg cannot be replaced by a local import: {id}"));
             }
@@ -5368,7 +5393,7 @@ fn scanStandalonePackageScript(
 
 #[allow(non_snake_case)]
 fn buildBundledPluginAssetSignature(asset: &RuntimePluginAsset) -> String {
-    format!("{}|{}|{}", asset.name, asset.bytes.len(), asset.sha256)
+    format!("{}|{}|{}", asset.name, asset.source.len(), asset.sha256)
 }
 
 /// Formats one structured external package import result for text callers.

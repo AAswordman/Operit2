@@ -35,16 +35,21 @@ impl ConversationMarkupManager {
 
     /// Formats one result within a single Unicode-scalar budget.
     pub fn formatToolResultForMessage(result: &ToolResult) -> String {
+        Self::formatToolResultWithDetail(result, &result.result.toModelString())
+    }
+
+    /// Applies the same status envelope and budget to either result projection.
+    fn formatToolResultWithDetail(result: &ToolResult, detail: &str) -> String {
         if result.success {
             Self::createBoundedToolResultXml(
                 &result.toolName,
                 "success",
-                &result.result.toString(),
+                detail,
                 |payload| format!("<content>{payload}</content>"),
             )
         } else {
             let message = result.error.clone().unwrap_or_default().trim().to_string();
-            let detail = result.result.toString().trim().to_string();
+            let detail = detail.trim().to_string();
             let errorPayload = if !message.is_empty() && !detail.is_empty() {
                 format!("{message}\n\n{detail}")
             } else if !message.is_empty() {
@@ -63,7 +68,17 @@ impl ConversationMarkupManager {
         result: &ToolResult,
         display: Option<&operit_plugin_sdk::js_sdk::tool_display::ToolDisplayDeclaration>,
     ) -> String {
-        let mut markup = Self::formatToolResultForMessage(result);
+        Self::formatToolResultForDisplayWithModelResult(result, result, display)
+    }
+
+    /// Persists both projections, including invocations that emitted multiple result steps.
+    pub fn formatToolResultForDisplayWithModelResult(
+        result: &ToolResult,
+        modelResult: &ToolResult,
+        display: Option<&operit_plugin_sdk::js_sdk::tool_display::ToolDisplayDeclaration>,
+    ) -> String {
+        let detail = result.result.toString();
+        let mut markup = Self::formatToolResultWithDetail(result, &detail);
         let mut attributes = String::new();
         let mut append = |name: &str, value: String| {
             let escaped = value
@@ -73,6 +88,13 @@ impl ConversationMarkupManager {
                 .replace('>', "&gt;");
             attributes.push_str(&format!(" {name}=\"{escaped}\""));
         };
+        if detail != modelResult.result.toModelString() {
+            let modelMarkup = Self::formatToolResultForMessage(modelResult);
+            let blocks = ChatMarkupRegex::tool_result_blocks(&modelMarkup);
+            let body = &blocks[0].body;
+            // The formatter owns this envelope; persist its already bounded inner content.
+            append("model_content", body["<content>".len()..body.len() - "</content>".len()].to_string());
+        }
         if let Some(display) = display {
             append(
                 "display",
@@ -85,7 +107,7 @@ impl ConversationMarkupManager {
             display.result_renderer
                 != operit_plugin_sdk::js_sdk::tool_display::ToolResultRenderer::Text
         }) {
-            let data = match &result.result {
+            let data = match result.result.displayData() {
                 ToolResultData::JsonResultData(data) => serde_json::to_string(&data.value),
                 data => serde_json::to_string(data),
             }
@@ -176,6 +198,77 @@ mod tests {
         TerminalImplementation, TerminalType, ToolResultData,
     };
     use operit_tools::ConversationMarkupManager::{ConversationMarkupManager, ToolResult};
+
+    /// Supplies a mutation whose source must remain visible only in the display projection.
+    fn file_mutation_result(name: &str, diff: String) -> ToolResult {
+        use operit_plugin_sdk::js_sdk::results::{FileApplyResultData, FileOperationData};
+        ToolResult {
+            toolName: name.to_string(), success: true, error: None,
+            result: ToolResultData::FileApplyResultData(FileApplyResultData {
+                operation: FileOperationData {
+                    operation: "write".into(), path: "/work/a.txt".into(), successful: true,
+                    details: "Updated /work/a.txt".into(),
+                },
+                diffContent: Some(diff), aiDiffInstructions: String::new(),
+            }),
+        }
+    }
+
+    /// Separates mutation projections by result type, including renamed and package-owned tools.
+    #[test]
+    fn file_mutation_model_projection_survives_display_storage() {
+        use operit_model::MessagePartCodec::MessagePartCodec;
+        for name in ["write_file", "edit_file", "apply_file", "create_file", "custom:mutation"] {
+            let result = file_mutation_result(name, "--- a\n+++ b\n-old_source\n+new_source".into());
+            let model = ConversationMarkupManager::formatToolResultForMessage(&result);
+            let display = ConversationMarkupManager::formatToolResultForDisplay(&result, None);
+            assert!(display.contains("-old_source\n+new_source"));
+            assert!(display.contains("<file-diff"));
+            assert!(model.contains("Updated /work/a.txt\nChanges: +1 -1 lines"));
+            assert!(!model.contains("source"));
+            assert!(!model.contains("file-diff"));
+
+            let parts = MessagePartCodec::parseAssistantMarkup(&display).unwrap();
+            let stored = serde_json::to_string(&parts).unwrap();
+            let restored: Vec<operit_model::MessagePart::MessagePart> = serde_json::from_str(&stored).unwrap();
+            let reloaded = MessagePartCodec::assistantMarkup(&restored);
+            assert!(reloaded.contains("Changes: +1 -1 lines"));
+            assert!(!reloaded.contains("source"));
+            assert!(!reloaded.contains("model_content"));
+            assert_eq!(MessagePartCodec::assistantMarkup(&parts), reloaded);
+        }
+    }
+
+    /// Projects before display truncation so even an oversized diff cannot hide its summary.
+    #[test]
+    fn file_mutation_summary_survives_large_display_and_error_envelopes() {
+        use operit_model::MessagePartCodec::MessagePartCodec;
+        let mut result = file_mutation_result("write_file", "+large_source\n".repeat(20_000));
+        for failed in [false, true] {
+            result.success = !failed;
+            result.error = failed.then(|| "verification failed".into());
+            let display = ConversationMarkupManager::formatToolResultForDisplay(&result, None);
+            assert!(display.contains(super::TOOL_RESULT_TRUNCATION_SUFFIX));
+            let parts = MessagePartCodec::parseAssistantMarkup(&display).unwrap();
+            let model = MessagePartCodec::assistantMarkup(&parts);
+            assert!(model.contains("Changes: +20000 -0 lines"));
+            assert!(!model.contains("large_source"));
+            assert_eq!(model.contains("<error>verification failed"), failed);
+            assert_eq!(model.contains("</error>"), failed);
+        }
+    }
+
+    /// Leaves ordinary source reads intact even when the source describes file-result markup.
+    #[test]
+    fn source_read_is_not_treated_as_a_mutation_summary() {
+        let source = "<file-diff>source</file-diff><file-request-content><![CDATA[example]]></file-request-content>";
+        let result = ToolResult {
+            toolName: "read_file".into(), success: true, error: None,
+            result: ToolResultData::StringResultData(StringResultData { value: source.into() }),
+        };
+        assert!(ConversationMarkupManager::formatToolResultForMessage(&result).contains(source));
+        assert!(!ConversationMarkupManager::formatToolResultForDisplay(&result, None).contains("model_content="));
+    }
 
     #[test]
     fn display_metadata_preserves_native_result_type_and_stays_out_of_provider_text() {

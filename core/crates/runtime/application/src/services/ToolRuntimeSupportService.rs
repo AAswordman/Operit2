@@ -641,13 +641,13 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
     /// Returns built-in package assets owned by the runtime.
     #[allow(non_snake_case)]
     fn builtinPluginAssets(&self) -> &'static [RuntimePluginAsset] {
-        runtimeBuiltinPluginAssets()
+        BUILTIN_PLUGIN_ASSETS
     }
 
     /// Returns bundled external package assets owned by the runtime.
     #[allow(non_snake_case)]
     fn bundledExternalPluginAssets(&self) -> &'static [RuntimePluginAsset] {
-        runtimeBundledExternalPluginAssets()
+        BUNDLED_EXTERNAL_PLUGIN_ASSETS
     }
 
     /// Returns built-in skills that are installed without enabling AI visibility.
@@ -1390,40 +1390,6 @@ fn providerParameterToModel(
         required: parameter.required,
         default: parameter.default,
     }
-}
-
-/// Returns a static view of runtime built-in package assets.
-fn runtimeBuiltinPluginAssets() -> &'static [RuntimePluginAsset] {
-    static ASSETS: OnceLock<Vec<RuntimePluginAsset>> = OnceLock::new();
-    ASSETS
-        .get_or_init(|| {
-            BUILTIN_PLUGIN_ASSETS
-                .iter()
-                .map(|asset| RuntimePluginAsset {
-                    name: asset.name,
-                    bytes: asset.bytes,
-                    sha256: asset.sha256,
-                })
-                .collect()
-        })
-        .as_slice()
-}
-
-/// Returns a static view of bundled external package assets.
-fn runtimeBundledExternalPluginAssets() -> &'static [RuntimePluginAsset] {
-    static ASSETS: OnceLock<Vec<RuntimePluginAsset>> = OnceLock::new();
-    ASSETS
-        .get_or_init(|| {
-            BUNDLED_EXTERNAL_PLUGIN_ASSETS
-                .iter()
-                .map(|asset| RuntimePluginAsset {
-                    name: asset.name,
-                    bytes: asset.bytes,
-                    sha256: asset.sha256,
-                })
-                .collect()
-        })
-        .as_slice()
 }
 
 /// Returns a static view of bundled external skill assets.

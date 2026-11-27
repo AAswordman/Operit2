@@ -427,6 +427,7 @@ impl ToolExecutionManager {
         TOOL_BATCH_SEQUENCE.scope(ToolBatchSequence::default(), Self::scopeToolRuntimeContext(runtimeContext, async move {
         let mut toolHandler = toolHandler.clone();
         let mut results = Vec::new();
+        let mut modelResults = Vec::new();
         let mut displays = Vec::new();
         let mut routeChangeIntent = None;
         let requestedToolNames = invocations
@@ -476,34 +477,8 @@ impl ToolExecutionManager {
             );
             {
                 let last = collected.last().expect("collected not empty");
-                let combinedResultString = collected
-                    .iter()
-                    .map(|item| {
-                        if item.success {
-                            item.result.toString().trim().to_string()
-                        } else {
-                            format!(
-                                "Step error: {}",
-                                item.error
-                                    .clone()
-                                    .unwrap_or_else(|| "Unknown error".to_string())
-                            )
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    .trim()
-                    .to_string();
-                let finalResult = ToolResult {
-                    toolName: displayToolName.clone(),
-                    success: last.success,
-                    result: if collected.len() == 1 {
-                        last.result.clone()
-                    } else {
-                        stringResultData(combinedResultString)
-                    },
-                    error: last.error.clone(),
-                };
+                let finalResult = Self::combineInvocationResults(&displayToolName, &collected, false);
+                let modelResult = Self::combineInvocationResults(&displayToolName, &collected, true);
                 if let Some(intent) = Self::routeChangeIntentForResult(&invocation.tool, last) {
                     routeChangeIntent = Some(intent);
                 }
@@ -520,13 +495,15 @@ impl ToolExecutionManager {
                 );
                 displays.push(toolHandler.toolDisplayDeclaration(&displayToolName));
                 results.push(finalResult);
+                modelResults.push(modelResult);
             }
         }
 
-        let mut batch = ToolExecutionBatch::new(results, routeChangeIntent);
-        batch.displayMessage = batch.results.iter().zip(&displays)
-            .map(|(result, display)| ConversationMarkupManager::formatToolResultForDisplay(result, display.as_ref()))
+        let message = ConversationMarkupManager::buildToolResultMessage(&modelResults);
+        let displayMessage = results.iter().zip(&modelResults).zip(&displays)
+            .map(|((result, modelResult), display)| ConversationMarkupManager::formatToolResultForDisplayWithModelResult(result, modelResult, display.as_ref()))
             .collect::<Vec<_>>().join("\n");
+        let batch = ToolExecutionBatch { results, message, displayMessage, routeChangeIntent };
         AppLogger::v_with_level(
             TAG,
             &format!(
@@ -539,6 +516,24 @@ impl ToolExecutionManager {
         );
         Ok(batch)
         })).await
+    }
+
+    /// Projects each emitted step before combining it, preserving both file summaries and errors.
+    fn combineInvocationResults(toolName: &str, collected: &[ToolResult], forModel: bool) -> ToolResult {
+        let last = collected.last().expect("collected not empty");
+        let result = if collected.len() == 1 {
+            last.result.clone()
+        } else {
+            stringResultData(collected.iter().map(|item| {
+                if item.success {
+                    let detail = if forModel { item.result.toModelString() } else { item.result.toString() };
+                    detail.trim().to_string()
+                } else {
+                    format!("Step error: {}", item.error.as_deref().unwrap_or("Unknown error"))
+                }
+            }).collect::<Vec<_>>().join("\n").trim().to_string())
+        };
+        ToolResult { toolName: toolName.to_string(), success: last.success, result, error: last.error.clone() }
     }
 
     /// Builds a route-change intent from the successful switch_core tool result.
@@ -778,6 +773,39 @@ pub struct ToolValidationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Keeps every step and error when an invocation mixes mutations with ordinary results.
+    #[test]
+    fn multi_step_mutation_keeps_separate_model_and_display_projections() {
+        use operit_plugin_sdk::js_sdk::results::{FileApplyResultData, FileOperationData, ToolResultData};
+        let mutation = ToolResult {
+            toolName: "write_file".into(), success: true, error: None,
+            result: ToolResultData::FileApplyResultData(FileApplyResultData {
+                operation: FileOperationData {
+                    operation: "write".into(), path: "/a".into(), successful: true,
+                    details: "Updated /a".into(),
+                },
+                diffContent: Some("+private_source".into()), aiDiffInstructions: String::new(),
+            }),
+        };
+        let steps = vec![mutation.clone(), ToolResult {
+            toolName: "verify".into(), success: false, error: Some("verification failed".into()),
+            result: stringResultData(String::new()),
+        }, ToolResult {
+            toolName: "read".into(), success: true, error: None,
+            result: stringResultData("ordinary output"),
+        }, mutation];
+        let display = ToolExecutionManager::combineInvocationResults("custom:edit", &steps, false);
+        let model = ToolExecutionManager::combineInvocationResults("custom:edit", &steps, true);
+        let markup = ConversationMarkupManager::formatToolResultForDisplayWithModelResult(&display, &model, None);
+        let parts = operit_model::MessagePartCodec::MessagePartCodec::parseAssistantMarkup(&markup).unwrap();
+        let restored = operit_model::MessagePartCodec::MessagePartCodec::assistantMarkup(&parts);
+        assert!(display.result.toString().contains("private_source"));
+        assert!(!restored.contains("private_source"));
+        assert_eq!(restored.matches("Changes: +1 -0 lines").count(), 2);
+        assert!(restored.contains("Step error: verification failed"));
+        assert!(restored.contains("ordinary output"));
+    }
 
     /// A rejected later turn must not allow another invocation to bypass unfinished earlier work.
     #[tokio::test]

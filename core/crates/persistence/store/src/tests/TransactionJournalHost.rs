@@ -13,8 +13,9 @@ pub(crate) struct TransactionJournalHost {
 }
 
 impl Default for TransactionJournalHost {
+    /// Installs the shared test capabilities and creates an isolated journal namespace.
     fn default() -> Self {
-        installTestHostSecrets();
+        installTestHosts();
         let root = std::env::temp_dir().join(format!("operit-transaction-test-{}", uuid::Uuid::new_v4()));
         let host = NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces"));
         Self { root, host }
@@ -31,11 +32,16 @@ impl Drop for TransactionJournalHost {
     fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.root); }
 }
 
-/// Registers one stable in-memory host secret interface for encrypted store fixtures.
+/// Registers the secret store and runtime clock required by transaction fixtures.
 #[allow(non_snake_case)]
-fn installTestHostSecrets() {
+fn installTestHosts() {
     static INSTALL: Once = Once::new();
-    INSTALL.call_once(|| crate::RuntimeStorageHost::setDefaultHostSecretStore(Arc::new(MemorySecretStore::default())));
+    INSTALL.call_once(|| {
+        crate::RuntimeStorageHost::setDefaultHostSecretStore(Arc::new(MemorySecretStore::default()));
+        operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(
+            operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new(),
+        ));
+    });
 }
 
 #[derive(Clone, Default)]

@@ -70,7 +70,7 @@ def main() -> int:
     args = parse_args()
     prepare_apple_sherpa()
     os.environ.setdefault("RUSTFLAGS", "-Awarnings")
-    prepare_plugin_assets()
+    prepare_plugin_assets(flutter_assets=True)
     require_command("cargo")
     flutter = flutter_command()
     if not args.skip_proxy_generation:

@@ -105,6 +105,7 @@ void main(List<String> args) async {
       '--source',
       'runtime',
       '--no-hot-reload',
+      '--flutter-assets',
     ], workingDirectory: repoRoot.path);
 
     if (shouldBuildWebAssets) {

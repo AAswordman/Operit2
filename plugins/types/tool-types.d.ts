@@ -31,7 +31,6 @@ export interface ToolResultMap {
   make_directory: FileOperationData;
   find_files: FindFilesResultData;
   grep_code: GrepResultData;
-  grep_context: GrepResultData;
   file_info: FileInfoData;
   zip_files: FileOperationData;
   unzip_files: FileOperationData;

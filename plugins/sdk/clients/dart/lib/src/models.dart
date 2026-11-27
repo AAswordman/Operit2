@@ -764,6 +764,7 @@ class ToolPkgContainerRuntime {
     required this.publicApi,
     required this.publicApis,
     required this.requires,
+    required this.suspends,
     required this.optionalRequires,
     required this.dependencyIssues,
     required this.manifestExtensions,
@@ -824,6 +825,7 @@ class ToolPkgContainerRuntime {
     publicApi: value['publicApi'] == null ? null : value['publicApi'] as String,
     publicApis: (value['publicApis'] as List<Object?>).map((item) => ToolPkgRegisteredFunctionHook.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     requires: (value['requires'] as List<Object?>).map((item) => ToolPkgManifestRequirement.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
+    suspends: (value['suspends'] as List<Object?>).map((item) => item as String).toList(growable: false),
     optionalRequires: (value['optional_requires'] as List<Object?>).map((item) => ToolPkgManifestRequirement.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     dependencyIssues: (value['dependencyIssues'] as List<Object?>).map((item) => ToolPkgDependencyIssue.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     manifestExtensions: (value['manifestExtensions'] as Map).map((key, item) => MapEntry(key as String, item)),
@@ -884,6 +886,7 @@ class ToolPkgContainerRuntime {
     'publicApi': publicApi == null ? null : publicApi!,
     'publicApis': publicApis.map((item) => item.toMessagePackValue()).toList(growable: false),
     'requires': requires.map((item) => item.toMessagePackValue()).toList(growable: false),
+    'suspends': suspends.map((item) => item).toList(growable: false),
     'optional_requires': optionalRequires.map((item) => item.toMessagePackValue()).toList(growable: false),
     'dependencyIssues': dependencyIssues.map((item) => item.toMessagePackValue()).toList(growable: false),
     'manifestExtensions': manifestExtensions.map((key, item) => MapEntry(key, item)),
@@ -942,6 +945,7 @@ class ToolPkgContainerRuntime {
   final String? publicApi;
   final List<ToolPkgRegisteredFunctionHook> publicApis;
   final List<ToolPkgManifestRequirement> requires;
+  final List<String> suspends;
   final List<ToolPkgManifestRequirement> optionalRequires;
   final List<ToolPkgDependencyIssue> dependencyIssues;
   final Map<String, Object?> manifestExtensions;

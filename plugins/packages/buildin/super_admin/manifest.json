@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.super_admin",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "api_version": "2.0.0",
   "main": "dist/main.js",
   "display_name": { "zh": "超级管理员", "en": "Super Admin" },

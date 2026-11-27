@@ -1,6 +1,18 @@
 use super::super as engine;
 use super::*;
 
+/// Bounds assertions with the timer owned by the configured runtime Host.
+async fn with_host_timeout<T>(future: impl std::future::Future<Output = T>) -> T {
+    let scheduler = operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost();
+    tokio::select! {
+        result = future => result,
+        result = scheduler.waitForHostRuntimeDelay(2_000) => {
+            result.expect("Host timeout timer");
+            panic!("Runtime assertion did not complete within two seconds");
+        }
+    }
+}
+
 /// Builds an independently owned native context for capability-boundary assertions.
 fn native_context(host: Arc<dyn JsExecutionHost>, owner: &str) -> engine::JsCallContext {
     engine::JsCallContext {
@@ -419,10 +431,9 @@ async fn detached_callback_reads_its_package_resources() {
     );
     finishGatedTool(&host);
     assert_eq!(
-        tokio::time::timeout(Duration::from_secs(2), progress.recv())
+        with_host_timeout(progress.recv())
             .await
-            .expect("Detached module read must complete")
-            .unwrap(),
+            .expect("Detached module read must complete"),
         "detached-owner"
     );
     assert_eq!(executionSessionCounts(&engine).await, (0, 0));
@@ -482,13 +493,12 @@ async fn cancelled_action_reads_its_snapshot_during_cleanup() {
             "render before cancellation",
         );
     }
-    tokio::time::timeout(Duration::from_secs(2), async {
+    with_host_timeout(async {
         while executionSessionCounts(&engine).await.0 != 0 {
             tokio::task::yield_now().await;
         }
     })
-    .await
-    .expect("Cancellation must release the action");
+    .await;
     let result = expect_js_output(engine.execute_script_function(
         "exports.inspect = function() { return [globalThis.cleanupResourceOwner, globalThis.subscriptionResourceOwner]; };",
         "inspect", &testParams(), &BTreeMap::new(), None, true, None,

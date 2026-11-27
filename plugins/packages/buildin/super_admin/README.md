@@ -18,6 +18,10 @@ output and the final result. Proxy `timeout_ms: 0` requests immediate background
 execution. No separate terminal wait tool or foreground deadline is used.
 Start events expose `sessionId` for `get_screen`, `input` and `close`. Streamed
 events and final results omit submitted scripts and internal SDK metadata.
+Command output is delivered in chunk events only. The final AI result contains
+completion metadata and any large-output file reference, with no cumulative
+`output` field. `package_wait` continues to collect unread chunks after process
+completion; the SDK's own final receipt still retains its output.
 
 `terminal_open` starts a persistent interactive shell. Use it for REPLs, editors,
 interactive programs and commands that must share shell state. `input` sends
@@ -73,3 +77,17 @@ These tests evaluate production sources and the generated SDK with controlled
 Host responses and a simulated idle clock. Real-shell checks live in
 `hosts/tests/terminal-contracts/src/process_sessions.rs`; POSIX relay checks live
 in `tools/tests/test_terminal_process_relays.py`.
+
+## Prompt environment
+
+The plugin injects the current Core platform, workspace/output VFS roots and
+public terminal profile information at final chat prompt preparation and token
+estimation. It reads the Host terminal catalog directly on each preparation;
+the model does not need a discovery tool call just to learn its default shell.
+Executable paths, command scripts and unrelated device identifiers are excluded.
+
+Package `usage_advice` explains workspace/output directories, relative paths and
+the VFS/terminal boundary. Conditional `states` select only the current platform's
+`platform_paths` advice when the package is loaded. Each state inherits the shared
+tools; instructions for other platforms are excluded. Profile-specific working
+directory conversion remains owned by the Host.

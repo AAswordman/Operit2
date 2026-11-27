@@ -29,20 +29,6 @@ export namespace Files {
   }
 
   /**
-   * Configures intent-based content searches in the virtual file system.
-   */
-  export interface HostGrepContextOptions {
-    /**
-     * Restricts directory searches to file names matching this glob pattern.
-     */
-    file_pattern?: string;
-    /**
-     * Limits the number of relevant content regions returned.
-     */
-    max_results?: number;
-  }
-
-  /**
    * Identifies a remote resource and its destination for a file download.
    */
   export interface HostDownloadOptions {
@@ -140,15 +126,6 @@ export namespace Files {
    * @param options.max_results - Maximum number of matches to return, default 100
    */
   function grep(path: string, pattern: string, options?: HostGrepOptions): Promise<GrepResultData>;
-  /**
-   * Search for relevant content based on intent/context understanding
-   * @param path - VFS directory or file path
-   * @param intent - Intent or context description string
-   * @param options - Search options
-   * @param options.file_pattern - File filter pattern for directory mode (e.g., "*.kt"), default "*"
-   * @param options.max_results - Maximum number of items to return, default 10
-   */
-  function grepContext(path: string, intent: string, options?: HostGrepContextOptions): Promise<GrepResultData>;
   /**
    * Get information about a file
    * @param path - VFS file path

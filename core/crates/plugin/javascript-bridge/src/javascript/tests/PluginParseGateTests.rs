@@ -1,10 +1,13 @@
 use super::{newTestJsEngine, testJavaScriptRuntimeHost, TestPluginConfigExecutionHost};
+use operit_host_api::FileSystemHost;
+use operit_host_native_filesystem::PosixFileSystemHost;
 use operit_plugin_sdk::javascript::{ToolPkgConfigScope, ToolPkgTextResourceHost};
 use operit_plugin_sdk::toolpkg::ToolPkgLoader::ToolPkgLoader;
 use operit_plugin_sdk::toolpkg::ToolPkgParser::{ToolPkgArchiveParser, ToolPkgSourceType};
 use operit_plugin_sdk::JsPackageLoader::JsPackageLoader;
 use std::collections::BTreeMap;
 use std::io::{Cursor, Write};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 /// Validates an archive through the production loader, including every reported child error.
@@ -65,24 +68,27 @@ async fn bundled_packages_parse() {
     );
     let mut failures = Vec::new();
     let mut count = 0;
+    let filesystem = PosixFileSystemHost::new();
     for (kind, directory) in inputs {
-        let mut paths = std::fs::read_dir(&directory)
+        let mut paths = filesystem.listFiles(&directory)
             .expect("package gate output directory")
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| {
-                path.is_file()
+            .into_iter()
+            .filter(|entry| {
+                !entry.isDirectory
                     && matches!(
-                        path.extension().and_then(|value| value.to_str()),
+                        Path::new(&entry.name).extension().and_then(|value| value.to_str()),
                         Some("js" | "toolpkg")
                     )
             })
+            .map(|entry| Path::new(&directory).join(entry.name))
             .collect::<Vec<_>>();
         paths.sort();
         assert!(!paths.is_empty(), "No package artifacts in {directory}");
         for path in paths {
             count += 1;
             let label = format!("{kind}/{}", path.file_name().unwrap().to_string_lossy());
-            let bytes = std::fs::read(&path).expect("read synchronized package");
+            let bytes = filesystem.readFileBytes(path.to_str().expect("UTF-8 package path"))
+                .expect("read synchronized package");
             let result = if path.extension().unwrap() == "toolpkg" {
                 validate_archive(&bytes, &path.to_string_lossy(), kind == "buildin").await
             } else {

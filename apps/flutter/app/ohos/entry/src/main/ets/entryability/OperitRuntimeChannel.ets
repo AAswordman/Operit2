@@ -31,6 +31,7 @@ import MethodChannel, {
   MethodResult
 } from '@ohos/flutter_ohos/src/main/ets/plugin/common/MethodChannel';
 import runtimeNative from 'liboperit_runtime_ohos.so';
+import resourceManager from '@ohos.resourceManager';
 
 const CHANNEL = 'operit/runtime';
 const OHOS_VROOT_RAWFILE_DIRECTORY = 'ohos-vroot';
@@ -258,7 +259,8 @@ interface RuntimeNativeModule {
   /** Rasterizes PDF pages on a native worker with a retained runtime handle. */
   renderPdf(handle: bigint, request: string): Promise<string>;
   /** Creates Core on a worker using owner-supplied startup identity. */
-  create(runtimeRoot: string, workspaceRoot: string, systemLanguageCode: string, deviceModel: string): Promise<bigint>;
+  create(runtimeRoot: string, workspaceRoot: string, systemLanguageCode: string, deviceModel: string,
+    resources: resourceManager.ResourceManager): Promise<bigint>;
   /** Reads the client bootstrap record before the native Runtime is created. */
   runtimeBootstrapRead(defaultRuntimeRoot: string): string;
   /** Writes the client bootstrap record before the native Runtime is created. */
@@ -641,7 +643,8 @@ export class OperitRuntimeChannel {
       this.runtimeRoot,
       this.workspaceRoot,
       i18n.System.getSystemLocale(),
-      deviceInfo.productModel
+      deviceInfo.productModel,
+      this.context.resourceManager
     );
     if (this.destroyed) {
       nativeBridge.destroy(handle);

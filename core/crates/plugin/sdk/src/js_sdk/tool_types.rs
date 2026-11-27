@@ -45,7 +45,6 @@ pub struct ToolResultMap {
     #[display(action = "search", icon = "search", target = "pattern")]
     pub grep_code: GrepResultData,
     #[display(action = "search", icon = "search", target = "pattern")]
-    pub grep_context: GrepResultData,
     #[display(action = "info", icon = "file", target = "path")]
     pub file_info: FileInfoData,
     #[display(action = "archive", icon = "folder", target = "destination")]

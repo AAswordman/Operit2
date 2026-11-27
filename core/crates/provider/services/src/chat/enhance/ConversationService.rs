@@ -28,7 +28,7 @@ use operit_vfs::VfsPath;
 use operit_tools::ToolExecutionManager::ToolExecutionManager;
 use crate::chat::llmprovider::MediaLinkParser::unescape_xml_attribute;
 
-const APPLY_FILE_TOOL_NAME: &str = "apply_file";
+const FILE_MUTATION_TOOL_NAMES: &[&str] = &["apply_file", "write_file", "edit_file", "create_file"];
 pub type SummaryProgressCallback = Arc<dyn Fn(&'static str) + Send + Sync>;
 
 /// Identifies the automatic threshold check that requested compaction.
@@ -828,6 +828,7 @@ impl ConversationService {
         build_media_intent_prompt("video", video_path, user_intent)
     }
 
+    /// Selects persisted model projections and imports legacy file-mutation summaries.
     fn normalize_tool_result_markup_for_model(&self, content: &str) -> String {
         let blocks = ChatMarkupRegex::tool_result_blocks(content);
         if blocks.is_empty() {
@@ -838,14 +839,20 @@ impl ConversationService {
         let mut cursor = 0usize;
         for block in blocks {
             normalized.push_str(&content[cursor..block.start]);
+            if attr_value(&block.raw, "model_content").is_some() {
+                let parts = operit_model::MessagePartCodec::MessagePartCodec::parseAssistantMarkupForImport(&block.raw);
+                normalized.push_str(&operit_model::MessagePartCodec::MessagePartCodec::assistantMarkup(&parts));
+                cursor = block.end;
+                continue;
+            }
             let tool_name = attr_value(&block.raw, "name").unwrap_or_default();
-            if !tool_name.eq_ignore_ascii_case(APPLY_FILE_TOOL_NAME) {
+            if !FILE_MUTATION_TOOL_NAMES.iter().any(|name| tool_name.eq_ignore_ascii_case(name)) {
                 normalized.push_str(&block.raw);
                 cursor = block.end;
                 continue;
             }
 
-            let Some(request_content) = self.extract_apply_file_request_content(&block.body) else {
+            let Some(request_content) = self.extract_file_mutation_request_content(&block.body) else {
                 normalized.push_str(&block.raw);
                 cursor = block.end;
                 continue;
@@ -865,7 +872,8 @@ impl ConversationService {
         normalized
     }
 
-    fn extract_apply_file_request_content(&self, tool_result_body: &str) -> Option<String> {
+    /// Reads the explicit request summary from historical file-mutation display markup.
+    fn extract_file_mutation_request_content(&self, tool_result_body: &str) -> Option<String> {
         let content_body = extract_xml_tag_body_case_insensitive(tool_result_body, "content")
             .unwrap_or(tool_result_body);
         let file_request_content_regex = Regex::new(
@@ -1123,6 +1131,45 @@ fn build_media_intent_prompt(media_type: &str, path: &str, user_intent: Option<&
 mod summary_tests {
     use super::*;
     use crate::chat::hooks::SummaryHookRegistry::{applySummaryHookMutation, SummaryHookMutation};
+
+    /// Projects both historical mutation markup and persisted explicit model content on replay.
+    #[test]
+    fn file_mutation_history_preserves_reasoning_and_ordinary_reads() {
+        use crate::chat::llmprovider::ProviderMediaTestSupport::test_runtime_context;
+        use operit_tools::ConversationMarkupManager::{ConversationMarkupManager, ToolResult};
+        use operit_plugin_sdk::js_sdk::results::{FileApplyResultData, FileOperationData, ToolResultData};
+        let service = ConversationService::new(test_runtime_context());
+        let data = FileApplyResultData {
+            operation: FileOperationData {
+                operation: "write".into(), path: "/a".into(), successful: true,
+                details: "Updated /a".into(),
+            },
+            diffContent: Some("+private_source".into()), aiDiffInstructions: String::new(),
+        };
+        for name in FILE_MUTATION_TOOL_NAMES {
+            let historical = format!("<tool_result name=\"{name}\" status=\"success\"><content>{}</content></tool_result>", data.toString());
+            let projected = service.normalize_tool_result_markup_for_model(&historical);
+            assert!(projected.contains("Changes: +1 -0 lines"));
+            assert!(!projected.contains("private_source"));
+        }
+        let result = ToolResult {
+            toolName: "custom:edit".into(), success: true, error: None,
+            result: ToolResultData::FileApplyResultData(data.clone()),
+        };
+        let display = ConversationMarkupManager::formatToolResultForDisplay(&result, None);
+        let read = format!("<tool_result name=\"read_file\" status=\"success\"><content>{}</content></tool_result>", data.toString());
+        let reasoning = "<think>retained reasoning</think>";
+        let turns = vec![
+            PromptTurn::new(PromptTurnKind::ASSISTANT, format!("{reasoning}{display}{read}")),
+            PromptTurn::new(PromptTurnKind::USER, display.clone()),
+        ];
+        let projected = service.normalize_conversation_history_for_model(&turns);
+        assert!(projected[0].content.starts_with(reasoning));
+        assert!(projected[0].content.ends_with(&read));
+        assert_eq!(projected[0].content.matches("private_source").count(), 1);
+        assert_eq!(projected[1].content, display);
+        assert_eq!(service.normalize_conversation_history_for_model(&projected)[0].content, projected[0].content);
+    }
 
     /// Keeps both trigger names and the derived ratio stable across plugin metadata edits.
     #[test]

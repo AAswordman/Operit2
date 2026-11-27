@@ -633,6 +633,7 @@ export interface ToolPkgContainerRuntime {
   readonly publicApi: string | null;
   readonly publicApis: Array<ToolPkgRegisteredFunctionHook>;
   readonly requires: Array<ToolPkgManifestRequirement>;
+  readonly suspends: Array<string>;
   readonly optionalRequires: Array<ToolPkgManifestRequirement>;
   readonly dependencyIssues: Array<ToolPkgDependencyIssue>;
   readonly manifestExtensions: Record<string, unknown>;
@@ -694,6 +695,7 @@ export function decodeToolPkgContainerRuntime(value: unknown): ToolPkgContainerR
     publicApi: input['publicApi'] == null ? null : input['publicApi'] as string | null,
     publicApis: (input['publicApis'] as unknown[]).map((item) => decodeToolPkgRegisteredFunctionHook(item)) as Array<ToolPkgRegisteredFunctionHook>,
     requires: (input['requires'] as unknown[]).map((item) => decodeToolPkgManifestRequirement(item)) as Array<ToolPkgManifestRequirement>,
+    suspends: (input['suspends'] as unknown[]).map((item) => item) as Array<string>,
     optionalRequires: (input['optional_requires'] as unknown[]).map((item) => decodeToolPkgManifestRequirement(item)) as Array<ToolPkgManifestRequirement>,
     dependencyIssues: (input['dependencyIssues'] as unknown[]).map((item) => decodeToolPkgDependencyIssue(item)) as Array<ToolPkgDependencyIssue>,
     manifestExtensions: input['manifestExtensions'] as Record<string, unknown>,
@@ -756,6 +758,7 @@ export function encodeToolPkgContainerRuntime(value: ToolPkgContainerRuntime): R
     'publicApi': value.publicApi === null ? null : value.publicApi,
     'publicApis': value.publicApis.map(item => encodeToolPkgRegisteredFunctionHook(item)),
     'requires': value.requires.map(item => encodeToolPkgManifestRequirement(item)),
+    'suspends': value.suspends.map(item => item),
     'optional_requires': value.optionalRequires.map(item => encodeToolPkgManifestRequirement(item)),
     'dependencyIssues': value.dependencyIssues.map(item => encodeToolPkgDependencyIssue(item)),
     'manifestExtensions': Object.fromEntries(Object.entries(value.manifestExtensions).map(([key, item]) => [key, item])),

@@ -19,6 +19,11 @@ use crate::FlutterOwnerCapabilities::{
 
 /// Creates macOS hosts while keeping native screenshot handling in the host.
 pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager, String> {
+    operit_host_api::HostManager::setDefaultBundledResourceHost(Arc::new(
+        operit_host_native_filesystem::DirectoryBundledResourceHost::besideExecutable(
+            "../Frameworks/App.framework/Resources/flutter_assets",
+        ).map_err(|error| error.to_string())?,
+    ));
     let mut context = createRuntimeHostManager(
         startup.runtimeRoot.clone(),
         startup.workspaceRoot.clone(),

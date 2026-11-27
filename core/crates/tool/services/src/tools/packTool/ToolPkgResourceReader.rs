@@ -7,12 +7,13 @@ use operit_plugin_sdk::toolpkg::ToolPkgParser::{
     ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgSourceType,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
+use operit_util::AppLogger::AppLogger;
 
 use super::text_resource_cache::{read_text_resources, ToolPkgTextResourceCache};
 use super::{bundledPluginAssetByName, vfsPathString, javaStringHashCodeHex};
 use crate::runtime_support::ToolRuntimeSupport;
 
-use super::TOOLPKG_CACHE_SIGNATURE_FILE;
+use super::{TOOLPKG_CACHE_SIGNATURE_FILE, PACKAGE_MANAGER_LOG_TAG};
 
 /// Captures resource capabilities without retaining or copying the package manager.
 #[derive(Clone)]
@@ -221,7 +222,7 @@ impl ToolPkgResourceReader {
                 Some(format!(
                     "asset|{}|{}|{}|{}|{}",
                     sourcePath,
-                    asset.bytes.len(),
+                    asset.source.len(),
                     asset.sha256,
                     version,
                     mainEntry
@@ -276,8 +277,15 @@ impl ToolPkgResourceReader {
                 else {
                     return false;
                 };
+                let bytes = match asset.readBytes() {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        AppLogger::e(PACKAGE_MANAGER_LOG_TAG, &error);
+                        return false;
+                    }
+                };
                 ToolPkgArchiveParser::extractZipEntriesFromAssetBytes(
-                    asset.bytes,
+                    &bytes,
                     self.filesystem.as_ref(),
                     &destinationDir.to_string_lossy(),
                 )

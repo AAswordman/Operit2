@@ -17,7 +17,6 @@ type TerminalInputParams = TerminalSessionParams & {
 };
 
 type PersistedTerminalOutput = {
-    output: string;
     output_saved_to: string;
     output_chars: number;
     operit_clean_on_exit_dir: string;
@@ -33,12 +32,91 @@ type PersistedTerminalOutput = {
         "en": "Super Admin"
     },
     "description": {
-        "zh": "提供终端命令和会话控制。每次获取会话必须进入当前文件目录 `.`：已绑定的主工作区，或未绑定时这组父子对话固定的产出目录；进入失败则终止，不在主目录继续执行。附件和产出直接使用提供的相对路径，无需翻根目录、主目录或全盘查找。跨挂载访问时，终端使用 Host 解析的路径，不直接套用 VFS 绝对路径。请按实际权限操作。",
-        "en": "Runs terminal commands and manages sessions. Each session acquisition must enter the current file directory `.`: the bound primary workspace, or the conversation family's persistent output area when unbound. Failure stops execution instead of continuing in the home directory. Use supplied relative attachment and output paths directly without root/home scans or global searches. For other mounts, use the Host-resolved terminal path instead of a VFS absolute path. Respect actual permissions."
+        "zh": "提供终端命令和会话控制。",
+        "en": "Runs terminal commands and manages sessions."
     },
     "enabledByDefault": true,
     "category": "System",
+    "states": [
+        {
+            "id": "windows", "condition": "platform.windows", "inheritTools": true,
+            "tools": [{
+                "name": "platform_paths", "advice": true, "parameters": [],
+                "description": {
+                    "zh": "当前为 Windows。文件工具中 /virtual/windows/c/... 对应本机 C:\\...，其他盘符同理。原生终端使用 Windows 路径和所选 Shell 的语法；WSL 配置使用所选发行版的 Linux 路径，由 Host 转换工作目录，不要手拼 /mnt/<盘符> 或把 Windows VFS 前缀交给 Bash。",
+                    "en": "Current platform: Windows. File-tool path /virtual/windows/c/... maps to native C:\\...; other drives follow the same pattern. Native terminals use Windows paths and the selected shell syntax. WSL profiles use Linux paths in the selected distribution; the Host converts the working directory. Do not guess /mnt/<drive> mappings or pass Windows VFS prefixes to Bash."
+                }
+            }]
+        },
+        {
+            "id": "linux", "condition": "platform.linux", "inheritTools": true,
+            "tools": [{
+                "name": "platform_paths", "advice": true, "parameters": [],
+                "description": {
+                    "zh": "当前为 Linux。文件工具中 /virtual/linux/... 对应本机 /...，例如 /virtual/linux/app/run.py 对应终端 /app/run.py。终端的 /app 是本机目录；文件工具的 /app 是应用 VFS 别名，两者不能按名字视为同一目录。终端使用所选 Shell 的 POSIX 路径和语法。",
+                    "en": "Current platform: Linux. File-tool path /virtual/linux/... maps to native /..., e.g. /virtual/linux/app/run.py maps to terminal path /app/run.py. Terminal /app is a native directory; file-tool /app is an application VFS alias, so matching names do not imply the same directory. Use POSIX paths and the selected shell syntax."
+                }
+            }]
+        },
+        {
+            "id": "macos", "condition": "platform.macos", "inheritTools": true,
+            "tools": [{
+                "name": "platform_paths", "advice": true, "parameters": [],
+                "description": {
+                    "zh": "当前为 macOS。文件工具中 /virtual/macos/... 对应本机 /...，例如 /virtual/macos/Users/alice/project 对应终端 /Users/alice/project。终端使用所选 Shell 的语法；文件访问受应用已有授权限制。",
+                    "en": "Current platform: macOS. File-tool path /virtual/macos/... maps to native /..., e.g. /virtual/macos/Users/alice/project maps to terminal /Users/alice/project. Use the selected shell syntax. File access remains subject to existing application grants."
+                }
+            }]
+        },
+        {
+            "id": "android", "condition": "platform.android", "inheritTools": true,
+            "tools": [{
+                "name": "platform_paths", "advice": true, "parameters": [],
+                "description": {
+                    "zh": "当前为 Android。文件工具中 /virtual/android/root/... 对应系统 /...，/virtual/android/sdcard/... 对应共享存储 /sdcard/...。/virtual/android/documents/<id>/... 是已授权的 SAF 文档树，可用文件工具访问，不能作为终端物理路径。系统 Shell、PRoot/chroot 发行版和 Termux 各有自己的根目录与权限；所选配置由环境信息给出，Host 负责工作目录映射，不要混用各自的 /root、/home、/data 路径。",
+                    "en": "Current platform: Android. File-tool /virtual/android/root/... maps to system /...; /virtual/android/sdcard/... maps to shared storage /sdcard/.... /virtual/android/documents/<id>/... is an authorized SAF document tree for file tools, not a physical terminal path. System shell, PRoot/chroot distributions and Termux have distinct roots and permissions. Environment context identifies the selected profile; the Host maps its working directory. Do not mix their /root, /home or /data paths."
+                }
+            }]
+        },
+        {
+            "id": "ios", "condition": "platform.ios", "inheritTools": true,
+            "tools": [{
+                "name": "platform_paths", "advice": true, "parameters": [],
+                "description": {
+                    "zh": "当前为 iOS。文件工具中 /virtual/ios/... 表示宿主 /...，访问受应用沙箱及已有授权限制。终端配置可能有独立文件系统；使用 Host 已映射的工作目录和相对路径，不要把宿主 VFS 地址当作终端内部路径。",
+                    "en": "Current platform: iOS. File-tool /virtual/ios/... denotes host /..., subject to the application sandbox and existing grants. Terminal profiles can have a separate filesystem. Use the Host-mapped working directory and relative paths; host VFS addresses are not terminal-internal paths."
+                }
+            }]
+        },
+        {
+            "id": "ohos", "condition": "platform.ohos", "inheritTools": true,
+            "tools": [{
+                "name": "platform_paths", "advice": true, "parameters": [],
+                "description": {
+                    "zh": "当前为 OpenHarmony。文件工具中 /virtual/ohos/... 对应宿主 /...，访问受应用沙箱和授权限制。终端中的宿主目录由 Host 映射到 /mnt/host-root 下；直接使用当前工作目录的相对路径，不要套用 Android 的共享存储路径。",
+                    "en": "Current platform: OpenHarmony. File-tool /virtual/ohos/... maps to host /..., subject to sandbox permissions and grants. The Host maps host directories beneath /mnt/host-root in the terminal. Use paths relative to the current working directory; Android shared-storage paths do not apply."
+                }
+            }]
+        },
+        {
+            "id": "web", "condition": "platform.web", "inheritTools": true,
+            "tools": [{
+                "name": "platform_paths", "advice": true, "parameters": [],
+                "description": {
+                    "zh": "当前为 Web。文件工具访问浏览器私有存储和已授权资源挂载，没有本机盘符或本机 POSIX 根目录。终端运行于虚拟环境，Host 通过 /mnt/operit-host 暴露浏览器文件系统并映射工作目录；使用当前目录的相对路径，不要推测用户电脑上的物理路径。",
+                    "en": "Current platform: Web. File tools access browser-private storage and authorized resource mounts, with no native drive letters or native POSIX root. The terminal runs in a virtual environment; the Host exposes browser storage through /mnt/operit-host and maps the working directory. Use relative paths from that directory rather than guessing physical paths on the user's computer."
+                }
+            }]
+        }
+    ],
     "tools": [
+        {
+            "name": "usage_advice", "advice": true, "parameters": [],
+            "description": {
+                "zh": "路径约定：文件工具使用 VFS 地址。/operitapp/workspaces/<id>/ 是应用管理的项目目录，/operitapp/outputs/<id>/ 是这组父子对话的固定产出目录；绑定的项目也可能在 /virtual/... 下。终端启动时 Host 已将当前文件目录映射到所选配置中，`.` 就是已绑定的主工作区，未绑定时为固定产出目录；进入失败会终止执行。操作项目文件、附件和产出时直接使用已提供的相对路径，无需先搜索根目录或主目录。/operitapp 和 /virtual 是应用文件地址，不是 Shell 的同名挂载点；跨挂载路径需要 Host 解析，不要把 VFS 绝对路径直接放进终端命令。",
+                "en": "Paths: file tools use VFS addresses. /operitapp/workspaces/<id>/ holds app-managed projects; /operitapp/outputs/<id>/ is this conversation family's persistent output directory. Bound projects may also reside under /virtual/.... At terminal startup the Host maps the current file directory into the selected profile: `.` is the bound primary workspace, or the persistent output directory when unbound. A failed directory change stops execution. Use supplied relative paths for project files, attachments and outputs without scanning root or home. /operitapp and /virtual are application file addresses, not same-named shell mounts. Cross-mount paths require Host resolution; do not place VFS absolute paths directly into terminal commands."
+            }
+        },
         {
             "name": "list_terminals",
             "display": {
@@ -241,14 +319,13 @@ const superAdmin = (function () {
         const filePath = `${OPERIT_CLEAN_ON_EXIT_DIR}/terminal_output_${timestamp}_${rand}.log`;
         await Tools.Files.write(filePath, outputStr, false);
         return {
-            output: "(saved_to_file)",
             output_saved_to: filePath,
             output_chars: outputStr.length,
             operit_clean_on_exit_dir: OPERIT_CLEAN_ON_EXIT_DIR,
             hint: "Output is large and saved to file. Use read_file_part or grep_code to inspect it.",
         };
     }
-    /** Projects SDK receipts into AI results without echoing submitted scripts or internal fields. */
+    /** Returns completion metadata without repeating output already published as stream events. */
     async function commandResult(result: Awaited<ReturnType<typeof Tools.System.terminal.run>>) {
         const persisted = await persistTerminalOutputIfTooLong(result.output);
         return {
@@ -256,7 +333,6 @@ const superAdmin = (function () {
             platform: result.platform,
             terminal: result.terminal,
             terminalType: result.terminalType,
-            output: result.output,
             ...persisted,
             exitCode: result.exitCode,
             timedOut: false,
