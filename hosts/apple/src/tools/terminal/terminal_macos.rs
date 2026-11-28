@@ -221,6 +221,15 @@ impl TerminalHost for AppleTerminalHost {
         )
     }
 
+    /// Awaits binary output from the backend that owns this exact session.
+    fn nextPtySessionOutput<'a>(&'a self, sessionId: &'a str) -> operit_host_api::TerminalPtyOutputFuture<'a> {
+        Box::pin(async move {
+            #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+            if sessionId.starts_with("macos-arm64-") { return self.arm64.nextPtySessionOutput(sessionId).await; }
+            self.hostForSession(sessionId)?.nextPtySessionOutput(sessionId).await
+        })
+    }
+
     fn readPtySession(&self, sessionId: &str) -> HostResult<Vec<u8>> {
         #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
         if sessionId.starts_with("macos-arm64-") {

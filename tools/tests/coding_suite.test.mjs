@@ -106,6 +106,7 @@ test('fresh AGENTS.md and plain prompt edits appear without reading the timeline
   f.files.set('/operitapp/workspaces/project/.operit/coding-memory.md', 'PRIVATE OLD MEMORY');
   let result = await f.main.onCodingPrompt(event());
   assert.match(result.preparedHistory[1].content, /Use Host APIs/);
+  assert.match(result.preparedHistory[1].content, /Project timeline:/);
   assert.doesNotMatch(result.preparedHistory[1].content, /PRIVATE OLD MEMORY/);
   assert.deepEqual(f.reads, [path]);
   await f.main.settingsRequest({ action: 'save', prompt: 'Editable coding prompt', memoryEnabled: true });
@@ -140,8 +141,17 @@ test('functional MEMORY calls and unrelated prompt stages do no context reads or
 test('unbound chats use the actual inherited output directory; switching projects changes both rules and memory', async () => {
   const f = fixture();
   let result = await f.main.onCodingPrompt(event('chat-a', null));
+  assert.doesNotMatch(result.preparedHistory[1].content, /Project timeline:/);
+  const file = '/operitapp/outputs/family/.operit/coding-memory.md';
+  f.files.set(file, 'Previous decisions');
+  result = await f.main.onCodingPrompt(event('chat-a', null));
   assert.match(result.preparedHistory[1].content, /\/operitapp\/outputs\/family\/\.operit\/coding-memory.md/);
   assert.deepEqual(f.reads, []);
+  f.files.delete(file);
+  const input = event('chat-a', null);
+  input.eventPayload.preparedHistory = result.preparedHistory;
+  result = await f.main.onCodingEstimatePrompt(input);
+  assert.doesNotMatch(result.preparedHistory[1].content, /Project timeline:/);
   await f.main.onCodingPrompt(event('chat-a', '/operitapp/workspaces/second'));
   await reply(f);
   assert.equal(f.state.settings.jobs[0].path, '/operitapp/workspaces/second/.operit/coding-memory.md');

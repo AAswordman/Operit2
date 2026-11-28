@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.coding_suite",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "api_version": "2.0.0",
   "main": "dist/main.js",
   "display_name": { "zh": "编程套装", "en": "Coding Suite" },

@@ -49,6 +49,18 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
             "",
             vec![
                 tool(
+                    "read_file_part",
+                    "Read file content by line range.",
+                    "",
+                    vec![
+                        param("path", "string", "VFS file path", true, None),
+                        param("start_line", "integer", "starting line number, 1-indexed", false, Some("1".to_string())),
+                        param("end_line", "integer", "ending line number, 1-indexed, inclusive, optional", false, Some("start_line + 199".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
                     "create_file",
                     "Create a new file with full content. (write_file is preferred for all writing/creating operations)",
                     "",
@@ -1298,6 +1310,18 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
             "内部工具",
             "",
             vec![
+                tool(
+                    "read_file_part",
+                    "按行号范围读取文件内容。",
+                    "",
+                    vec![
+                        param("path", "string", "VFS 文件路径", true, None),
+                        param("start_line", "integer", "起始行号，从1开始", false, Some("1".to_string())),
+                        param("end_line", "integer", "结束行号，从1开始，包括该行，可选", false, Some("start_line + 199".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
                 tool(
                     "create_file",
                     "创建并写入新文件。（推荐统一使用 write_file 处理写入与创建）",

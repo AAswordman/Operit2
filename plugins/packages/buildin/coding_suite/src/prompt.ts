@@ -18,9 +18,16 @@ export async function composeContext(request: { chatId: string; binding: Binding
             sections.push("Project instructions (" + path + "):\n" + (await Tools.Files.read(path)).content);
         }
     }
-    if (settings.memoryEnabled) sections.push("Project timeline: " + memoryPath(request.binding)
-        + "\nThe background worker appends dated summaries here. The file may not exist before the first summary."
-        + " Search it with grep/rg only when historical context is relevant; read matching sections and verify current facts. Do not load the whole file by default or overwrite past entries.");
+    if (settings.memoryEnabled) {
+        const path = memoryPath(request.binding);
+        const file = await Tools.Files.exists(path);
+        if (file.exists) {
+            if (file.isDirectory) throw new Error("Project timeline must be a file");
+            sections.push("Project timeline: " + path
+                + "\nThe background worker appends dated summaries here."
+                + " Search it with grep/rg only when historical context is relevant; read matching sections and verify current facts. Do not load the whole file by default or overwrite past entries.");
+        }
+    }
     return sections.join("\n\n");
 }
 

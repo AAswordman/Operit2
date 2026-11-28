@@ -1,3 +1,5 @@
+use std::io::{BufRead, BufReader, Cursor, Read};
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -183,99 +185,49 @@ impl StandardFileSystemTools {
     }
 
     #[allow(non_snake_case)]
-    /// Reads a file with normal size limits and line numbering.
+    /// Reads one bounded model-facing page without changing the plugin's full-read contract.
     pub async fn readFile(&self, tool: &AITool) -> ToolResult {
+        let (offset, limit) = match modelReadRange(tool) {
+            Ok(range) => range,
+            Err(error) => return toolError(tool, String::new(), error),
+        };
         let tool = &match self.fileRouting.prepare(tool, &["path"]) {
             Ok(PreparedFileToolCall::Local(call)) => call,
             Ok(PreparedFileToolCall::Remote { call, nodeId, typedPath, nodePrefix }) => {
-                return self
-                    .fileRouting.dispatchRemote(call, nodeId, &typedPath, &nodePrefix)
-                    .await;
+                return self.fileRouting.dispatchRemote(call, nodeId, &typedPath, &nodePrefix).await;
             }
             Err(error) => return toolError(tool, String::new(), error),
         };
         let path = parameterValue(tool, "path");
         let vfs = self.vfs();
-
-        match vfs.fileExists(&path) {
-            Ok(existence) if existence.exists && !existence.isDirectory => {
-                let fileExt = fileExtension(&path);
-                if isSpecialFileType(&fileExt) {
-                    let fullResult = self.readFileFull(tool).await;
-                    if !fullResult.success {
-                        return fullResult;
-                    }
-
-                    let ToolResultData::FileContentData(contentData) = fullResult.result else {
-                        return toolError(
-                            tool,
-                            String::new(),
-                            "Unexpected read_file_full result".to_string(),
-                        );
-                    };
-
-                    let mut content = contentData.content;
-                    let isTruncated = content.len() > ToolExecutionLimits::MAX_FILE_READ_BYTES;
-                    if isTruncated {
-                        content = content
-                            .chars()
-                            .take(ToolExecutionLimits::MAX_FILE_READ_BYTES)
-                            .collect();
-                    }
-                    let mut contentWithLineNumbers = addLineNumbers(&content, 0, 0);
-                    if isTruncated {
-                        contentWithLineNumbers.push_str("\n\n... (file content truncated) ...");
-                    }
-                    return successData(
-                        tool,
-                        ToolResultData::FileContentData(FileContentData {
-                            path: path.clone(),
-                            size: contentWithLineNumbers.len() as i64,
-                            content: contentWithLineNumbers,
-                        }),
-                    );
-                }
-
-                let bytes = match vfs.readFileBytes(&path) {
-                    Ok(bytes) => bytes,
-                    Err(error) => {
-                        return toolError(
-                            tool,
-                            String::new(),
-                            format!("Error reading file: {error}"),
-                        );
-                    }
-                };
-                if !FileUtils::isTextLikeSample(&bytes, 512) {
-                    return toolError(
-                        tool,
-                        String::new(),
-                        "File does not appear to be a text file. Use read_file_binary for binary files."
-                            .to_string(),
-                    );
-                }
-
-                match vfs.readFileWithLimit(&path, ToolExecutionLimits::MAX_FILE_READ_BYTES) {
-                    Ok(content) => {
-                        let mut finalContent = addLineNumbers(&content, 0, 0);
-                        if existence.size > ToolExecutionLimits::MAX_FILE_READ_BYTES as i64 {
-                            finalContent.push_str("\n\n... (file content truncated) ...");
-                        }
-                        successData(
-                            tool,
-                            ToolResultData::FileContentData(FileContentData {
-                                path: path.clone(),
-                                content: finalContent,
-                                size: existence.size,
-                            }),
-                        )
-                    }
-                    Err(error) => {
-                        toolError(tool, String::new(), format!("Error reading file: {error}"))
-                    }
-                }
+        let existence = match vfs.fileExists(&path) {
+            Ok(value) if value.exists && !value.isDirectory => value,
+            Ok(_) => return toolError(tool, String::new(), format!("Path is not a file: {path}")),
+            Err(error) => return toolError(tool, String::new(), error),
+        };
+        let page = if isSpecialFileType(&fileExtension(&path)) {
+            let full = self.readFileFull(tool).await;
+            if !full.success { return full; }
+            let ToolResultData::FileContentData(data) = full.result else {
+                return toolError(tool, String::new(), "Unexpected read_file_full result".into());
+            };
+            readModelPage(Cursor::new(data.content), offset, limit)
+        } else {
+            let mut reader = BufReader::new(VfsPageReader { vfs: &vfs, path: &path, offset: 0 });
+            match reader.fill_buf() {
+                Ok(sample) if FileUtils::isTextLikeSample(sample, 512) => {},
+                Ok(_) => return toolError(tool, String::new(),
+                    "File does not appear to be a text file. Use read_file_binary for binary files.".into()),
+                Err(error) => return toolError(tool, String::new(), format!("Error reading file: {error}")),
             }
-            Ok(_) => toolError(tool, String::new(), format!("Path is not a file: {path}")),
+            readModelPage(reader, offset, limit)
+        };
+        match page {
+            Ok(content) => successData(tool, ToolResultData::FileContentData(FileContentData {
+                path,
+                content,
+                size: existence.size,
+            })),
             Err(error) => toolError(tool, String::new(), error),
         }
     }
@@ -704,11 +656,10 @@ impl StandardFileSystemTools {
             Err(error) => return toolError(tool, String::new(), error),
         };
         let path = parameterValue(tool, "path");
-        let startLineParam = parameterValue(tool, "start_line")
-            .parse::<usize>()
-            .unwrap_or(1);
-        let endLineParam =
-            optionalParameterValue(tool, "end_line").and_then(|value| value.parse::<usize>().ok());
+        let (startLine, endLine) = match partReadRange(tool) {
+            Ok(range) => range,
+            Err(error) => return toolError(tool, String::new(), error),
+        };
         let vfs = self.vfs();
 
         let existence = match vfs.fileExists(&path) {
@@ -766,43 +717,10 @@ impl StandardFileSystemTools {
             }
         };
 
-        let lines = content.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
-        let totalLines = lines.len();
-        let startLine = startLineParam.max(1).min(totalLines.max(1));
-        let endLine = match endLineParam {
-            Some(value) => value,
-            None => startLine + ToolExecutionLimits::DEFAULT_FILE_READ_PART_LINES - 1,
+        match filePartContent(&path, &content, startLine, endLine) {
+            Ok(data) => successData(tool, ToolResultData::FilePartContentData(data)),
+            Err(error) => toolError(tool, String::new(), error),
         }
-        .max(startLine)
-        .min(totalLines.max(1));
-        let startIndex = startLine.saturating_sub(1);
-        let endIndex = endLine.min(totalLines);
-        let mut partContent = if totalLines > 0 && startIndex < totalLines {
-            lines[startIndex..endIndex].join("\n")
-        } else {
-            String::new()
-        };
-        let isTruncated = partContent.len() > ToolExecutionLimits::MAX_FILE_READ_BYTES;
-        if isTruncated {
-            partContent =
-                utf8Prefix(&partContent, ToolExecutionLimits::MAX_FILE_READ_BYTES).to_string();
-        }
-        let mut numbered = addLineNumbers(&partContent, startIndex, totalLines);
-        if isTruncated {
-            numbered.push_str("\n\n... (file content truncated) ...");
-        }
-        successData(
-            tool,
-            ToolResultData::FilePartContentData(FilePartContentData {
-                path: path.clone(),
-                content: numbered,
-                partIndex: 0,
-                totalParts: 1,
-                startLine: startIndex as i32,
-                endLine: endIndex as i32,
-                totalLines: totalLines as i32,
-            }),
-        )
     }
 
     #[allow(non_snake_case)]
@@ -2073,6 +1991,16 @@ fn validateOperationParameters(
             errorMessage: String::new(),
         };
     }
+    if *operation == FileSystemToolOperation::ReadFile {
+        if let Err(errorMessage) = modelReadRange(tool) {
+            return ToolValidationResult { valid: false, errorMessage };
+        }
+    }
+    if *operation == FileSystemToolOperation::ReadFilePart {
+        if let Err(errorMessage) = partReadRange(tool) {
+            return ToolValidationResult { valid: false, errorMessage };
+        }
+    }
     for name in requiredParameters(operation) {
         let parameter = tool
             .parameters
@@ -2093,6 +2021,88 @@ fn validateOperationParameters(
     }
 }
 
+/// Adapts the VFS range capability to a buffered reader without native file access.
+struct VfsPageReader<'a> {
+    vfs: &'a VisualFileSystem,
+    path: &'a str,
+    offset: u64,
+}
+
+impl Read for VfsPageReader<'_> {
+    /// Reads only the requested byte window from the file's owning VFS backend.
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if buffer.is_empty() { return Ok(0); }
+        let bytes = self.vfs.readFileBytesRange(self.path, self.offset, buffer.len())
+            .map_err(std::io::Error::other)?;
+        buffer[..bytes.len()].copy_from_slice(&bytes);
+        self.offset += bytes.len() as u64;
+        Ok(bytes.len())
+    }
+}
+
+/// Parses an optional positive line number without silently accepting malformed input.
+fn positiveLineParameter(tool: &AITool, name: &str) -> Result<Option<usize>, String> {
+    optionalParameterValue(tool, name).map(|value| {
+        value.parse::<usize>().ok().filter(|value| *value > 0)
+            .ok_or_else(|| format!("{name} must be a positive integer"))
+    }).transpose()
+}
+
+/// Parses the model's page arguments independently of the plugin's legacy range.
+fn modelReadRange(tool: &AITool) -> Result<(usize, Option<usize>), String> {
+    Ok((positiveLineParameter(tool, "offset")?.unwrap_or(1), positiveLineParameter(tool, "limit")?))
+}
+
+/// Validates the plugin's inclusive one-based line range before reading its source.
+fn partReadRange(tool: &AITool) -> Result<(usize, usize), String> {
+    let start = positiveLineParameter(tool, "start_line")?.unwrap_or(1);
+    let end = positiveLineParameter(tool, "end_line")?
+        .unwrap_or_else(|| start.saturating_add(ToolExecutionLimits::DEFAULT_FILE_READ_PART_LINES - 1));
+    if end < start { return Err("end_line must be greater than or equal to start_line".into()); }
+    Ok((start, end))
+}
+
+/// Builds the legacy numbered result with metadata describing only the returned lines.
+fn filePartContent(path: &str, content: &str, start: usize, end: usize) -> Result<FilePartContentData, String> {
+    if start == 0 || end < start { return Err("Invalid line range".into()); }
+    let lines = content.lines().collect::<Vec<_>>();
+    let total = lines.len();
+    if start > total && !(start == 1 && total == 0) {
+        return Err(format!("start_line {start} is beyond end of file ({total} lines total)"));
+    }
+    let startIndex = start - 1;
+    let endIndex = end.min(total);
+    let mut returnedEnd = startIndex;
+    let mut rawBytes = 0;
+    let mut numbered = String::new();
+    let mut truncated = false;
+    let width = total.max(1).to_string().len();
+    for (index, line) in lines.iter().enumerate().take(endIndex).skip(startIndex) {
+        let separator = usize::from(index > startIndex);
+        let remaining = ToolExecutionLimits::MAX_FILE_READ_BYTES.saturating_sub(rawBytes + separator);
+        let fragment = utf8Prefix(line, remaining);
+        if rawBytes + separator > ToolExecutionLimits::MAX_FILE_READ_BYTES
+            || (fragment.is_empty() && !line.is_empty()) {
+            truncated = true;
+            break;
+        }
+        if separator > 0 { numbered.push('\n'); }
+        numbered.push_str(&format!("{:>width$}| {fragment}", index + 1));
+        rawBytes += separator + fragment.len();
+        returnedEnd = index + 1;
+        if fragment.len() < line.len() {
+            truncated = true;
+            break;
+        }
+    }
+    if truncated { numbered.push_str("\n\n... (file content truncated) ..."); }
+    Ok(FilePartContentData {
+        path: path.into(), content: numbered, partIndex: 0, totalParts: 1,
+        startLine: startIndex as i32, endLine: returnedEnd as i32, totalLines: total as i32,
+    })
+}
+
+/// Lists the existing required business arguments for each file operation.
 fn requiredParameters(operation: &FileSystemToolOperation) -> &'static [&'static str] {
     match operation {
         FileSystemToolOperation::ListFiles
@@ -2278,29 +2288,6 @@ fn formatSize(bytes: u64) -> String {
     }
 }
 
-fn addLineNumbers(content: &str, startLine: usize, totalLines: usize) -> String {
-    let lines = content.lines().collect::<Vec<_>>();
-    if lines.is_empty() {
-        return String::new();
-    }
-    let maxDigits = if totalLines > 0 {
-        totalLines.to_string().len()
-    } else {
-        lines.len().to_string().len()
-    };
-    let mut output = String::new();
-    for (index, line) in lines.iter().enumerate() {
-        if index > 0 {
-            output.push('\n');
-        }
-        output.push_str(&format!(
-            "{:>width$}| {line}",
-            startLine + index + 1,
-            width = maxDigits
-        ));
-    }
-    output
-}
 
 #[allow(non_snake_case)]
 fn fileExtension(path: &str) -> String {
@@ -2433,5 +2420,162 @@ mod parameter_tests {
             tool.parameters[0].value = " ".to_string();
             assert!(!validateOperationParameters(&operation, &tool).valid);
         }
+    }
+}
+
+const MAX_MODEL_READ_LINES: usize = 2_000;
+const MAX_MODEL_READ_BYTES: usize = 50 * 1024;
+
+/// Reads whole lines with bounded memory and an explicit continuation position.
+fn readModelPage(
+    mut reader: impl BufRead,
+    offset: usize,
+    limit: Option<usize>,
+) -> Result<String, String> {
+    if offset == 0 || limit == Some(0) {
+        return Err("offset and limit must be positive integers".into());
+    }
+    for skipped in 0..offset - 1 {
+        if reader.skip_until(b'\n').map_err(|error| error.to_string())? == 0 {
+            return Err(format!("Offset {offset} is beyond end of file ({skipped} lines total)"));
+        }
+    }
+
+    let mut output = String::new();
+    let mut lines = 0;
+    let mut line = Vec::new();
+    let line_limit = limit.unwrap_or(MAX_MODEL_READ_LINES).min(MAX_MODEL_READ_LINES);
+    while lines < line_limit {
+        line.clear();
+        let count = Read::by_ref(&mut reader).take((MAX_MODEL_READ_BYTES + 2) as u64)
+            .read_until(b'\n', &mut line).map_err(|error| error.to_string())?;
+        if count == 0 {
+            if lines == 0 && offset > 1 {
+                return Err(format!("Offset {offset} is beyond end of file"));
+            }
+            return Ok(output);
+        }
+        let newline = line.last() == Some(&b'\n');
+        let complete = newline || reader.fill_buf().map_err(|error| error.to_string())?.is_empty();
+        if newline {
+            line.pop();
+            if line.last() == Some(&b'\r') { line.pop(); }
+        }
+        let separator = usize::from(lines > 0);
+        if !complete || output.len() + separator + line.len() > MAX_MODEL_READ_BYTES {
+            if lines == 0 {
+                return Ok(format!(
+                    "[Line {offset} exceeds the 50 KiB read limit. Use a terminal command to inspect a bounded portion of this line.]"
+                ));
+            }
+            return Ok(withReadContinuation(output, offset, lines, true));
+        }
+        let text = std::str::from_utf8(&line).map_err(|error| format!("Error decoding file: {error}"))?;
+        if lines > 0 { output.push('\n'); }
+        output.push_str(text);
+        lines += 1;
+    }
+    if reader.fill_buf().map_err(|error| error.to_string())?.is_empty() {
+        Ok(output)
+    } else {
+        Ok(withReadContinuation(output, offset, lines, false))
+    }
+}
+
+/// Explains exactly which lines were returned and how to continue without overlap.
+fn withReadContinuation(mut output: String, offset: usize, lines: usize, byte_limit: bool) -> String {
+    let end = offset + lines - 1;
+    let reason = if byte_limit { " (50 KiB limit)" } else { "" };
+    output.push_str(&format!(
+        "\n\n[Showing lines {offset}-{end}{reason}. Use offset={} to continue.]", end + 1
+    ));
+    output
+}
+
+#[cfg(test)]
+mod file_read_tests {
+    use super::*;
+    use std::io::{BufReader, Cursor};
+
+    /// Rejects invalid plugin ranges instead of reading an unrelated last line.
+    #[test]
+    fn legacy_part_rejects_invalid_and_out_of_bounds_ranges() {
+        assert!(filePartContent("test", "one\ntwo", 3, 4).err().unwrap().contains("beyond end"));
+        assert!(filePartContent("test", "one", 0, 1).is_err());
+        assert!(filePartContent("test", "one", 2, 1).is_err());
+        let empty = filePartContent("test", "", 1, 200).unwrap();
+        assert_eq!((empty.startLine, empty.endLine, empty.totalLines), (0, 0, 0));
+        assert_eq!(empty.content, "");
+        for (name, value) in [("start_line", "0"), ("end_line", "-1"), ("start_line", "abc")] {
+            let tool = AITool { name: "read_file_part".into(), parameters: vec![
+                ToolParameter { name: "path".into(), value: "test".into() },
+                ToolParameter { name: name.into(), value: value.into() },
+            ] };
+            assert!(!validateOperationParameters(&FileSystemToolOperation::ReadFilePart, &tool).valid);
+        }
+    }
+
+    /// Preserves the plugin's zero-based start and exclusive end, including blank lines.
+    #[test]
+    fn legacy_part_keeps_existing_fields_and_numbers_blank_lines() {
+        let result = filePartContent("test", "first\n\nthird\n", 2, 200).unwrap();
+        assert_eq!(result.content, "2| \n3| third");
+        assert_eq!((result.startLine, result.endLine, result.totalLines), (1, 3, 3));
+        let blank = filePartContent("test", "one\n\n", 2, 2).unwrap();
+        assert_eq!(blank.content, "2| ");
+        assert_eq!((blank.startLine, blank.endLine), (1, 2));
+    }
+
+    /// Reports only returned rows after a UTF-8-safe legacy byte truncation.
+    #[test]
+    fn legacy_part_truncation_reports_the_actual_end_line() {
+        let text = format!("first\n{}\nlast", "雪".repeat(ToolExecutionLimits::MAX_FILE_READ_BYTES));
+        let result = filePartContent("test", &text, 1, 3).unwrap();
+        assert_eq!((result.startLine, result.endLine, result.totalLines), (0, 2, 3));
+        assert!(result.content.starts_with("1| first\n2| 雪"));
+        assert!(result.content.ends_with("... (file content truncated) ..."));
+        assert!(!result.content.contains("3|"));
+    }
+
+    /// Keeps CRLF and multibyte lines intact even when input chunks split UTF-8 characters.
+    #[test]
+    fn paginates_unicode_and_crlf_without_overlap() {
+        let text = "first\r\n雪山\r\nthird\nlast";
+        let page = readModelPage(BufReader::with_capacity(1, Cursor::new(text)), 2, Some(2)).unwrap();
+        assert_eq!(page, "雪山\nthird\n\n[Showing lines 2-3. Use offset=4 to continue.]");
+        assert_eq!(readModelPage(Cursor::new(text), 4, None).unwrap(), "last");
+    }
+
+    /// Limits model output without silently discarding the next unread line.
+    #[test]
+    fn enforces_line_and_byte_budgets() {
+        let text = "line\n".repeat(MAX_MODEL_READ_LINES + 1);
+        let page = readModelPage(Cursor::new(text), 1, None).unwrap();
+        assert!(page.ends_with("[Showing lines 1-2000. Use offset=2001 to continue.]"));
+        let text = format!("{}\n雪", "a".repeat(MAX_MODEL_READ_BYTES));
+        let page = readModelPage(Cursor::new(&text), 1, None).unwrap();
+        assert!(page.ends_with("[Showing lines 1-1 (50 KiB limit). Use offset=2 to continue.]"));
+        assert_eq!(readModelPage(Cursor::new(text), 2, None).unwrap(), "雪");
+    }
+
+    /// Handles empty files, invalid ranges, and unusually long lines explicitly.
+    #[test]
+    fn handles_empty_files_and_unreadable_ranges() {
+        assert_eq!(readModelPage(Cursor::new(""), 1, None).unwrap(), "");
+        assert!(readModelPage(Cursor::new("one"), 2, None).unwrap_err().contains("beyond end"));
+        assert!(readModelPage(Cursor::new("one\n"), 3, None).unwrap_err().contains("beyond end"));
+        assert!(readModelPage(Cursor::new("one"), 0, None).is_err());
+        assert!(readModelPage(Cursor::new("one"), 1, Some(0)).is_err());
+        let page = readModelPage(Cursor::new("雪".repeat(MAX_MODEL_READ_BYTES)), 1, None).unwrap();
+        assert!(page.starts_with("[Line 1 exceeds"));
+    }
+
+    /// Stops consuming the source after a small requested page instead of scanning the full file.
+    #[test]
+    fn does_not_read_the_entire_file_to_count_lines() {
+        let source = Cursor::new("line\n".repeat(100_000));
+        let mut reader = BufReader::with_capacity(64, source);
+        readModelPage(&mut reader, 1, Some(2)).unwrap();
+        assert!(reader.get_ref().position() <= 64);
     }
 }

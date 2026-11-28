@@ -1,3 +1,4 @@
+use operit_host_api::TerminalPtyOutput::TerminalPtyOutputBuffer;
 use operit_host_api::terminalSessionKey as sessionKey;
 use operit_host_api::TerminalText::{appendPtyOutput, csiParams, csiValue, nonBlank, parseExitCode, rfindBytes, stripPtyDeviceStatusReports, stripPtyPromptMarkers, scanPtyOutput, updatePtyCursor, PtyCursor};
 #[path = "../../../../common/terminal_command.rs"]
@@ -61,7 +62,7 @@ struct PtySession {
     workingDir: String,
     process: conpty::Process,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    output: Arc<Mutex<VecDeque<u8>>>,
+    output: Arc<TerminalPtyOutputBuffer>,
     commandOutput: PtyCommandOutput,
     screenOutput: Arc<Mutex<VecDeque<u8>>>,
     commandRunning: bool,
@@ -77,6 +78,7 @@ type PtyCursorState = Arc<Mutex<PtyCursor>>;
 impl Drop for PtySession {
     /// Reaps the interpreter before releasing a session's workspace and runtime files.
     fn drop(&mut self) {
+        self.output.close();
         self.commandOutput.fail(HostError::new("Terminal session was closed"));
     }
 }
@@ -273,11 +275,19 @@ impl TerminalHost for WindowsTerminalHost {
             .ptySessions
             .get_mut(sessionId)
             .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?;
-        let mut output = session
-            .output
-            .lock()
-            .map_err(|_| HostError::new("pty output mutex poisoned"))?;
-        Ok(output.drain(..).collect())
+        session.output.read()
+    }
+
+    /// Waits on the PTY reader's producer notification, including final EOF.
+    fn nextPtySessionOutput<'a>(&'a self, sessionId: &'a str) -> operit_host_api::TerminalPtyOutputFuture<'a> {
+        Box::pin(async move {
+            let output = {
+                let state = self.lockState()?;
+                state.ptySessions.get(sessionId)
+                    .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?.output.clone()
+            };
+            output.next().await
+        })
     }
 
     fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
@@ -850,7 +860,7 @@ fn createPtyProcess(powershell: &PowerShellSource, profile: Option<&operit_host_
     } else { processCommand(powershell, profile, kind, &workingDir, scriptFile.as_deref())? };
     let (process, writer, reader) = conpty::Process::spawn(command, rows, cols)?;
     let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(Box::new(writer)));
-    let output = Arc::new(Mutex::new(VecDeque::new()));
+    let output = Arc::new(TerminalPtyOutputBuffer::new(PTY_OUTPUT_LIMIT));
     let commandOutput: PtyCommandOutput = Arc::new(operit_host_api::TerminalCommand::TerminalCommandBuffer::new(PTY_OUTPUT_LIMIT));
     let screenOutput = Arc::new(Mutex::new(VecDeque::new()));
     let cursorState: PtyCursorState = Arc::new(Mutex::new(PtyCursor { row: 1, col: 1 }));
@@ -875,13 +885,14 @@ fn createPtyProcess(powershell: &PowerShellSource, profile: Option<&operit_host_
                         processPtyTerminalQueries(&writerForThread, &cursorStateForThread, chunk)?;
                         let commandChunk = stripPtyDeviceStatusReports(chunk);
                         let visibleChunk = stripPtyPromptMarkers(&commandChunk);
-                        appendPtyOutput(&outputForThread, &visibleChunk, PTY_OUTPUT_LIMIT);
+                        outputForThread.append(&visibleChunk);
                         appendPtyOutput(&screenOutputForThread, &visibleChunk, PTY_OUTPUT_LIMIT);
                         if managedPrompt { appendPtyCommandOutput(&commandOutputForThread, &commandChunk); }
                     }
                     }
                 }
             }.await;
+            outputForThread.close();
             commandOutputForThread.fail(result.unwrap_err());
         })))?;
     if managedPrompt {
@@ -1663,6 +1674,46 @@ fn nextSessionId() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Exercises real ConPTY bytes and idle EOF through producer events only.
+    #[test]
+    fn pty_events_deliver_final_bytes_and_exit_without_polling() {
+        let executable = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        let host = WindowsTerminalHost::new().configuredTerminal(&operit_host_api::TerminalProfile {
+            id: "pty-events-test".into(), name: "PTY events test".into(), nameKey: None,
+            terminal: TERMINAL.into(), terminalType: "powershell".into(),
+            options: BTreeMap::from([("executable".into(), executable.display().to_string())]),
+        }).unwrap();
+        let session = host.openTerminalSession(&operit_host_api::TerminalSessionRequest {
+            sessionName: "pty-events-final-output".into(),
+            terminal: TERMINAL.into(),
+            terminalType: "powershell".into(),
+            workingDir: Some(std::env::current_dir().unwrap().display().to_string()),
+            command: Some("Write-Output 'PTY_EVENT_FINAL_123'; exit 7".into()),
+        }).unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let reader = host.clone();
+        let id = session.sessionId.clone();
+        operit_host_native_common::NativeHostRuntimeTaskSchedulerHost::new()
+            .scheduleHostRuntimeAsyncTask("pty-event-regression", Box::new(move || Box::pin(async move {
+                let mut bytes = Vec::new();
+                loop {
+                    match reader.nextPtySessionOutput(&id).await {
+                        Ok(Some(chunk)) => bytes.extend(chunk),
+                        Ok(None) => { sender.send(Ok(bytes)).unwrap(); break; }
+                        Err(error) => { sender.send(Err(error)).unwrap(); break; }
+                    }
+                }
+            }))).unwrap();
+        let received = receiver.recv_timeout(std::time::Duration::from_secs(15));
+        // Close first on test failure so no interpreter or callback remains alive.
+        let exit = host.pollPtyExitCode(&session.sessionId);
+        host.closePtySession(&session.sessionId).unwrap();
+        let bytes = received.expect("ConPTY EOF must wake without a timed status poll").unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains("PTY_EVENT_FINAL_123"));
+        assert_eq!(exit.unwrap(), Some(7));
+    }
     use operit_host_api::TerminalHost;
 
     /// Keeps more silent ConPTY sessions than service workers live, including Unicode output and teardown.

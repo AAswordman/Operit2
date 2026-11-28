@@ -145,6 +145,13 @@ impl operit_host_api::TerminalHost for RuntimeSessionPublishingTerminalHost {
     }
 
     /// Reads buffered PTY output from the wrapped host.
+    /// Awaits binary output from the backend that owns this exact session.
+    fn nextPtySessionOutput<'a>(&'a self, sessionId: &'a str) -> operit_host_api::TerminalPtyOutputFuture<'a> {
+        Box::pin(async move {
+            self.inner.nextPtySessionOutput(sessionId).await
+        })
+    }
+
     fn readPtySession(&self, sessionId: &str) -> operit_host_api::HostResult<Vec<u8>> {
         self.inner.readPtySession(sessionId)
     }

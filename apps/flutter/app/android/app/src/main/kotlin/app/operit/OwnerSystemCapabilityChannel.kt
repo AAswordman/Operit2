@@ -405,8 +405,12 @@ class OwnerSystemCapabilityChannel(
                     }
                 activity.runOnUiThread { result.success(response) }
             } catch (error: Throwable) {
+                val operation = payload["operation"]
+                Log.e(TAG, "Android system operation failed: $operation", error)
+                val causes = generateSequence(error) { it.cause }
+                    .joinToString("\nCaused by: ") { it.toString() }
                 activity.runOnUiThread {
-                    result.error("OWNER_SYSTEM_OPERATION_ERROR", error.message, null)
+                    result.error("OWNER_SYSTEM_OPERATION_ERROR", "$operation failed: $causes", null)
                 }
             }
         }

@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cwchar>
 #include <deque>
+#include <exception>
 #include <filesystem>
 #include <limits>
 #include <memory>
@@ -27,6 +28,7 @@
 #include <vector>
 
 #include "engine_channel_lifetime.h"
+#include "administrator_restart.h"
 
 namespace {
 
@@ -869,19 +871,6 @@ bool IntegerMapValue(
   return false;
 }
 
-bool IsCurrentProcessElevated() {
-  HANDLE token = nullptr;
-  if (::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token) == 0) {
-    return false;
-  }
-  TOKEN_ELEVATION elevation{};
-  DWORD size = 0;
-  const BOOL ok = ::GetTokenInformation(token, TokenElevation, &elevation,
-                                        sizeof(elevation), &size);
-  ::CloseHandle(token);
-  return ok != 0 && elevation.TokenIsElevated != 0;
-}
-
 /// Builds the Windows elevation permission status snapshot.
 flutter::EncodableValue WindowsOnboardingRequirementSnapshot() {
   flutter::EncodableMap snapshot;
@@ -889,7 +878,7 @@ flutter::EncodableValue WindowsOnboardingRequirementSnapshot() {
   admin[flutter::EncodableValue("id")] =
       flutter::EncodableValue("windows.admin");
   admin[flutter::EncodableValue("status")] = flutter::EncodableValue(
-      IsCurrentProcessElevated() ? "Satisfied" : "Missing");
+      IsOperitProcessElevated() ? "Satisfied" : "Missing");
   snapshot[flutter::EncodableValue("windows.admin")] =
       flutter::EncodableValue(admin);
   return flutter::EncodableValue(snapshot);
@@ -898,29 +887,14 @@ flutter::EncodableValue WindowsOnboardingRequirementSnapshot() {
 /// Starts a Windows elevation request and treats UAC cancellation as a normal result.
 void RequestWindowsAdminAuthorization(
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  wchar_t exe_path[MAX_PATH];
-  const DWORD path_length =
-      ::GetModuleFileNameW(nullptr, exe_path, static_cast<DWORD>(MAX_PATH));
-  if (path_length == 0 || path_length >= MAX_PATH) {
-    result->Error("HOST_AUTHORIZATION_ERROR",
-                  "Unable to read current executable path");
-    return;
-  }
-
-  HINSTANCE instance =
-      ::ShellExecuteW(nullptr, L"runas", exe_path, nullptr, nullptr,
-                      SW_SHOWNORMAL);
-  const INT_PTR launch_status = reinterpret_cast<INT_PTR>(instance);
-  if (launch_status == SE_ERR_ACCESSDENIED) {
+  try {
+    RequestOperitAdministratorRestart(g_operit_runtime_window,
+                                     g_operit_runtime_platform_thread_id);
     result->Success();
-    return;
+  } catch (const std::exception& error) {
+    result->Error("HOST_AUTHORIZATION_ERROR",
+                  error.what());
   }
-  if (launch_status <= 32) {
-    result->Error("HOST_AUTHORIZATION_DENIED",
-                  "Administrator launch was not approved");
-    return;
-  }
-  result->Success();
 }
 
 /// Unregisters and removes one runtime channel while its engine is alive.
@@ -1272,7 +1246,11 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
             result->Error("INVALID_HOST", "Invalid onboarding host");
             return;
           }
-          result->Success(WindowsOnboardingRequirementSnapshot());
+          try {
+            result->Success(WindowsOnboardingRequirementSnapshot());
+          } catch (const std::exception& error) {
+            result->Error("HOST_AUTHORIZATION_ERROR", error.what());
+          }
           return;
         }
         if (method_call.method_name().compare(

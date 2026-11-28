@@ -55,6 +55,11 @@ mod ios {
             Err(HostError::new("iOS does not expose a local PTY host"))
         }
 
+        /// Exposes explicit EOF or unsupported capability without a timer.
+        fn nextPtySessionOutput<'a>(&'a self, _: &'a str) -> operit_host_api::TerminalPtyOutputFuture<'a> {
+            Box::pin(async { Err(HostError::new("PTY output is unavailable on this host")) })
+        }
+
         fn readPtySession(&self, _: &str) -> HostResult<Vec<u8>> {
             Err(HostError::new("iOS does not expose a local PTY host"))
         }
@@ -170,6 +175,11 @@ mod non_apple_target {
             Err(HostError::new(
                 "Apple terminal host is available only on iOS or macOS",
             ))
+        }
+
+        /// Exposes explicit EOF or unsupported capability without a timer.
+        fn nextPtySessionOutput<'a>(&'a self, _: &'a str) -> operit_host_api::TerminalPtyOutputFuture<'a> {
+            Box::pin(async { Err(HostError::new("PTY output is unavailable on this host")) })
         }
 
         fn readPtySession(&self, _: &str) -> HostResult<Vec<u8>> {

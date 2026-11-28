@@ -18,6 +18,7 @@ import 'MarkdownBlockQuote.dart';
 import 'MarkdownFootnotes.dart';
 import 'MarkdownImageRenderer.dart';
 import 'MarkdownInlineSpannable.dart';
+import 'MarkdownSpanRangeIndex.dart';
 import 'MarkdownLatexBlock.dart';
 import 'StreamMarkdownRendererState.dart';
 import '../../features/chat/components/part/CustomXmlRenderer.dart';

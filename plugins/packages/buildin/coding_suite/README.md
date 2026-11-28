@@ -17,8 +17,12 @@ enable/disable background memory, inspect failures, or retry failed summaries.
 The prompt is independent of character-card fields.
 
 The editable default prompt introduces the Operit agent and guides it to inspect
-existing code, solve the task's root cause, preserve user edits, use the project's
-existing setup, verify relevant behavior, and finish after the required checks.
+existing code, solve the task's root cause, and preserve user edits. Implementation
+and verification share the user's requested scope: choose the smallest check that
+directly establishes the required behavior, use existing relevant tests, and stop
+when those checks pass. A failed scratch test is diagnosed before changing product
+behavior. Hypothetical scenarios do not justify new compatibility promises, larger
+test suites, repeated demonstrations, or additional execution environments.
 It can be cleared. Package usage is described by the host system prompt;
 platform and path guidance belongs to the terminal package's advice.
 Workspace instructions and the optional timeline locator
@@ -41,8 +45,9 @@ including inherited parent/branch output bindings. A workspace switch changes
 the destination for subsequent replies; already queued jobs keep their original
 destination.
 
-The main prompt contains only the file locator and instructions to search it when
-past context is relevant. Its contents are never automatically recalled or loaded
+When the memory file exists and memory is enabled, the main prompt contains its
+locator and instructions to search it when past context is relevant. A missing
+file contributes no timeline section. Its contents are never automatically recalled or loaded
 into the foreground request. The agent can search it with `rg` or file grep tools.
 
 After an assistant reply is persisted, the plugin enqueues its exact timestamp and

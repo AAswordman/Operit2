@@ -768,12 +768,22 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
                 }
             } else { None };
             let filesystem = context.runtimeStorageHost.as_ref().map(|_| context.vfs()).transpose()?;
-            let primary_directory = request.workspace_path.as_deref().or(output_path.as_deref());
+            let qualified_folders = request.workspace_path.iter().chain(request.workspace_folders.iter())
+                .any(|path| operit_util::FileUtils::FileUtils::splitQualifiedVfsPath(path).is_some());
+            let local_node_id = if qualified_folders {
+                let storage = context.runtimeStorageHost.clone()
+                    .ok_or("Runtime storage is required for workspace ownership")?;
+                Some(operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(storage).identity()?.nodeId)
+            } else { None };
+            let (workspace_path, workspace_folders) = normalize_workspace_prompt_paths(
+                request.workspace_path.as_deref(), &request.workspace_folders, local_node_id.as_deref(),
+            )?;
+            let primary_directory = workspace_path.as_deref().or(output_path.as_deref());
             let workspace_path_mappings = filesystem.as_ref().map(|filesystem| {
-                resolve_workspace_path_mappings(filesystem, primary_directory, &request.workspace_folders)
+                resolve_workspace_path_mappings(filesystem, primary_directory, &workspace_folders)
             }).unwrap_or_default();
             let terminal_path_mappings = resolve_terminal_path_mappings(
-                context.terminalHost.as_deref(), filesystem.as_ref(), primary_directory, &request.workspace_folders,
+                context.terminalHost.as_deref(), filesystem.as_ref(), primary_directory, &workspace_folders,
             );
             let package_manager = self.tool_handler.getOrCreatePackageManager();
             let (enabled_packages, mcp_servers) = {
@@ -822,9 +832,9 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
             SystemPromptConfig::getSystemPromptWithCustomPrompts(SystemPromptWithCustomOptions {
                 base: SystemPromptOptions {
                     chat_id: request.chat_id.clone(),
-                    workspace_path: request.workspace_path.clone(),
+                    workspace_path,
                     output_path,
-                    workspace_folders: request.workspace_folders.clone(),
+                    workspace_folders,
                     workspace_path_mappings,
                     terminal_path_mappings,
                     use_english,
@@ -3170,7 +3180,7 @@ impl EnhancedAIService {
     async fn handleToolInvocation(
         &mut self,
         collector: &SharedAiResponseStream,
-        toolInvocations: Vec<operit_tools::ToolExecutionManager::ToolInvocation>,
+        mut toolInvocations: Vec<operit_tools::ToolExecutionManager::ToolInvocation>,
         context: &mut MessageExecutionContext,
         isSubTask: bool,
         participantName: Option<String>,
@@ -3187,6 +3197,26 @@ impl EnhancedAIService {
             return Err(AiServiceError::RequestFailed(
                 "Tool dispatch requires at least one invocation".to_string(),
             ));
+        }
+
+        let recognitionIntent = if (runtime.hasImageRecognition && !runtime.chatModelHasDirectImage)
+            || (runtime.hasAudioRecognition && !runtime.chatModelHasDirectAudio)
+            || (runtime.hasVideoRecognition && !runtime.chatModelHasDirectVideo)
+        {
+            context.conversationHistory.iter().rev()
+                .find(|turn| turn.kind == PromptTurnKind::USER)
+                .map(|turn| turn.content.as_str())
+        } else {
+            None
+        };
+        for invocation in &mut toolInvocations {
+            configureModelFileRead(
+                &mut invocation.tool,
+                runtime.chatModelHasDirectImage,
+                runtime.chatModelHasDirectAudio,
+                runtime.chatModelHasDirectVideo,
+                recognitionIntent,
+            );
         }
 
         let toolNames = toolInvocations
@@ -3798,6 +3828,91 @@ async fn applyToolPromptComposeHooksToAvailableTools(
     deserializePromptHookToolPrompts(hookContext.available_tools)
 }
 
+/// Supplies model-only media policy from this turn without changing direct plugin SDK calls.
+fn configureModelFileRead(
+    tool: &mut RuntimeAITool,
+    directImage: bool,
+    directAudio: bool,
+    directVideo: bool,
+    recognitionIntent: Option<&str>,
+) {
+    if tool.name == "proxy" && resolveToolDisplayName(tool) == "read_file" {
+        if let Some(parameter) = tool.parameters.iter_mut().find(|parameter| parameter.name == "params") {
+            // Malformed envelopes remain unchanged so the ordinary proxy validator reports them.
+            if let Ok(parameters) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&parameter.value) {
+                let mut target = operit_tools::ToolExecutionManager::ToolCall {
+                    name: "read_file".into(), parameters: parameters.into_iter().collect(),
+                }.toLegacyTool();
+                configureModelFileRead(&mut target, directImage, directAudio, directVideo, recognitionIntent);
+                parameter.value = serde_json::to_string(
+                    &operit_tools::ToolExecutionManager::ToolCall::from(&target).parameters,
+                ).expect("Tool parameters are serializable JSON values");
+            }
+        }
+        return;
+    }
+    if tool.name != "read_file" { return; }
+    tool.parameters.retain(|parameter| !matches!(parameter.name.as_str(),
+        "direct_image" | "direct_audio" | "direct_video" | "intent"));
+    for (name, value) in [
+        ("direct_image", directImage), ("direct_audio", directAudio), ("direct_video", directVideo),
+    ] {
+        tool.parameters.push(operit_tools::ToolExecutionManager::ToolParameter {
+            name: name.into(), value: value.to_string(),
+        });
+    }
+    if let Some(intent) = recognitionIntent {
+        tool.parameters.push(operit_tools::ToolExecutionManager::ToolParameter {
+            name: "intent".into(), value: intent.into(),
+        });
+    }
+}
+
+#[cfg(test)]
+mod model_file_read_tests {
+    use super::*;
+    use operit_tools::ToolExecutionManager::ToolParameter;
+
+    /// Uses captured model capabilities while keeping SDK full/part reads unchanged.
+    #[test]
+    fn configures_model_media_without_changing_plugin_reads() {
+        for name in ["read_file", "read_file_full", "read_file_part"] {
+            let mut tool = RuntimeAITool { name: name.into(), parameters: vec![
+                ToolParameter { name: "path".into(), value: "image.png".into() },
+                ToolParameter { name: "direct_image".into(), value: "false".into() },
+                ToolParameter { name: "intent".into(), value: "old".into() },
+            ] };
+            let before = tool.clone();
+            configureModelFileRead(&mut tool, true, false, false, Some("current question"));
+            if name == "read_file" {
+                let values = tool.parameters.iter().map(|p| (p.name.as_str(), p.value.as_str())).collect::<std::collections::BTreeMap<_, _>>();
+                assert_eq!(values["direct_image"], "true");
+                assert_eq!(values["direct_audio"], "false");
+                assert_eq!(values["intent"], "current question");
+                assert_eq!(tool.parameters.len(), 5);
+            } else {
+                assert_eq!(tool, before);
+            }
+        }
+    }
+
+    /// Applies the same media policy through CLI proxy envelopes without exposing media switches.
+    #[test]
+    fn configures_cli_proxy_model_read() {
+        let mut tool = RuntimeAITool { name: "proxy".into(), parameters: vec![
+            ToolParameter { name: "tool_name".into(), value: "read_file".into() },
+            ToolParameter { name: "params".into(), value: r#"{"path":"a.png","offset":2,"direct_image":true}"#.into() },
+        ] };
+        configureModelFileRead(&mut tool, false, true, false, None);
+        let params: serde_json::Value = serde_json::from_str(&tool.parameters[1].value).unwrap();
+        assert_eq!(params["path"], "a.png");
+        assert_eq!(params["offset"], "2");
+        assert_eq!(params["direct_image"], "false");
+        assert_eq!(params["direct_audio"], "true");
+        assert!(params.get("intent").is_none());
+    }
+}
+
 /// Constructs the native-authenticated tool snapshot from this turn's already-resolved configuration.
 fn toolRuntimeContextForConfiguration(
     configuration: &ChatConfigurationResult,
@@ -3868,6 +3983,41 @@ fn value_to_btree_map(source: HashMap<String, Value>) -> BTreeMap<String, String
         .collect()
 }
 
+/// Projects persisted device-owned folders into one consistent local prompt namespace.
+fn normalize_workspace_prompt_paths(
+    primary: Option<&str>, folders: &[String], local_node_id: Option<&str>,
+) -> Result<(Option<String>, Vec<String>), String> {
+    let normalize = |path: &str| -> Result<String, String> {
+        match operit_util::FileUtils::FileUtils::splitQualifiedVfsPath(path) {
+            Some((owner, inner_path)) => {
+                let local_node_id = local_node_id.ok_or("Workspace ownership requires the current CoreNode identity")?;
+                if owner == local_node_id { operit_vfs::VfsPath::canonicalizeVfsPath(inner_path) }
+                else { Ok(path.trim().to_string()) }
+            }
+            None => operit_vfs::VfsPath::canonicalizeVfsPath(path),
+        }
+    };
+    let primary = primary.filter(|path| !path.trim().is_empty()).map(normalize).transpose()?;
+    let normalized_folders = folders.iter().filter(|path| !path.trim().is_empty())
+        .map(|path| normalize(path)).collect::<Result<Vec<_>, _>>()?;
+    let normalized_folders = workspace_prompt_directories(None, &normalized_folders)
+        .into_iter().map(str::to_string).collect();
+    Ok((primary, normalized_folders))
+}
+
+/// Deduplicates local VFS aliases while preserving distinct remote device addresses.
+fn workspace_prompt_directories<'a>(primary: Option<&'a str>, folders: &'a [String]) -> Vec<&'a str> {
+    let mut directories: Vec<&str> = Vec::new();
+    for path in primary.into_iter().chain(folders.iter().map(String::as_str)).filter(|path| !path.trim().is_empty()) {
+        if directories.iter().any(|existing| *existing == path
+            || operit_vfs::VfsPath::relativeFileToolPath(existing, path).is_ok_and(|relative| relative == ".")) {
+            continue;
+        }
+        directories.push(path);
+    }
+    directories
+}
+
 /// Resolves the primary root and every mounted folder without searching for directories.
 /// Uses the exact same Host resolver as terminal execution. Prompt composition
 /// has no platform policy and never turns a physical root into a guest path.
@@ -3885,10 +4035,7 @@ fn resolve_terminal_path_mappings(
             terminal: "Host".into(), terminal_type: String::new(), vfs_path: path.into(), path: Err(error.to_string()),
         }).collect(),
     };
-    let mut directories = BTreeSet::new();
-    let directories = primary.into_iter().chain(folders.iter().map(String::as_str))
-        .filter(|path| !path.trim().is_empty() && directories.insert(path.to_string()))
-        .collect::<Vec<_>>();
+    let directories = workspace_prompt_directories(primary, folders);
     let resolve_host = |path: &str| {
         filesystem.ok_or_else(|| operit_host_api::HostError::new("File path mapping is unavailable"))?
             .terminalDirectory(host, path)
@@ -3904,8 +4051,11 @@ fn resolve_terminal_path_mappings(
     kinds.into_iter().flat_map(|kind| directories.iter().map(|path| {
         TerminalPathMapping {
             terminal: kind.terminal.clone(), terminal_type: kind.terminalType.clone(), vfs_path: (*path).into(),
-            path: host.resolveWorkingDirectory(&kind.terminal, &kind.terminalType, path, &resolve_host)
-                .map_err(|error| error.to_string()),
+            path: match operit_util::FileUtils::FileUtils::splitQualifiedVfsPath(path) {
+                Some((owner, _)) => Err(format!("Directory belongs to device '{owner}'; use switch_core before running terminal commands there")),
+                None => host.resolveWorkingDirectory(&kind.terminal, &kind.terminalType, path, &resolve_host)
+                    .map_err(|error| error.to_string()),
+            },
         }
     }).collect::<Vec<_>>()).collect()
 }
@@ -3915,14 +4065,8 @@ fn resolve_workspace_path_mappings(
     workspace_path: Option<&str>,
     workspace_folders: &[String],
 ) -> Vec<WorkspacePathMapping> {
-    let mut seen = BTreeSet::new();
-    workspace_path
-        .into_iter()
-        .chain(workspace_folders.iter().map(String::as_str))
-        .filter(|path| !path.trim().is_empty())
+    workspace_prompt_directories(workspace_path, workspace_folders).into_iter()
         .filter_map(|path| filesystem.validatePath(path, "workspace").ok().and_then(|_| operit_vfs::VfsPath::canonicalizeVfsPath(path).ok()))
-
-        .filter(|path| seen.insert(path.clone()))
         .map(|vfsPath| WorkspacePathMapping { vfsPath })
         .collect()
 }
@@ -4131,7 +4275,7 @@ mod estimate_hook_tests {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod workspace_path_tests {
-    use super::resolve_workspace_path_mappings;
+    use super::{normalize_workspace_prompt_paths, resolve_workspace_path_mappings, workspace_prompt_directories};
     use operit_vfs::VisualFileSystem::VisualFileSystem;
 
     /// Keeps prompt workspace identities portable across backend roots and workspace switches.
@@ -4149,6 +4293,59 @@ mod workspace_path_tests {
             ["/operitapp/workspaces/main", "/operitapp/workspaces/other"]);
         let next = resolve_workspace_path_mappings(&files, Some("/operitapp/workspaces/next"), &[]);
         assert_eq!(next[0].vfsPath, "/operitapp/workspaces/next");
+        assert_eq!(workspace_prompt_directories(Some("/operitapp/workspaces/main"), &[
+            "/app/workspaces/main/".into(), "core-remote://operitapp/workspaces/main".into(),
+            "core-other://operitapp/workspaces/main".into(),
+        ]), ["/operitapp/workspaces/main", "core-remote://operitapp/workspaces/main", "core-other://operitapp/workspaces/main"]);
+    }
+
+    /// Reproduces a local primary paired with qualified folder records through the real VFS.
+    #[tokio::test(flavor = "current_thread")]
+    async fn qualified_local_folders_share_the_primary_prompt_namespace() {
+        use crate::chat::config::SystemPromptConfig::{SystemPromptConfig, SystemPromptOptions, TerminalPathMapping};
+        use operit_host_api::FileSource;
+        let root = std::env::temp_dir().join("Operit qualified workspace paths");
+        let files = VisualFileSystem::builtinOnly(
+            std::sync::Arc::new(operit_host_native_filesystem::PosixFileSystemHost::new()),
+            root.join("runtime"), root.join("workspaces"),
+        );
+        let (primary, folders) = normalize_workspace_prompt_paths(Some("/operitapp/workspaces/main"), &[
+            "core-local://operitapp/workspaces/main".into(),
+            "/operitapp/workspaces/main/".into(),
+            "core-local://operitapp/workspaces/library".into(),
+        ], Some("core-local")).unwrap();
+        assert_eq!(folders, ["/operitapp/workspaces/main", "/operitapp/workspaces/library"]);
+        let mappings = resolve_workspace_path_mappings(&files, primary.as_deref(), &folders);
+        assert_eq!(mappings.len(), 2, "qualified local folders must not disappear from file mappings");
+        let terminal_path_mappings: Vec<TerminalPathMapping> = mappings.iter().map(|mapping| TerminalPathMapping {
+            terminal: "native".into(), terminal_type: "shell".into(), vfs_path: mapping.vfsPath.clone(),
+            path: files.file(&mapping.vfsPath).unwrap().nativePath().map_err(|error| error.to_string()),
+        }).collect();
+        for use_english in [false, true] {
+            let prompt = SystemPromptConfig::getSystemPrompt(SystemPromptOptions {
+                workspace_path: primary.clone(), workspace_folders: folders.clone(),
+                workspace_path_mappings: mappings.clone(), terminal_path_mappings: terminal_path_mappings.clone(),
+                use_english, ..Default::default()
+            }).await.unwrap();
+            assert_eq!(prompt.matches("`native/shell`: `.`").count(), 1);
+            assert!(prompt.contains("../library"));
+            assert!(!prompt.contains("core-local:"));
+            assert!(!prompt.contains("Invalid VFS path"));
+        }
+    }
+
+    /// Keeps other devices qualified and requires an explicit identity before stripping any owner.
+    #[test]
+    fn workspace_ownership_is_not_inferred_from_path_syntax() {
+        let remote = "core-remote://operitapp/workspaces/library";
+        let (primary, folders) = normalize_workspace_prompt_paths(Some("core-local://operitapp/workspaces/main"), &[
+            remote.into(), "core-local://operitapp/workspaces/main".into(),
+        ], Some("core-local")).unwrap();
+        assert_eq!(primary.as_deref(), Some("/operitapp/workspaces/main"));
+        assert_eq!(folders[0], remote);
+        assert!(normalize_workspace_prompt_paths(None, &[remote.into()], None).is_err());
+        let (primary, _) = normalize_workspace_prompt_paths(Some(remote), &[], Some("core-local")).unwrap();
+        assert_eq!(primary.as_deref(), Some(remote));
     }
 }
 #[cfg(test)]

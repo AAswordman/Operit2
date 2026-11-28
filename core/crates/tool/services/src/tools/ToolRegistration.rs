@@ -1380,12 +1380,6 @@ fn registerFileSystemTools(handler: &mut AIToolHandler, fileSystemTools: Standar
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        BuiltinToolName::ReadFilePart,
-        FileSystemToolOperation::ReadFilePart,
-    );
-    registerFileSystemTool(
-        handler,
-        &fileSystemTools,
         BuiltinToolName::ReadFileFull,
         FileSystemToolOperation::ReadFileFull,
     );
@@ -1490,6 +1484,14 @@ fn registerFileSystemTools(handler: &mut AIToolHandler, fileSystemTools: Standar
         &fileSystemTools,
         BuiltinToolName::DownloadFile,
         FileSystemToolOperation::DownloadFile,
+    );
+    handler.registerBuiltinTool(
+        BuiltinToolName::ReadFilePart,
+        RegisteredToolExecutor::Asynchronous(Box::new(FileSystemToolExecutor {
+            tools: fileSystemTools.clone(),
+            operation: FileSystemToolOperation::ReadFilePart,
+        })),
+        ToolRegistrationVisibility::INTERNAL,
     );
     handler.registerBuiltinTool(
         BuiltinToolName::CreateFile,

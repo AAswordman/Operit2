@@ -20,6 +20,17 @@ function toolNames(source) {
 }
 
 for (const [language, suffix] of [['En', 'en'], ['Cn', 'cn']]) {
+  /** Keeps pagination in the model read schema and the legacy part API internal. */
+  test(`${language} read_file exposes path and pagination only`, () => {
+    const files = declaration(publicPrompts, `file_system_tools_${suffix}`);
+    const read = files.match(/tool\("read_file",[\s\S]*?\n\s*\]\)/)?.[0];
+    assert.ok(read);
+    assert.deepEqual(Array.from(read.matchAll(/param\("([a-z_]+)"/g), match => match[1]), ['path', 'offset', 'limit']);
+    assert.ok(!toolNames(files).includes('read_file_part'));
+    const internal = toolNames(declaration(internalPrompts, `internalToolCategories${language}Source`));
+    assert.ok(internal.includes('read_file_part'));
+  });
+
   /** Requires public and internal sources to form one unambiguous catalog. */
   test(`${language} builtin catalog declares each tool exactly once`, () => {
     const publicNames = ['basic_tools', 'file_system_tools', 'http_tools']

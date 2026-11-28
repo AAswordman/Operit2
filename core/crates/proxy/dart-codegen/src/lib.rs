@@ -2139,6 +2139,7 @@ mod tests {
         for (protocol, item_type, dart_type) in [
             (WatchStreamProtocol::JsonStream, "String", "String"),
             (WatchStreamProtocol::JsonStream, "Vec<String>", "List<String>"),
+            (WatchStreamProtocol::JsonStream, "operit_link::CoreBuffer", "Uint8List"),
             (WatchStreamProtocol::StringStream, "String", "String"),
         ] {
             let output = render_dart_watch_method(&watch_method(item_type, protocol), &HashMap::new());

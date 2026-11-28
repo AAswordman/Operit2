@@ -498,6 +498,14 @@ impl TerminalHost for OhosTerminalHost {
     }
 
     /// Reads pending PTY bytes from a recorded OpenHarmony terminal session.
+    /// Awaits binary output from the backend that owns this exact session.
+    fn nextPtySessionOutput<'a>(&'a self, sessionId: &'a str) -> operit_host_api::TerminalPtyOutputFuture<'a> {
+        Box::pin(async move {
+            let backend = self.backendForSession(sessionId)?;
+            self.ptyHost(backend).nextPtySessionOutput(sessionId).await
+        })
+    }
+
     fn readPtySession(&self, sessionId: &str) -> HostResult<Vec<u8>> {
         let backend = self.backendForSession(sessionId)?;
         self.ptyHost(backend).readPtySession(sessionId)

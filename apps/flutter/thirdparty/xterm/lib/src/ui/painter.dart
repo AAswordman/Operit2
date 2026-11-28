@@ -85,6 +85,11 @@ class TerminalPainter {
     _paragraphCache.clear();
   }
 
+  /// Releases all native paragraphs owned by this painter.
+  void dispose() {
+    _paragraphCache.clear();
+  }
+
   /// Paints the cursor based on the current cursor type.
   void paintCursor(
     Canvas canvas,
@@ -147,17 +152,47 @@ class TerminalPainter {
     final cellData = CellData.empty();
     final cellWidth = _cellSize.width;
 
+    _paintLineBackground(canvas, offset, line, cellData);
+
     for (var i = 0; i < line.length; i++) {
       line.getCellData(i, cellData);
 
       final charWidth = cellData.content >> CellContent.widthShift;
       final cellOffset = offset.translate(i * cellWidth, 0);
 
-      paintCell(canvas, cellOffset, cellData);
+      paintCellForeground(canvas, cellOffset, cellData);
 
       if (charWidth == 2) {
         i++;
       }
+    }
+  }
+
+  /// Draws one rectangle per contiguous background instead of per cell.
+  void _paintLineBackground(
+    Canvas canvas,
+    Offset offset,
+    BufferLine line,
+    CellData cellData,
+  ) {
+    Color? runColor;
+    var start = 0;
+    for (var i = 0; i <= line.length; i++) {
+      Color? color;
+      if (i < line.length) {
+        line.getCellData(i, cellData);
+        color = _backgroundColor(cellData);
+      }
+      if (color == runColor) continue;
+      if (runColor != null) {
+        canvas.drawRect(
+          offset.translate(start * _cellSize.width, 0) &
+              Size((i - start) * _cellSize.width + 1, _cellSize.height),
+          Paint()..color = runColor,
+        );
+      }
+      start = i;
+      runColor = color;
     }
   }
 
@@ -172,14 +207,26 @@ class TerminalPainter {
   @pragma('vm:prefer-inline')
   void paintCellForeground(Canvas canvas, Offset offset, CellData cellData) {
     final charCode = cellData.content & CellContent.codepointMask;
-    if (charCode == 0) return;
+    final cellFlags = cellData.flags;
+    if (charCode == 0 ||
+        (charCode == 0x20 && cellFlags & CellFlags.underline == 0)) return;
 
-    final cacheKey = cellData.getHash() ^ _textScaler.hashCode;
+    // Only attributes that affect this glyph belong in its collision-safe key.
+    final cacheKey = (
+      charCode,
+      cellFlags &
+          (CellFlags.bold |
+              CellFlags.italic |
+              CellFlags.underline |
+              CellFlags.faint),
+      cellFlags & CellFlags.inverse == 0
+          ? cellData.foreground
+          : cellData.background,
+      cellFlags & CellFlags.inverse,
+    );
     var paragraph = _paragraphCache.getLayoutFromCache(cacheKey);
 
     if (paragraph == null) {
-      final cellFlags = cellData.flags;
-
       var color = cellFlags & CellFlags.inverse == 0
           ? resolveForegroundColor(cellData.foreground)
           : resolveBackgroundColor(cellData.background);
@@ -221,22 +268,24 @@ class TerminalPainter {
   /// [offset].
   @pragma('vm:prefer-inline')
   void paintCellBackground(Canvas canvas, Offset offset, CellData cellData) {
-    late Color color;
-    final colorType = cellData.background & CellColor.typeMask;
-
-    if (cellData.flags & CellFlags.inverse != 0) {
-      color = resolveForegroundColor(cellData.foreground);
-    } else if (colorType == CellColor.normal) {
-      return;
-    } else {
-      color = resolveBackgroundColor(cellData.background);
-    }
+    final color = _backgroundColor(cellData);
+    if (color == null) return;
 
     final paint = Paint()..color = color;
     final doubleWidth = cellData.content >> CellContent.widthShift == 2;
     final widthScale = doubleWidth ? 2 : 1;
     final size = Size(_cellSize.width * widthScale + 1, _cellSize.height);
     canvas.drawRect(offset & size, paint);
+  }
+
+  /// Resolves a cell background, preserving transparency for the default color.
+  Color? _backgroundColor(CellData cellData) {
+    if (cellData.flags & CellFlags.inverse != 0) {
+      return resolveForegroundColor(cellData.foreground);
+    }
+    if (cellData.background & CellColor.typeMask == CellColor.normal)
+      return null;
+    return resolveBackgroundColor(cellData.background);
   }
 
   /// Get the effective foreground color for a cell from information encoded in

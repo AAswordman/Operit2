@@ -375,6 +375,16 @@ impl TerminalHost for IosTerminalHost {
         }
     }
 
+    /// Awaits the native ARM64 callback or the system PTY producer's next event.
+    fn nextPtySessionOutput<'a>(&'a self, sessionId: &'a str) -> operit_host_api::TerminalPtyOutputFuture<'a> {
+        Box::pin(async move {
+            match self.sessionBackend(sessionId)? {
+                IosTerminalBackend::Arm64 => crate::bridge::readArm64TerminalOutput(sessionId).await,
+                IosTerminalBackend::SystemShell => self.systemShell.nextPtySessionOutput(sessionId).await,
+            }
+        })
+    }
+
     /// Writes raw terminal input to one iOS terminal.
     fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
         match self.sessionBackend(sessionId)? {

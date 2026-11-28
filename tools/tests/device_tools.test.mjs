@@ -93,6 +93,17 @@ test('generated Tools.device preserves Files overloads and leaves local Tools in
   assert.equal(refs.get('device-tests'), 0);
 });
 
+/** Preserves plugin read dispatch after the model's paginated read surface changes. */
+test('generated local Files read and readPart keep their plugin tool names and parameters', async () => {
+  const {context, requests} = runtime();
+  await vm.runInContext(`Tools.Files.read('/original.txt')`, context);
+  await vm.runInContext(`Tools.Files.readPart('/original.txt', 2, 5)`, context);
+  assert.equal(requests[0][2], 'read_file_full');
+  assert.deepEqual(plain(requests[0][3]), {path:'/original.txt'});
+  assert.equal(requests[1][2], 'read_file_part');
+  assert.deepEqual(plain(requests[1][3]), {path:'/original.txt', start_line:2, end_line:5});
+});
+
 test('nested namespaces and version-gated Chat retain the selected device', async () => {
   const {context, requests} = runtime();
   await vm.runInContext(`Tools.device('desktop').Net.cookies.get('https://example.test')`, context);

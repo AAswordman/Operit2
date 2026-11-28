@@ -97,6 +97,14 @@ creating a window, then confirms the app's actual accessibility window appears o
 the requested display. Activity launch acceptance alone is not reported as
 success; display rejection/redirection and unavailable accessibility are errors.
 
+The Android owner reports system-operation failures with the operation name,
+exception types and cause chain, and logs the full stack trace under
+`OwnerSystemCapabilityChannel`. When investigating a `start_app` failure, collect
+that tag together with `OperitUiServer`. An older client's
+`PlatformException(OWNER_SYSTEM_OPERATION_ERROR, null, null, null)` means the
+exception message was empty and its type and causes were omitted; that text alone
+does not identify the launch failure.
+
 `list_windows` exposes native windows through the existing shared schema.
 `focus_window(window_id)` selects the hosted application's original virtual display
 without restoring or raising its preview. Minimizing or resizing the preview does

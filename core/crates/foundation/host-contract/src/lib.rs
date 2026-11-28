@@ -14,6 +14,9 @@ pub mod Tcp;
 pub mod TerminalWorkingDirectory;
 pub mod TerminalCommand;
 pub mod TerminalText;
+pub mod TerminalPtyOutput;
+/// Awaits a PTY producer event without a timer or a blocking service worker.
+pub type TerminalPtyOutputFuture<'a> = Pin<Box<dyn Future<Output = HostResult<Option<Vec<u8>>>> + 'a>>;
 pub mod TerminalControl;
 pub mod TerminalProfiles;
 pub use TerminalProfiles::{TerminalDistribution, TerminalInstallProgress, TerminalInstallProgressCallback, TerminalProfile, TerminalProfileSettings, TerminalProfileSupport};
@@ -802,7 +805,7 @@ fn windowsOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
     vec![HostOnboardingRequirement {
         id: "windows.admin".to_string(),
         title: "管理员权限".to_string(),
-        description: "显示当前 Host 是否以管理员身份运行；提升权限必须由系统启动边界决定。"
+        description: "授予后将关闭当前应用，并以管理员身份重新启动；取消授权会保留当前应用。"
             .to_string(),
         capabilityIds: vec!["host.privilege".to_string()],
         isRequired: true,
@@ -1991,6 +1994,8 @@ pub trait TerminalHost: Send + Sync {
         cols: u16,
     ) -> HostResult<String>;
     fn readPtySession(&self, sessionId: &str) -> HostResult<Vec<u8>>;
+    /// Waits for output or EOF from the backend that owns the PTY session.
+    fn nextPtySessionOutput<'a>(&'a self, sessionId: &'a str) -> TerminalPtyOutputFuture<'a>;
     fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize>;
     fn resizePtySession(&self, sessionId: &str, rows: u16, cols: u16) -> HostResult<()>;
     fn pollPtyExitCode(&self, sessionId: &str) -> HostResult<Option<i32>>;

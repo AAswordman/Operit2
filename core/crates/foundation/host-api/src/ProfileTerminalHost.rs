@@ -462,6 +462,13 @@ impl TerminalHost for ProfileTerminalHost {
         Ok(id)
     }
     /// Drains output from the session's original host.
+    /// Awaits binary output from the backend that owns this exact session.
+    fn nextPtySessionOutput<'a>(&'a self, sessionId: &'a str) -> crate::TerminalPtyOutputFuture<'a> {
+        Box::pin(async move {
+            self.session(sessionId)?.nextPtySessionOutput(sessionId).await
+        })
+    }
+
     fn readPtySession(&self, id: &str) -> HostResult<Vec<u8>> {
         self.session(id)?.readPtySession(id)
     }

@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/common/markdown/EnhancedTableBlock.dart';
@@ -273,6 +275,86 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('paragraph groups retain spacing, selection and link semantics', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    try {
+      await tester.binding.setSurfaceSize(const Size(800, 4000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final text = List.generate(65, (index) => '段落$index').join('\n\n');
+      String? selectedText;
+      await _pumpNode(
+        tester,
+        MarkdownNodeStable(
+          type: MarkdownNodeType.plainText,
+          content: text,
+          isStreaming: false,
+          children: [
+            MarkdownNodeStable(
+              type: MarkdownNodeType.link,
+              content: text,
+              linkUrl: 'https://example.com/long-message',
+              isStreaming: false,
+            ),
+          ],
+        ),
+        onLinkClick: (_) {},
+        selectionRoot: true,
+        onSelectedTextChanged: (value) => selectedText = value,
+      );
+      Object? registrar;
+      for (var index = 0; index < 65; index++) {
+        final finder = find.text('段落$index', findRichText: true);
+        expect(finder, findsOneWidget);
+        final element = finder.evaluate().single;
+        final currentRegistrar = element
+            .findAncestorWidgetOfExactType<SelectionArea>();
+        expect(currentRegistrar, isNotNull);
+        registrar ??= currentRegistrar;
+        expect(currentRegistrar, same(registrar));
+        final labels = <String>[];
+
+        /// Collects labels below the paragraph without assuming a link's node shape.
+        void collectLabels(SemanticsNode node) {
+          labels.add(node.getSemanticsData().label);
+          node.visitChildren((child) {
+            collectLabels(child);
+            return true;
+          });
+        }
+
+        collectLabels(tester.getSemantics(finder));
+        expect(labels, contains('段落$index'));
+        if (index > 0) {
+          final previous = find.text('段落${index - 1}', findRichText: true);
+          expect(
+            tester.getTopLeft(finder).dy - tester.getBottomLeft(previous).dy,
+            closeTo(4, .01),
+          );
+        }
+      }
+      final start =
+          tester.getTopLeft(find.text('段落31', findRichText: true)) +
+          const Offset(1, 10);
+      final end =
+          tester.getTopRight(find.text('段落33', findRichText: true)) +
+          const Offset(-1, 10);
+      final mouse = await tester.startGesture(
+        start,
+        kind: PointerDeviceKind.mouse,
+      );
+      await mouse.moveTo(end);
+      await tester.pump();
+      await mouse.up();
+      await tester.pump();
+      expect(selectedText, contains('段落32'));
+      expect(tester.takeException(), isNull);
+    } finally {
+      semantics.dispose();
+    }
+  });
+
   testWidgets('nonfinal body and list gaps follow the original renderer', (
     tester,
   ) async {
@@ -369,7 +451,18 @@ Future<void> _pumpNode(
   bool isLastNode = true,
   void Function(String)? onLinkClick,
   TextScaler textScaler = TextScaler.noScaling,
+  bool selectionRoot = false,
+  ValueChanged<String?>? onSelectedTextChanged,
 }) async {
+  final renderer = CanvasMarkdownNodeRenderer(
+    nodeKey: 'static-node-spacing',
+    node: node,
+    textColor: Colors.black,
+    backgroundColor: Colors.white,
+    isLastNode: isLastNode,
+    onLinkClick: onLinkClick,
+    splitMarkdownContent: (_) async => [],
+  );
   await tester.pumpWidget(
     MaterialApp(
       builder: (context, child) => MediaQuery(
@@ -381,15 +474,13 @@ Future<void> _pumpNode(
           alignment: Alignment.topLeft,
           child: SizedBox(
             width: 360,
-            child: CanvasMarkdownNodeRenderer(
-              nodeKey: 'static-node-spacing',
-              node: node,
-              textColor: Colors.black,
-              backgroundColor: Colors.white,
-              isLastNode: isLastNode,
-              onLinkClick: onLinkClick,
-              splitMarkdownContent: (_) async => [],
-            ),
+            child: selectionRoot
+                ? SelectionArea(
+                    onSelectionChanged: (content) =>
+                        onSelectedTextChanged?.call(content?.plainText),
+                    child: renderer,
+                  )
+                : renderer,
           ),
         ),
       ),

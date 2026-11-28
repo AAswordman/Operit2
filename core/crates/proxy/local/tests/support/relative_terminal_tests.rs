@@ -143,6 +143,11 @@ impl TerminalHost for DirectoryTerminalHost {
     ) -> HostResult<String> {
         unimplemented!()
     }
+    /// Exposes explicit EOF or unsupported capability without a timer.
+    fn nextPtySessionOutput<'a>(&'a self, _: &'a str) -> operit_host_api::TerminalPtyOutputFuture<'a> {
+        Box::pin(async { Ok(None) })
+    }
+
     fn readPtySession(&self, _: &str) -> HostResult<Vec<u8>> {
         unimplemented!()
     }

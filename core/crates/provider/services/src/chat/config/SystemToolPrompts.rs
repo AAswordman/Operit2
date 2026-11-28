@@ -157,19 +157,7 @@ impl SystemToolPrompts {
         saf_bookmark_names: &[String],
         host_environment: &HostEnvironmentDescriptor,
     ) -> Vec<SystemToolPromptCategory> {
-        let expose_intent = (has_backend_image_recognition && !chat_model_has_direct_image)
-            || (has_backend_audio_recognition && !chat_model_has_direct_audio)
-            || (has_backend_video_recognition && !chat_model_has_direct_video);
         let mut file_system = file_system_tools_en();
-        file_system.tools = adjust_read_file_tool(
-            file_system.tools,
-            expose_intent,
-            false,
-            false,
-            false,
-            buildSafBookmarksSectionEn(saf_bookmark_names),
-            "Read the content of a file. For media files, you can also provide an 'intent' parameter to use a backend recognition model for analysis.",
-        );
         file_system = Self::applyHostEnvironmentToCategory(file_system, host_environment, true);
         vec![
             basic_tools_en(),
@@ -260,19 +248,7 @@ impl SystemToolPrompts {
         saf_bookmark_names: &[String],
         host_environment: &HostEnvironmentDescriptor,
     ) -> Vec<SystemToolPromptCategory> {
-        let expose_intent = (has_backend_image_recognition && !chat_model_has_direct_image)
-            || (has_backend_audio_recognition && !chat_model_has_direct_audio)
-            || (has_backend_video_recognition && !chat_model_has_direct_video);
         let mut file_system = file_system_tools_cn();
-        file_system.tools = adjust_read_file_tool(
-            file_system.tools,
-            expose_intent,
-            false,
-            false,
-            false,
-            buildSafBookmarksSectionCn(saf_bookmark_names),
-            "读取文件内容。对于媒体文件，你也可以提供 intent 参数，使用后端识别模型进行分析。",
-        );
         file_system = Self::applyHostEnvironmentToCategory(file_system, host_environment, false);
         vec![
             basic_tools_cn(),
@@ -578,16 +554,6 @@ fn hostPathParameterDescription(
     } else {
         "相对于当前文件目录 `.` 的路径（工作区或固定对话产出目录），例如 `.operit/attachments/id/file.pdf` 或 `report.md`；访问其他位置时才使用 VFS 绝对路径。".to_string()
     }
-}
-
-#[allow(non_snake_case)]
-fn buildSafBookmarksSectionEn(_saf_bookmark_names: &[String]) -> String {
-    String::new()
-}
-
-#[allow(non_snake_case)]
-fn buildSafBookmarksSectionCn(_saf_bookmark_names: &[String]) -> String {
-    String::new()
 }
 
 #[allow(non_snake_case)]
@@ -906,14 +872,11 @@ fn basic_tools_cn() -> SystemToolPromptCategory {
 fn file_system_tools_en() -> SystemToolPromptCategory {
     category("File System Tools", vec![
         tool("list_files", "List files in a directory.", vec![param("path", "string", "VFS directory path, e.g. \"/operitapp/workspaces/<workspace-id>\" or \"/virtual/android/sdcard/Download\"", true, None)]),
-        tool("read_file", "Read the content of a file. For image files (jpg, jpeg, png, gif, bmp), it automatically extracts text using OCR.", vec![
+        tool("read_file", "Read a file. Text output is limited to 2000 lines or 50 KiB, whichever comes first. Use offset/limit for a range; truncated results specify the next offset. Media handling is selected by the runtime.", vec![
             param("path", "string", "VFS file path", true, None),
-            param("intent", "string", "optional, your question about the media/file (used for backend recognition)", false, None),
-            param("direct_image", "boolean", "optional, when true: return an <link type=\"image\"> tag for models that support vision", false, None),
-            param("direct_audio", "boolean", "optional, when true: return an <link type=\"audio\"> tag for models that support audio", false, None),
-            param("direct_video", "boolean", "optional, when true: return an <link type=\"video\"> tag for models that support video", false, None),
+            param("offset", "integer", "Starting line, 1-indexed. Defaults to 1.", false, Some("1")),
+            param("limit", "integer", "Maximum lines to read. Output is capped at 2000 lines or 50 KiB.", false, None),
         ]),
-        tool("read_file_part", "Read file content by line range.", vec![param("path", "string", "VFS file path", true, None), param("start_line", "integer", "starting line number, 1-indexed", false, Some("1")), param("end_line", "integer", "ending line number, 1-indexed, inclusive, optional", false, Some("start_line + 99"))]),
         tool("write_file", "Write content to a file. Creates the file if it does not exist; overwrites it by default, or appends when append=true.", vec![param("path", "string", "VFS file path", true, None), param("content", "string", "file content", true, None), param("append", "boolean", "append instead of overwriting", false, Some("false"))]),
         tool("edit_file", "Edit an existing file by replacing matched content with new content.", vec![param("path", "string", "VFS file path", true, None), param("old", "string", "the exact content to be matched and replaced", true, None), param("new", "string", "the new content to insert", true, None)]),
         tool("delete_file", "Delete a file or directory.", vec![param("path", "string", "target VFS path", true, None), param("recursive", "boolean", "boolean", false, Some("false"))]),
@@ -930,14 +893,11 @@ fn file_system_tools_en() -> SystemToolPromptCategory {
 fn file_system_tools_cn() -> SystemToolPromptCategory {
     category("文件系统工具", vec![
         tool("list_files", "列出目录中的文件。", vec![param("path", "string", "VFS 目录路径，例如 \"/operitapp/workspaces/<workspace-id>\" 或 \"/virtual/android/sdcard/Download\"", true, None)]),
-        tool("read_file", "读取文件内容。对于图片文件(jpg, jpeg, png, gif, bmp)，自动使用OCR提取文本。", vec![
+        tool("read_file", "读取文件。文本输出最多 2000 行或 50 KiB，先达到哪个就截断。通过 offset/limit 读取分段，截断结果会给出下一次 offset。媒体处理方式由运行时决定。", vec![
             param("path", "string", "VFS 文件路径", true, None),
-            param("intent", "string", "可选，用户对媒体/文件的问题（用于后端识别模型）", false, None),
-            param("direct_image", "boolean", "可选，为true时：返回<link type=\"image\">标签供支持识图的模型直接查看", false, None),
-            param("direct_audio", "boolean", "可选，为true时：返回<link type=\"audio\">标签供支持音频的模型直接处理", false, None),
-            param("direct_video", "boolean", "可选，为true时：返回<link type=\"video\">标签供支持视频的模型直接处理", false, None),
+            param("offset", "integer", "起始行号，从 1 开始；默认 1。", false, Some("1")),
+            param("limit", "integer", "最多读取的行数；输出上限为 2000 行或 50 KiB。", false, None),
         ]),
-        tool("read_file_part", "按行号范围读取文件内容。", vec![param("path", "string", "VFS 文件路径", true, None), param("start_line", "integer", "起始行号，从1开始", false, Some("1")), param("end_line", "integer", "结束行号，从1开始，包括该行，可选", false, Some("start_line + 99"))]),
         tool("write_file", "写入文件内容。文件不存在则创建；默认全量覆写，append=true 时追加内容。", vec![param("path", "string", "VFS 文件路径", true, None), param("content", "string", "文件内容", true, None), param("append", "boolean", "追加内容而非覆写", false, Some("false"))]),
         tool("edit_file", "精准编辑已存在文件，将匹配到的原始内容替换为新内容。", vec![param("path", "string", "VFS 文件路径", true, None), param("old", "string", "用于精确匹配的原始内容", true, None), param("new", "string", "要插入的新内容", true, None)]),
         tool("delete_file", "删除文件或目录。", vec![param("path", "string", "目标 VFS 路径", true, None), param("recursive", "boolean", "布尔值", false, Some("false"))]),
@@ -957,36 +917,4 @@ fn http_tools_en() -> SystemToolPromptCategory {
 
 fn http_tools_cn() -> SystemToolPromptCategory {
     category("HTTP工具", vec![tool("visit_web", "访问网页并提取信息（可选包含图片链接）。有两种用法：1）提供 `url` 访问新页面。2）提供上一次 visit_web 返回的 `visit_key` + `link_number`，用来继续访问结果里的某个链接。返回文本通常会包含 `Results:` 段落，形如 `[1] ...`、`[2] ...` -- 中括号里的数字是从 1 开始的编号，请把该编号原样作为 `link_number`（范围：1..links.length），不要按 0 起始。若需要图片，请设置 `include_image_links=true`，工具会额外返回 `Images:` 段落以及从 1 开始的图片编号。重要：下载图片不要用 `link_number` 乱点页面链接；请使用 `download_file` 的 `visit_key` + `image_number` 按图片编号下载。重要：这个工具用于网页浏览/提取，不能替代原始 HTTP GET/POST 请求；如果你实际需要的是接口返回体或精确响应内容，用它时可能会得到空结果或不完整内容。注意：该工具仅支持浏览/读取操作，不执行登录、点击、填写、提交等交互自动化。", vec![param("url", "string", "可选, 网页URL", false, None), param("visit_key", "string", "可选, 字符串, 上一次 visit_web 返回的 visitKey", false, None), param("link_number", "integer", "可选, 整数, 要继续访问的链接编号（从1开始，对应 Results 里的 `[n]`；范围 1..links.length）", false, None), param("include_image_links", "boolean", "可选, boolean, 为 true 时在结果中额外包含提取到的图片链接列表（imageLinks）", false, None), param("headers", "string", "可选：HTTP请求头，JSON对象字符串，例如{\"Referer\":\"...\"}", false, None), param("user_agent_preset", "string", "可选：UA预设，快速选择：desktop/android", false, None), param("user_agent", "string", "可选：完整自定义UA（优先级高于预设）", false, None)])])
-}
-
-fn adjust_read_file_tool(
-    tools: Vec<ToolPrompt>,
-    expose_intent: bool,
-    expose_direct_image: bool,
-    expose_direct_audio: bool,
-    expose_direct_video: bool,
-    saf_bookmarks_section: String,
-    adjusted_description: &str,
-) -> Vec<ToolPrompt> {
-    tools
-        .into_iter()
-        .map(|mut tool| {
-            if tool.name == "read_file" {
-                tool.parameters_structured
-                    .retain(|parameter| match parameter.name.as_str() {
-                        "intent" => expose_intent,
-                        "direct_image" => expose_direct_image,
-                        "direct_audio" => expose_direct_audio,
-                        "direct_video" => expose_direct_video,
-                        _ => true,
-                    });
-                if expose_intent {
-                    tool.description = format!("{adjusted_description}{saf_bookmarks_section}");
-                } else {
-                    tool.description = format!("{}{}", tool.description, saf_bookmarks_section);
-                }
-            }
-            tool
-        })
-        .collect()
 }

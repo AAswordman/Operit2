@@ -24,7 +24,7 @@ function engine(version = '1.0.0') {
   const files = {};
   // These fixtures model v2 result shapes, not the legacy input convention.
   for (const name of ['list', 'read', 'readPart', 'write', 'writeBinary', 'readBinary', 'deleteFile',
-    'exists', 'move', 'copy', 'mkdir', 'find', 'grep', 'grepContext', 'info', 'apply', 'create',
+    'exists', 'move', 'copy', 'mkdir', 'find', 'grep', 'info', 'apply', 'create',
     'edit', 'zip', 'unzip', 'open', 'share', 'download']) {
     /** Captures the actual current signature selected by the production adapter. */
     files[name] = async (...args) => {

@@ -165,3 +165,38 @@ pub(crate) fn beginArm64TerminalCommand(
     }
     Ok(state)
 }
+
+/// Receives one binary PTY event into an independently owned asynchronous read.
+extern "C" fn receivePty(context: *mut c_void, bytes: *const u8, length: usize) {
+    let output = unsafe { &*(context as *const operit_host_api::TerminalPtyOutput::TerminalPtyOutputBuffer) };
+    if (length != 0 && bytes.is_null()) || length > isize::MAX as usize {
+        output.fail(HostError::new("ARM64 terminal returned an invalid output frame"));
+    } else if length != 0 {
+        output.append(unsafe { std::slice::from_raw_parts(bytes, length) });
+    }
+}
+
+/// Completes and releases a one-shot native output waiter on data, EOF, or error.
+extern "C" fn completedPty(context: *mut c_void, response: *mut c_char) {
+    let output = unsafe { Arc::from_raw(context as *const operit_host_api::TerminalPtyOutput::TerminalPtyOutputBuffer) };
+    match decodeResponse(response) {
+        Ok(_) => output.close(),
+        Err(error) => output.fail(error),
+    }
+}
+
+/// Waits for native output without serializing bytes into the JSON control response.
+pub(crate) async fn readArm64TerminalOutput(sessionId: &str) -> HostResult<Option<Vec<u8>>> {
+    let request = encodeRequest(serde_json::json!({"sessionId": sessionId}))?;
+    let output = Arc::new(operit_host_api::TerminalPtyOutput::TerminalPtyOutputBuffer::new(16 * 1024 * 1024));
+    let context = Arc::into_raw(output.clone()) as *mut c_void;
+    let response = unsafe {
+        operit_ios_arm64_terminal_execute_async(c"terminalReadAsync".as_ptr(), request.as_ptr(), context, receivePty, completedPty)
+    };
+    if let Err(error) = decodeResponse(response) {
+        // Rejected reads never transfer callback ownership to the native session.
+        unsafe { drop(Arc::from_raw(context as *const operit_host_api::TerminalPtyOutput::TerminalPtyOutputBuffer)); }
+        return Err(error);
+    }
+    output.next().await
+}

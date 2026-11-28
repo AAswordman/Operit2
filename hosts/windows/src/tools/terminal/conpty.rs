@@ -6,6 +6,7 @@ use std::ffi::OsStr;
 use std::fs::File;
 use std::os::windows::{ffi::OsStrExt, io::{AsRawHandle, FromRawHandle, OwnedHandle}};
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 use windows_sys::Win32::{
     Foundation::{HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT},
     Storage::FileSystem::{CreateFileW, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING, PIPE_ACCESS_INBOUND},
@@ -14,6 +15,7 @@ use windows_sys::Win32::{
         Pipes::{CreateNamedPipeW, CreatePipe, PIPE_REJECT_REMOTE_CLIENTS},
         Threading::{CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
             InitializeProcThreadAttributeList, TerminateProcess, UpdateProcThreadAttribute,
+            RegisterWaitForSingleObject, UnregisterWaitEx, WT_EXECUTEONLYONCE,
             WaitForSingleObject, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
             INFINITE, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, STARTF_USESTDHANDLES, STARTUPINFOEXW},
     },
@@ -21,17 +23,64 @@ use windows_sys::Win32::{
 
 /// Owns the pseudoconsole until its process has stopped and output has drained.
 pub(super) struct Process {
-    console: Console,
+    console: Arc<Console>,
+    _exitWait: ProcessExitWait,
     child: OwnedHandle,
     pub rows: u16,
     pub cols: u16,
 }
 
 /// Closes a pseudoconsole on every launch failure and normal session teardown.
-struct Console(HPCON);
+struct Console(Mutex<Option<HPCON>>);
+
+impl Console {
+    /// Closes ConPTY once after process exit so its independent reader drains to EOF.
+    fn close(&self) {
+        let console = self.0.lock().expect("ConPTY console state poisoned").take();
+        if let Some(console) = console { unsafe { ClosePseudoConsole(console) }; }
+    }
+
+    /// Borrows the live console only for a finite native resize operation.
+    fn resize(&self, rows: u16, cols: u16) -> HostResult<()> {
+        let console = self.0.lock().map_err(|_| HostError::new("ConPTY console state poisoned"))?;
+        let console = console.ok_or_else(|| HostError::new("ConPTY process has exited"))?;
+        let status = unsafe { ResizePseudoConsole(console, COORD { X: cols as i16, Y: rows as i16 }) };
+        if status < 0 { return Err(HostError::new(format!("ResizePseudoConsole failed: {status:#x}"))); }
+        Ok(())
+    }
+}
+
 impl Drop for Console {
     /// Closes ConPTY while its independent IOCP reader can still drain the final output.
-    fn drop(&mut self) { unsafe { ClosePseudoConsole(self.0) }; }
+    fn drop(&mut self) { self.close(); }
+}
+
+/// Uses the Windows thread-pool process signal without a polling timer or waiter thread.
+struct ProcessExitWait {
+    wait: usize,
+    _context: Box<Arc<Console>>,
+}
+
+impl ProcessExitWait {
+    /// Keeps callback state alive until native wait cancellation has completed.
+    fn new(child: &OwnedHandle, console: Arc<Console>) -> HostResult<Self> {
+        let mut context = Box::new(console);
+        let mut wait = std::ptr::null_mut();
+        check(unsafe { RegisterWaitForSingleObject(&mut wait, child.as_raw_handle(), Some(processExited),
+            (&mut *context as *mut Arc<Console>).cast(), INFINITE, WT_EXECUTEONLYONCE) })?;
+        Ok(Self { wait: wait as usize, _context: context })
+    }
+}
+
+impl Drop for ProcessExitWait {
+    /// Waits for an in-flight callback before releasing its stable context pointer.
+    fn drop(&mut self) { unsafe { UnregisterWaitEx(self.wait as HANDLE, INVALID_HANDLE_VALUE) }; }
+}
+
+/// Ends the pseudoconsole output stream only after the interpreter has exited.
+unsafe extern "system" fn processExited(context: *mut std::ffi::c_void, _: u8) {
+    let console = unsafe { &*context.cast::<Arc<Console>>() };
+    console.close();
 }
 
 /// Releases native process attribute storage on both successful and failed launches.
@@ -58,14 +107,14 @@ impl Process {
         let status = unsafe { CreatePseudoConsole(COORD { X: cols as i16, Y: rows as i16 },
             input.as_raw_handle(), guestOutput.as_raw_handle(), 0, &mut console) };
         if status < 0 { return Err(HostError::new(format!("CreatePseudoConsole failed: {status:#x}"))); }
-        let console = Console(console);
+        let console = Arc::new(Console(Mutex::new(Some(console))));
         let mut length = 0;
         unsafe { InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut length) };
         let mut attributes = vec![0usize; length.div_ceil(std::mem::size_of::<usize>())];
         check(unsafe { InitializeProcThreadAttributeList(attributes.as_mut_ptr().cast(), 1, 0, &mut length) })?;
         let mut attributes = Attributes(attributes);
         check(unsafe { UpdateProcThreadAttribute(attributes.0.as_mut_ptr().cast(), 0,
-            PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as usize, console.0 as *const _,
+            PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as usize, console.0.lock().expect("ConPTY console state poisoned").unwrap() as *const _,
             std::mem::size_of::<HPCON>(), std::ptr::null_mut(), std::ptr::null()) })?;
         let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
         startup.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
@@ -103,13 +152,22 @@ impl Process {
             &startup.StartupInfo, &mut process) })?;
         let child = unsafe { OwnedHandle::from_raw_handle(process.hProcess) };
         drop(unsafe { OwnedHandle::from_raw_handle(process.hThread) });
-        Ok((Self { console, child, rows, cols }, writer, output))
+        let exitWait = match ProcessExitWait::new(&child, console.clone()) {
+            Ok(wait) => wait,
+            Err(error) => {
+                unsafe {
+                    TerminateProcess(child.as_raw_handle(), 1);
+                    WaitForSingleObject(child.as_raw_handle(), INFINITE);
+                }
+                return Err(error);
+            }
+        };
+        Ok((Self { console, child, _exitWait: exitWait, rows, cols }, writer, output))
     }
 
     /// Resizes the same pseudoconsole and retains the dimensions used by screen rendering.
     pub fn resize(&mut self, rows: u16, cols: u16) -> HostResult<()> {
-        let status = unsafe { ResizePseudoConsole(self.console.0, COORD { X: cols as i16, Y: rows as i16 }) };
-        if status < 0 { return Err(HostError::new(format!("ResizePseudoConsole failed: {status:#x}"))); }
+        self.console.resize(rows, cols)?;
         (self.rows, self.cols) = (rows, cols);
         Ok(())
     }

@@ -600,7 +600,10 @@ fn getWorkspaceGuidelines(
     let mounted_folders = std::iter::once(workspace_path)
         .chain(workspace_folders.iter().map(String::as_str))
         .filter(|folder| !folder.trim().is_empty())
-        .filter_map(|folder| operit_vfs::VfsPath::relativeFileToolPath(workspace_path, folder).ok())
+        .filter_map(|folder| match operit_util::FileUtils::FileUtils::splitQualifiedVfsPath(folder) {
+            Some(_) => Some(folder.to_string()),
+            None => operit_vfs::VfsPath::relativeFileToolPath(workspace_path, folder).ok(),
+        })
         .filter(|folder| seen.insert(folder.clone()))
         .map(|folder| format!("- `{folder}`"))
         .collect::<Vec<_>>()
@@ -869,6 +872,18 @@ mod tests {
                 },
             ],
             ..SystemPromptOptions::default()
+        }
+    }
+
+    /// Retains remote folder identities while showing local siblings relative to the primary root.
+    #[tokio::test(flavor = "current_thread")]
+    async fn remoteWorkspaceFoldersRemainVisible() {
+        for use_english in [false, true] {
+            let mut options = workspacePromptOptions(use_english);
+            options.workspace_folders.push("core-remote://operitapp/workspaces/shared".into());
+            let prompt = SystemPromptConfig::getSystemPrompt(options).await.unwrap();
+            assert!(prompt.contains("- `core-remote://operitapp/workspaces/shared`"));
+            assert!(prompt.contains("- `../library`"));
         }
     }
 

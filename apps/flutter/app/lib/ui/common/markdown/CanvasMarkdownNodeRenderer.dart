@@ -656,14 +656,52 @@ class _TypewriterMarkdownRichTextState
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        for (var index = 0; index < _paragraphs.length; index++) ...[
-          if (index > 0) const SizedBox(height: _markdownParagraphBreakHeight),
-          buildParagraph(index),
-        ],
+      children: [
+        for (
+          var start = 0;
+          start < _paragraphs.length;
+          start += _markdownParagraphGroupSize
+        )
+          _buildParagraphGroup(
+            start: start,
+            end: (start + _markdownParagraphGroupSize).clamp(
+              start,
+              _paragraphs.length,
+            ),
+            paragraphBuilder: buildParagraph,
+          ),
       ],
     );
   }
+}
+
+const int _markdownParagraphGroupSize = 32;
+
+/// Bounds each paragraph merge group without changing text or selection ownership.
+Widget _buildParagraphGroup({
+  required int start,
+  required int end,
+  required Widget Function(int index) paragraphBuilder,
+}) {
+  final children = <Widget>[];
+  for (var index = start; index < end; index++) {
+    if (index > 0) {
+      children.add(const SizedBox(height: _markdownParagraphBreakHeight));
+    }
+    children.add(paragraphBuilder(index));
+  }
+  // A single unbounded merge group makes Flutter compare every paragraph's
+  // semantic configuration with every sibling. Explicit child nodes keep
+  // reading order and link actions while avoiding that quadratic merge pass.
+  return Semantics(
+    container: true,
+    explicitChildNodes: true,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: children,
+    ),
+  );
 }
 
 // Preserve leading at block boundaries as well as between wrapped lines.
@@ -687,6 +725,7 @@ List<_MarkdownTextParagraph> _markdownTextParagraphs(
   final start = text.length - text.trimLeft().length;
   final end = text.trimRight().length;
   if (start >= end) return const [];
+  final ranges = MarkdownSpanRangeIndex(span);
   final paragraphs = <_MarkdownTextParagraph>[];
   var previousEnd = 0;
   var revealOffset = 0;
@@ -695,9 +734,7 @@ List<_MarkdownTextParagraph> _markdownTextParagraphs(
     revealOffset += text.substring(previousEnd, from).characters.length;
     paragraphs.add(
       _MarkdownTextParagraph(
-        from == 0 && to == text.length
-            ? span
-            : _sliceMarkdownSpan(span, from, to),
+        from == 0 && to == text.length ? span : ranges.slice(from, to),
         revealOffset,
       ),
     );
@@ -716,40 +753,6 @@ List<_MarkdownTextParagraph> _markdownTextParagraphs(
   }
   append(paragraphStart, end);
   return paragraphs;
-}
-
-/// Takes a UTF-16 range without flattening inherited styles or recognizers.
-InlineSpan _sliceMarkdownSpan(InlineSpan source, int start, int end) {
-  var offset = 0;
-  InlineSpan? slice(InlineSpan span) {
-    if (span is WidgetSpan) {
-      final position = offset++;
-      return position >= start && position < end ? span : null;
-    }
-    if (span is! TextSpan) return null;
-    final text = span.text ?? '';
-    final textStart = offset;
-    offset += text.length;
-    final from = (start - textStart).clamp(0, text.length);
-    final to = (end - textStart).clamp(from, text.length);
-    final children = <InlineSpan>[
-      for (final child in span.children ?? const <InlineSpan>[]) ?slice(child),
-    ];
-    if (from == to && children.isEmpty) return null;
-    return TextSpan(
-      text: from == to ? null : text.substring(from, to),
-      children: children,
-      style: span.style,
-      recognizer: span.recognizer,
-      mouseCursor: span.mouseCursor,
-      onEnter: span.onEnter,
-      onExit: span.onExit,
-      locale: span.locale,
-      spellOut: span.spellOut,
-    );
-  }
-
-  return slice(source) ?? const TextSpan();
 }
 
 class _RevealSegment {

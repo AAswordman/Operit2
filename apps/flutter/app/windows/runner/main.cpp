@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "crash_channel.h"
+#include "administrator_restart.h"
 #include "native_crash_report.h"
 #include "engine_channel_lifetime.h"
 #include "flutter_window.h"
@@ -214,11 +215,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       CreateAndAttachConsole();
     }
 
-    // Initialize COM, so that it is available for use in the library and/or
-    // plugins.
-    ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     std::vector<std::string> command_line_arguments =
         GetCommandLineArguments();
+    if (!CompleteOperitAdministratorRestart(&command_line_arguments)) {
+      return EXIT_FAILURE;
+    }
+    // Initialize COM after an elevated replacement has waited for its old owner.
+    ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const bool data_rescue = std::find(command_line_arguments.begin(),
         command_line_arguments.end(), "--data-rescue") != command_line_arguments.end();
     if (!data_rescue) {
@@ -238,8 +241,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       }
       const bool existing_owner = ::GetLastError() == ERROR_ALREADY_EXISTS;
       if (existing_owner) {
+        // A duplicate must not keep the old identity alive during a restart.
+        ::CloseHandle(sdk_owner);
+        sdk_owner = nullptr;
         if (sdk_activation) {
-          ::CloseHandle(sdk_owner);
           ::CoUninitialize();
           return EXIT_SUCCESS;
         }
@@ -264,7 +269,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
           }
           ::Sleep(100);
         }
-        ::CloseHandle(sdk_owner);
         ::CoUninitialize();
         return EXIT_SUCCESS;
       }

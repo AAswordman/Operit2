@@ -1,3 +1,4 @@
+use operit_host_api::TerminalPtyOutput::TerminalPtyOutputBuffer;
 use operit_host_api::terminalSessionKey as sessionKey;
 use operit_host_api::TerminalProfiles::{profileMounts, TerminalMount};
 use operit_host_api::TerminalText::{appendPtyOutput as appendAndroidPtyOutput, dropCommandEcho, nonBlank, renderTerminalText, rfindBytes, stripPtyDeviceStatusReports, stripPtyPromptMarkers, scanPtyOutput, updatePtyCursor as updateAndroidPtyCursor, PtyCursor as AndroidPtyCursor};
@@ -97,7 +98,7 @@ struct AndroidPtySession {
     masterFd: RawFd,
     writer: Arc<Mutex<RawFd>>,
     reader: Option<Box<dyn FnOnce() + Send>>,
-    output: Arc<Mutex<VecDeque<u8>>>,
+    output: Arc<TerminalPtyOutputBuffer>,
     commandOutput: AndroidPtyCommandOutput,
     screenOutput: Arc<Mutex<VecDeque<u8>>>,
     commandRunning: bool,
@@ -119,6 +120,7 @@ type AndroidPtyCursorState = Arc<Mutex<AndroidPtyCursor>>;
 impl Drop for AndroidPtySession {
     /// Stops the reader before releasing its separately owned write handle.
     fn drop(&mut self) {
+        self.output.close();
         self.commandOutput.fail(HostError::new("Terminal session was closed"));
         if let AndroidPtyProcess::Termux(control) = &self.process {
             control.close();
@@ -196,11 +198,7 @@ impl AndroidTerminalHost {
         let session = state.ptySessions.get_mut(sessionId).ok_or_else(|| {
             HostError::new(format!("Android PTY session does not exist: {sessionId}"))
         })?;
-        let mut output = session
-            .output
-            .lock()
-            .map_err(|_| HostError::new("android pty output mutex poisoned"))?;
-        Ok(output.drain(..).collect())
+        session.output.read()
     }
 
     pub fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
@@ -483,6 +481,18 @@ impl TerminalHost for AndroidTerminalHost {
 
     fn readPtySession(&self, sessionId: &str) -> HostResult<Vec<u8>> {
         AndroidTerminalHost::readPtySession(self, sessionId)
+    }
+
+    /// Waits on the Android descriptor producer without a timer or a blocking worker.
+    fn nextPtySessionOutput<'a>(&'a self, sessionId: &'a str) -> operit_host_api::TerminalPtyOutputFuture<'a> {
+        Box::pin(async move {
+            let output = {
+                let state = self.lockState()?;
+                state.ptySessions.get(sessionId)
+                    .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?.output.clone()
+            };
+            output.next().await
+        })
     }
 
     fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
@@ -994,7 +1004,7 @@ fn createAndroidPtyProcess(
         (process, reader, writer, command.workingDir.unwrap_or(workingDir), command.startupInput)
     };
     let writer = Arc::new(Mutex::new(masterFd));
-    let output = Arc::new(Mutex::new(VecDeque::new()));
+    let output = Arc::new(TerminalPtyOutputBuffer::new(PTY_OUTPUT_LIMIT));
     let commandOutput: AndroidPtyCommandOutput =
         Arc::new(operit_host_api::TerminalCommand::TerminalCommandBuffer::new(PTY_OUTPUT_LIMIT));
     let screenOutput = Arc::new(Mutex::new(VecDeque::new()));
@@ -1052,7 +1062,7 @@ fn createAndroidPtyProcess(
 
 /// Registers terminal read readiness without holding a service worker or polling a timer.
 fn scheduleAndroidPtyReader(
-    readerFd: RawFd, writer: Arc<Mutex<RawFd>>, output: Arc<Mutex<VecDeque<u8>>>,
+    readerFd: RawFd, writer: Arc<Mutex<RawFd>>, output: Arc<TerminalPtyOutputBuffer>,
     commandOutput: AndroidPtyCommandOutput, screenOutput: Arc<Mutex<VecDeque<u8>>>,
     cursorState: AndroidPtyCursorState, managedPrompt: bool,
 ) -> HostResult<Box<dyn FnOnce() + Send>> {
@@ -1069,17 +1079,19 @@ fn scheduleAndroidPtyReader(
             }
         }
         let closed = commandOutput.clone();
+        let outputClosed = output.clone();
         let reader = operit_host_native_common::scheduleNativeFdReader("android-pty-reader", descriptor,
             move |data| {
                 processAndroidPtyTerminalQueries(&writer, &cursorState, data)?;
                 let commandChunk = stripPtyDeviceStatusReports(data);
                 let visibleChunk = stripPtyPromptMarkers(&commandChunk);
-                appendAndroidPtyOutput(&output, &visibleChunk, PTY_OUTPUT_LIMIT);
+                output.append(&visibleChunk);
                 appendAndroidPtyOutput(&screenOutput, &visibleChunk, PTY_OUTPUT_LIMIT);
                 if managedPrompt { appendAndroidPtyCommandOutput(&commandOutput, &commandChunk); }
                 Ok(())
             },
             move |error| {
+                outputClosed.close();
                 closed.fail(HostError::new(format!("Android PTY reached EOF or stopped: {}", error.message)));
             },
         )?;

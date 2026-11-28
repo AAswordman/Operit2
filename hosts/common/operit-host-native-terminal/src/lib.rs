@@ -1,3 +1,4 @@
+use operit_host_api::TerminalPtyOutput::TerminalPtyOutputBuffer;
 #[path = "../../terminal_command.rs"]
 mod terminal_command;
 
@@ -191,7 +192,7 @@ struct PtySession {
     terminalType: String,
     workingDir: String,
     process: Option<PtyProcess>,
-    output: Arc<Mutex<VecDeque<u8>>>,
+    output: Arc<TerminalPtyOutputBuffer>,
     commandOutput: PtyCommandOutput,
     screenOutput: Arc<Mutex<VecDeque<u8>>>,
     commandRunning: bool,
@@ -205,6 +206,7 @@ type PtyCommandOutput = Arc<operit_host_api::TerminalCommand::TerminalCommandBuf
 impl Drop for PtySession {
     /// Wakes silent command observers before releasing the process and PTY handles.
     fn drop(&mut self) {
+        self.output.close();
         self.commandOutput.fail(HostError::new("Terminal session was closed"));
     }
 }
@@ -430,11 +432,19 @@ impl TerminalHost for NativePtyTerminalHost {
             .ptySessions
             .get_mut(sessionId)
             .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?;
-        let mut output = session
-            .output
-            .lock()
-            .map_err(|_| HostError::new("pty output mutex poisoned"))?;
-        Ok(output.drain(..).collect())
+        session.output.read()
+    }
+
+    /// Waits on the PTY reader's producer notification, including final EOF.
+    fn nextPtySessionOutput<'a>(&'a self, sessionId: &'a str) -> operit_host_api::TerminalPtyOutputFuture<'a> {
+        Box::pin(async move {
+            let output = {
+                let state = self.lockState()?;
+                state.ptySessions.get(sessionId)
+                    .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?.output.clone()
+            };
+            output.next().await
+        })
     }
 
     fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
@@ -1039,7 +1049,7 @@ fn createPtySessionForProcess(
         writer: writer.clone(),
         readerTask: None,
     };
-    let output = Arc::new(Mutex::new(VecDeque::new()));
+    let output = Arc::new(TerminalPtyOutputBuffer::new(PTY_OUTPUT_LIMIT));
     let commandOutput: PtyCommandOutput = Arc::new(operit_host_api::TerminalCommand::TerminalCommandBuffer::new(PTY_OUTPUT_LIMIT));
     let screenOutput = Arc::new(Mutex::new(VecDeque::new()));
     let cursorState: PtyCursorState = Arc::new(Mutex::new(PtyCursor { row: 1, col: 1 }));
@@ -1051,16 +1061,17 @@ fn createPtySessionForProcess(
     #[cfg(unix)]
     {
         let closed = commandOutput.clone();
+        let outputClosed = output.clone();
         let readerTask = operit_host_native_scheduler::scheduleNativeFdReader(
             "operit-pty-reader", reader, move |chunk| {
                 processPtyTerminalQueries(&writerForThread, &cursorStateForThread, chunk)?;
                 let commandChunk = stripPtyDeviceStatusReports(chunk);
                 let visibleChunk = stripPtyPromptMarkers(&commandChunk);
-                appendPtyOutput(&outputForThread, &visibleChunk, PTY_OUTPUT_LIMIT);
+                outputForThread.append(&visibleChunk);
                 appendPtyOutput(&screenOutputForThread, &visibleChunk, PTY_OUTPUT_LIMIT);
                 if managedPrompt { appendPtyCommandOutput(&commandOutputForThread, &commandChunk); }
                 Ok(())
-            }, move |error| closed.fail(error),
+            }, move |error| { outputClosed.close(); closed.fail(error); },
         )?;
         process.readerTask = Some(Box::new(move || {
             if let Err(error) = readerTask.close() { operit_host_api::logHostError("terminal-reader-close", &error.message); }
@@ -1078,7 +1089,7 @@ fn createPtySessionForProcess(
                         if processPtyTerminalQueries(&writerForThread, &cursorStateForThread, chunk).is_err() { break; }
                         let commandChunk = stripPtyDeviceStatusReports(chunk);
                         let visibleChunk = stripPtyPromptMarkers(&commandChunk);
-                        appendPtyOutput(&outputForThread, &visibleChunk, PTY_OUTPUT_LIMIT);
+                        outputForThread.append(&visibleChunk);
                         appendPtyOutput(&screenOutputForThread, &visibleChunk, PTY_OUTPUT_LIMIT);
                         if managedPrompt { appendPtyCommandOutput(&commandOutputForThread, &commandChunk); }
                     },
@@ -1086,6 +1097,7 @@ fn createPtySessionForProcess(
                     Err(_) => break,
                 }
             }
+            outputForThread.close();
             commandOutputForThread.fail(HostError::new("PTY reader reached EOF or stopped"));
         })?;
         process.readerTask = Some(Box::new(move || {
@@ -1106,7 +1118,7 @@ fn createPtySessionForProcess(
     )?;
     clearPtyCommandOutput(&commandOutput)?;
     if commandSpec.commandProtocol == PtyCommandProtocol::ExplicitMarker {
-        clearPtyOutput(&output)?;
+        output.clear()?;
         clearPtyOutput(&screenOutput)?;
     }
     }

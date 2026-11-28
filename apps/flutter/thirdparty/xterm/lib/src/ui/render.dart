@@ -12,6 +12,7 @@ import 'package:xterm/src/terminal.dart';
 import 'package:xterm/src/ui/controller.dart';
 import 'package:xterm/src/ui/cursor_type.dart';
 import 'package:xterm/src/ui/painter.dart';
+import 'package:xterm/src/ui/line_cache.dart';
 import 'package:xterm/src/ui/selection_mode.dart';
 import 'package:xterm/src/ui/terminal_size.dart';
 import 'package:xterm/src/ui/terminal_text_style.dart';
@@ -55,6 +56,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (_terminal == terminal) return;
     if (attached) _terminal.removeListener(_onTerminalChange);
     _terminal = terminal;
+    _lineCache.clear();
     if (attached) _terminal.addListener(_onTerminalChange);
     _resizeTerminalIfNeeded();
     markNeedsLayout();
@@ -95,18 +97,21 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   set textStyle(TerminalStyle value) {
     if (value == _painter.textStyle) return;
     _painter.textStyle = value;
+    _lineCache.clear();
     markNeedsLayout();
   }
 
   set textScaler(TextScaler value) {
     if (value == _painter.textScaler) return;
     _painter.textScaler = value;
+    _lineCache.clear();
     markNeedsLayout();
   }
 
   set theme(TerminalTheme value) {
     if (value == _painter.theme) return;
     _painter.theme = value;
+    _lineCache.clear();
     markNeedsPaint();
   }
 
@@ -137,6 +142,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   set onEditableRect(EditableRectCallback? value) {
     if (value == _onEditableRect) return;
     _onEditableRect = value;
+    _lastEditableRect = null;
+    _lastCaretRect = null;
     markNeedsLayout();
   }
 
@@ -150,26 +157,35 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   TerminalSize? _viewportSize;
 
   final TerminalPainter _painter;
+  final _lineCache = TerminalLineCache();
+  final _clipLayer = LayerHandle<ClipRectLayer>();
+  double? _laidOutTerminalHeight;
+  Rect? _lastEditableRect;
+  Rect? _lastCaretRect;
 
   var _stickToBottom = true;
 
   void _onScroll() {
     _stickToBottom = _scrollOffset >= _maxScrollExtent;
-    markNeedsLayout();
-    _notifyEditableRect();
+    markNeedsPaint();
   }
 
   void _onFocusChange() {
+    _lastEditableRect = null;
+    _lastCaretRect = null;
     markNeedsPaint();
   }
 
   void _onTerminalChange() {
-    markNeedsLayout();
-    _notifyEditableRect();
+    if (_laidOutTerminalHeight != _terminalHeight) {
+      markNeedsLayout();
+    } else {
+      markNeedsPaint();
+    }
   }
 
   void _onControllerUpdate() {
-    markNeedsLayout();
+    markNeedsPaint();
   }
 
   @override
@@ -201,7 +217,17 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   @override
   void systemFontsDidChange() {
     _painter.clearFontCache();
+    _lineCache.clear();
     super.systemFontsDidChange();
+  }
+
+  /// Releases retained row layers and native font resources with the renderer.
+  @override
+  void dispose() {
+    _lineCache.clear();
+    _clipLayer.layer = null;
+    _painter.dispose();
+    super.dispose();
   }
 
   @override
@@ -215,6 +241,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (_stickToBottom) {
       _offset.correctBy(_maxScrollExtent - _scrollOffset);
     }
+    _laidOutTerminalHeight = _terminalHeight;
   }
 
   /// Total height of the terminal in pixels. Includes scrollback buffer.
@@ -328,6 +355,9 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
     final caretRect = cursor & _painter.cellSize;
 
+    if (rect == _lastEditableRect && caretRect == _lastCaretRect) return;
+    _lastEditableRect = rect;
+    _lastCaretRect = caretRect;
     _onEditableRect?.call(rect, caretRect);
   }
 
@@ -402,13 +432,17 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   @override
   void paint(PaintingContext context, Offset offset) {
-    _paint(context, offset);
-    context.setWillChangeHint();
+    _clipLayer.layer = context.pushClipRect(
+      needsCompositing,
+      offset,
+      Offset.zero & size,
+      _paint,
+      oldLayer: _clipLayer.layer,
+    );
+    _notifyEditableRect();
   }
 
   void _paint(PaintingContext context, Offset offset) {
-    final canvas = context.canvas;
-
     final lines = _terminal.buffer.lines;
     final charHeight = _painter.cellSize.height;
 
@@ -421,13 +455,17 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     final effectFirstLine = firstLine.clamp(0, lines.length - 1);
     final effectLastLine = lastLine.clamp(0, lines.length - 1);
 
+    _lineCache.beginFrame();
     for (var i = effectFirstLine; i <= effectLastLine; i++) {
-      _painter.paintLine(
-        canvas,
-        offset.translate(0, (i * charHeight + _lineOffset).truncateToDouble()),
-        lines[i],
-      );
+      final layer = _lineCache.layerFor(lines[i], _painter);
+      layer.offset = offset.translate(
+          0, (i * charHeight + _lineOffset).truncateToDouble());
+      context.addLayer(layer);
     }
+    _lineCache.endFrame();
+
+    // Adding retained layers closes the preceding canvas recording.
+    final canvas = context.canvas;
 
     if (_terminal.buffer.absoluteCursorY >= effectFirstLine &&
         _terminal.buffer.absoluteCursorY <= effectLastLine) {
@@ -445,6 +483,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       }
     }
 
+    canvas.save();
+    canvas.translate(offset.dx, offset.dy);
     _paintHighlights(
       canvas,
       _controller.highlights,
@@ -460,6 +500,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         effectLastLine,
       );
     }
+    canvas.restore();
   }
 
   /// Paints the text that is currently being composed in IME to [canvas] at
@@ -491,6 +532,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     paragraph.layout(ParagraphConstraints(width: size.width));
 
     canvas.drawParagraph(paragraph, Offset(0, offset.dy));
+    paragraph.dispose();
   }
 
   void _paintSelection(

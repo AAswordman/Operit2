@@ -460,6 +460,7 @@ interface LinuxVmSession {
   cols: number;
   output: Uint8Array;
   outputLength: number;
+  outputWaiters: Set<Int32Array>;
   inputQueue: Uint8Array[];
   startupText: string;
   lastDownloadProgress: string | null;
@@ -3493,6 +3494,16 @@ self.onmessage = (event) => {
     }
     session.output.set(bytes, session.outputLength);
     session.outputLength = requiredLength;
+    notifyLinuxVmOutput(session);
+  }
+
+  /** Wakes output readers only after bytes or a terminal state change is visible. */
+  function notifyLinuxVmOutput(session: LinuxVmSession): void {
+    for (const header of session.outputWaiters) {
+      Atomics.store(header, 0, 1);
+      Atomics.notify(header, 0);
+    }
+    session.outputWaiters.clear();
   }
 
   /** Appends one command-output byte while enforcing the terminal output limit. */
@@ -3804,6 +3815,7 @@ self.onmessage = (event) => {
     finishLinuxVmProgress(session, null);
     session.state = "failed";
     session.exitCode = 1;
+    notifyLinuxVmOutput(session);
     rejectLinuxVmCommands(session, error);
     const message = error instanceof Error ? error.message : String(error);
     const output = textEncoder.encode(`\r\n[Linux VM failed: ${message}]\r\n`);
@@ -3843,6 +3855,7 @@ self.onmessage = (event) => {
       session.processRecord = [];
       if (!/^\d+$/.test(text)) { failLinuxVmSession(session, new Error("Invalid guest process exit record")); return true; }
       session.exitCode = Number(text);
+      notifyLinuxVmOutput(session);
     }
     return true;
   }
@@ -3921,6 +3934,7 @@ exec /bin/sh ${session.launch.command === null ? "-i" : "-c " + quote(session.la
         if (session.state !== "closed" && session.state !== "failed") {
           session.state = "closed";
           session.exitCode ??= 1;
+          notifyLinuxVmOutput(session);
           rejectLinuxVmCommands(session, new Error(`Linux VM terminal stopped: ${session.id}`));
         }
       });
@@ -3949,6 +3963,7 @@ exec /bin/sh ${session.launch.command === null ? "-i" : "-c " + quote(session.la
       cols,
       output: new Uint8Array(4096),
       outputLength: 0,
+      outputWaiters: new Set(),
       inputQueue: [],
       startupText: "",
       lastDownloadProgress: null,
@@ -4015,6 +4030,7 @@ exec /bin/sh ${session.launch.command === null ? "-i" : "-c " + quote(session.la
   function closeLinuxVmPty(sessionId: string): void {
     const session = linuxVmSession(sessionId);
     session.state = "closed";
+    notifyLinuxVmOutput(session);
     rejectLinuxVmCommands(session, new Error(`Linux VM terminal closed: ${sessionId}`));
     linuxVmSessions.delete(sessionId);
     if (session.emulator !== null) {
@@ -4081,6 +4097,22 @@ exec /bin/sh ${session.launch.command === null ? "-i" : "-c " + quote(session.la
       /** Drains raw virtual serial bytes from one browser-local Linux VM terminal. */
       readPty(sessionId: string): Uint8Array {
         return readLinuxVmPty(sessionId);
+      },
+      /** Arms one worker-owned output notification, including already buffered bytes and EOF. */
+      armPtyOutput(sessionId: string, signal: SharedArrayBuffer): void {
+        const session = linuxVmSession(sessionId);
+        const header = new Int32Array(signal);
+        if (header.length !== 1) throw new Error("Invalid terminal output signal");
+        session.outputWaiters.add(header);
+        if (session.outputLength > 0 || session.exitCode !== null || session.state === "closed" || session.state === "failed") {
+          notifyLinuxVmOutput(session);
+        }
+      },
+      /** Drains binary output before returning the final EOF event. */
+      readPtyEvent(sessionId: string): Uint8Array | null {
+        const session = linuxVmSession(sessionId);
+        if (session.outputLength > 0) return readLinuxVmPty(sessionId);
+        return session.exitCode !== null || session.state === "closed" || session.state === "failed" ? null : new Uint8Array(0);
       },
       /** Writes raw terminal bytes into one browser-local Linux VM terminal. */
       writePty(sessionId: string, data: Uint8Array): number {

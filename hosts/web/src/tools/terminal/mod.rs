@@ -145,6 +145,19 @@ impl TerminalHost for WebTerminalHost {
         Ok(Uint8Array::new(&output).to_vec())
     }
 
+    /// Waits for a virtual serial producer signal and transfers raw output bytes.
+    fn nextPtySessionOutput<'a>(&'a self, sessionId: &'a str) -> operit_host_api::TerminalPtyOutputFuture<'a> {
+        Box::pin(async move {
+            loop {
+                waitForBrowserTerminalChange(sessionId, "armPtyOutput").await?;
+                let output = call_terminal("readPtyEvent", &[JsValue::from_str(sessionId)])?;
+                if output.is_null() { return Ok(None); }
+                let bytes = Uint8Array::new(&output).to_vec();
+                if !bytes.is_empty() { return Ok(Some(bytes)); }
+            }
+        })
+    }
+
     /// Writes raw terminal input bytes to one Linux VM virtual serial console.
     fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
         ensureTerminalSession(sessionId)?;
@@ -422,9 +435,14 @@ impl TerminalHost for WebTerminalHost {
 
 /// Arms a producer notification before asynchronously waiting, so close and output cannot race registration.
 async fn waitForBrowserCommandChange(sessionId: &str) -> HostResult<()> {
+    waitForBrowserTerminalChange(sessionId, "armPtyCommand").await
+}
+
+/// Registers a shared-memory producer signal before waiting to prevent lost wakeups.
+async fn waitForBrowserTerminalChange(sessionId: &str, method: &str) -> HostResult<()> {
     let signal = js_sys::SharedArrayBuffer::new(4);
     let header = js_sys::Int32Array::new(&signal);
-    call_terminal("armPtyCommand", &[JsValue::from_str(sessionId), signal.into()])?;
+    call_terminal(method, &[JsValue::from_str(sessionId), signal.into()])?;
     let atomics = js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("Atomics"))
         .map_err(crate::common::js_error)?;
     let wait = js_sys::Reflect::get(&atomics, &JsValue::from_str("waitAsync"))

@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock};
+use operit_link::CoreBuffer;
 
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
 use operit_host_api::TerminalProfiles::{
     TerminalDistribution, TerminalInstallProgressCallback, TerminalProfileSettings,
     TerminalProfileSupport,
@@ -109,18 +108,18 @@ pub struct RuntimeTerminalService {
 #[derive(Clone, Debug)]
 /// Stream wrapper exposing PTY output to Kotlin-style collectors.
 pub struct RuntimeTerminalPtyOutputStream {
-    upstream: MutableSharedStreamImpl<String>,
+    upstream: MutableSharedStreamImpl<CoreBuffer>,
 }
 
 impl RuntimeTerminalPtyOutputStream {
     /// Wraps a shared PTY output stream.
-    pub fn new(upstream: MutableSharedStreamImpl<String>) -> Self {
+    pub fn new(upstream: MutableSharedStreamImpl<CoreBuffer>) -> Self {
         Self { upstream }
     }
 }
 
 impl Stream for RuntimeTerminalPtyOutputStream {
-    type Item = String;
+    type Item = CoreBuffer;
 
     /// Collects PTY output asynchronously until the host closes the stream.
     fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
@@ -130,7 +129,7 @@ impl Stream for RuntimeTerminalPtyOutputStream {
 
 #[derive(Clone)]
 struct TerminalPtyOutputEntry {
-    stream: MutableSharedStreamImpl<String>,
+    stream: MutableSharedStreamImpl<CoreBuffer>,
 }
 
 static TERMINAL_PTY_OUTPUT_STREAMS: OnceLock<Mutex<HashMap<String, TerminalPtyOutputEntry>>> =
@@ -202,73 +201,24 @@ fn start_terminal_pty_output_reader(
     terminalHost: Arc<dyn TerminalHost>,
     taskScheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
     sessionId: String,
-    stream: MutableSharedStreamImpl<String>,
+    stream: MutableSharedStreamImpl<CoreBuffer>,
 ) {
-    let scheduledTaskScheduler = taskScheduler.clone();
     taskScheduler
         .scheduleHostRuntimeAsyncTask(
             "operit-terminal-pty-output",
-            Box::new(move || {
-                Box::pin(async move {
-                    // Keep one request thread and yield to the shared timer instead
-                    // of creating a new OS thread for every 40 ms polling turn.
-                    while poll_terminal_pty_output(terminalHost.as_ref(), &sessionId, &stream) {
-                        if scheduledTaskScheduler
-                            .waitForHostRuntimeDelay(40)
-                            .await
-                            .is_err()
-                        {
-                            close_terminal_pty_output_stream(&sessionId);
-                            break;
-                        }
+            Box::new(move || Box::pin(async move {
+                loop {
+                    match terminalHost.nextPtySessionOutput(&sessionId).await {
+                        Ok(Some(data)) => stream.emit(CoreBuffer(data.into())),
+                        Ok(None) | Err(_) => break,
                     }
-                })
-            }),
+                }
+                // The host drains its final bytes before producing EOF.
+                let _ = publish_terminal_sessions(terminalHost.as_ref());
+                close_terminal_pty_output_stream(&sessionId);
+            })),
         )
         .expect("terminal PTY output task must be scheduled");
-}
-
-/// Reads one batch; false terminates the session's single asynchronous reader.
-fn poll_terminal_pty_output(
-    terminalHost: &dyn TerminalHost,
-    sessionId: &str,
-    stream: &MutableSharedStreamImpl<String>,
-) -> bool {
-    if !terminal_pty_output_streams()
-        .lock()
-        .expect("terminal pty output streams mutex poisoned")
-        .contains_key(sessionId)
-    {
-        return false;
-    }
-    match terminalHost.readPtySession(sessionId) {
-        Ok(data) if !data.is_empty() => stream.emit(STANDARD.encode(data)),
-        Ok(_) => {}
-        Err(_) => {
-            close_terminal_pty_output_stream(sessionId);
-            return false;
-        }
-    }
-
-    match terminalHost.pollPtyExitCode(sessionId) {
-        Ok(Some(_)) => {
-            // Drain bytes arriving between the read and the exit observation.
-            if let Ok(data) = terminalHost.readPtySession(sessionId) {
-                if !data.is_empty() {
-                    stream.emit(STANDARD.encode(data));
-                }
-            }
-            publish_terminal_sessions(terminalHost)
-                .expect("TerminalHost.listSessions must succeed after PTY exit");
-            close_terminal_pty_output_stream(sessionId);
-            false
-        }
-        Ok(None) => true,
-        Err(_) => {
-            close_terminal_pty_output_stream(sessionId);
-            false
-        }
-    }
 }
 
 impl RuntimeTerminalService {
@@ -632,14 +582,10 @@ impl RuntimeTerminalService {
     }
 
     #[allow(non_snake_case)]
-    /// Writes base64-encoded bytes to a PTY session.
-    pub fn writeTerminalPty(&self, sessionId: String, dataBase64: String) -> Result<i32, String> {
-        let data = STANDARD
-            .decode(dataBase64.as_bytes())
-            .map_err(|error| error.to_string())?;
-        self.terminalHost
-            .writePtySession(&sessionId, &data)
-            .map(|count| count as i32)
+    /// Writes binary bytes directly to a PTY session.
+    pub fn writeTerminalPty(&self, sessionId: String, data: Vec<u8>) -> Result<i32, String> {
+        self.terminalHost.writePtySession(&sessionId, &data)
+            .map(|written| written as i32)
             .map_err(|error| error.message)
     }
 
@@ -701,7 +647,7 @@ impl RuntimeTerminalService {
     }
 
     #[allow(non_snake_case)]
-    fn ensureTerminalPtyOutputStream(&self, sessionId: String) -> MutableSharedStreamImpl<String> {
+    fn ensureTerminalPtyOutputStream(&self, sessionId: String) -> MutableSharedStreamImpl<CoreBuffer> {
         let mut streams = terminal_pty_output_streams()
             .lock()
             .expect("terminal pty output streams mutex poisoned");
@@ -741,152 +687,29 @@ fn resolve_terminal_working_dir(
     filesystem.terminalDirectory(terminalHost, &path)
 }
 
+#[cfg(test)]
+mod binary_output_tests {
+    use super::*;
+
+    /// Verifies the actual stream item serializes as binary rather than an integer array.
+    #[test]
+    fn pty_stream_replay_keeps_shared_binary_ownership() {
+        let bytes = operit_link::CoreBytes::from(vec![0, 255, 195, 169, 27]);
+        let stream = MutableSharedStreamImpl::new(2);
+        stream.emit(CoreBuffer::from(bytes.clone()));
+        let replay = stream.replay_cache();
+        let value = operit_link::toCoreValue(replay[0].clone()).unwrap();
+        match value {
+            operit_link::CoreValue::Bytes(decoded) => {
+                assert_eq!(decoded.as_ref(), bytes.as_ref());
+                assert_eq!(decoded.as_ptr(), bytes.as_ptr());
+            }
+            _ => panic!("PTY output must use the binary Core Link representation"),
+        }
+    }
+}
+
 /// Builds the host VFS used only for directories owned by the current runtime.
 fn terminal_vfs(context: &HostManager) -> Result<VisualFileSystem, String> {
     context.vfs()
-}
-
-#[cfg(test)]
-mod idle_poll_tests {
-    use super::*;
-    use operit_host_api::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    struct TestTerminal {
-        reads: AtomicUsize,
-        exited: bool,
-    }
-    #[allow(unused_variables)]
-    impl TerminalHost for TestTerminal {
-        /// Resolves host directories without changing this stream-test host's capabilities.
-        fn resolveWorkingDirectory(
-            &self,
-            _: &str,
-            _: &str,
-            workingDir: &str,
-            resolveHostDirectory: &dyn Fn(&str) -> HostResult<String>,
-        ) -> HostResult<String> {
-            resolveHostDirectory(workingDir)
-        }
-        fn terminalInfo(&self) -> HostResult<TerminalInfo> {
-            unimplemented!()
-        }
-        fn startPtySession(
-            &self,
-            sessionName: &str,
-            terminal: &str,
-            terminalType: &str,
-            workingDir: &str,
-            rows: u16,
-            cols: u16,
-        ) -> HostResult<String> {
-            unimplemented!()
-        }
-        fn readPtySession(&self, sessionId: &str) -> HostResult<Vec<u8>> {
-            let read = self.reads.fetch_add(1, Ordering::SeqCst);
-            Ok(if self.exited {
-                if read == 0 {
-                    b"before".to_vec()
-                } else {
-                    b"tail".to_vec()
-                }
-            } else {
-                Vec::new()
-            })
-        }
-        fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
-            unimplemented!()
-        }
-        fn resizePtySession(&self, sessionId: &str, rows: u16, cols: u16) -> HostResult<()> {
-            unimplemented!()
-        }
-        fn pollPtyExitCode(&self, sessionId: &str) -> HostResult<Option<i32>> {
-            Ok(if self.exited { Some(0) } else { None })
-        }
-        fn closePtySession(&self, sessionId: &str) -> HostResult<()> {
-            unimplemented!()
-        }
-        fn listSessions(&self) -> HostResult<Vec<TerminalSessionListEntry>> {
-            Ok(Vec::new())
-        }
-        fn createOrGetSession(&self, sessionName: &str) -> HostResult<TerminalSessionInfo> {
-            unimplemented!()
-        }
-        /// Rejects typed session creation in this output-stream-only test host.
-        fn createOrGetTypedSession(&self, _: &str, _: &str) -> HostResult<TerminalSessionInfo> {
-            unimplemented!()
-        }
-        fn executeInSession(
-            &self,
-            sessionId: &str,
-            command: &str,
-            timeoutMs: u64,
-        ) -> HostResult<TerminalCommandOutput> {
-            unimplemented!()
-        }
-        fn executeHiddenCommand(
-            &self,
-            command: &str,
-            executorKey: &str,
-            timeoutMs: u64,
-        ) -> HostResult<HiddenTerminalCommandOutput> {
-            unimplemented!()
-        }
-        fn inputInSession(
-            &self,
-            sessionId: &str,
-            input: Option<&str>,
-            control: Option<&str>,
-        ) -> HostResult<TerminalInputOutput> {
-            unimplemented!()
-        }
-        fn closeSession(&self, sessionId: &str) -> HostResult<TerminalCloseOutput> {
-            unimplemented!()
-        }
-        fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
-            unimplemented!()
-        }
-    }
-
-    fn register(id: &str) -> MutableSharedStreamImpl<String> {
-        let stream = MutableSharedStreamImpl::new(8);
-        terminal_pty_output_streams().lock().unwrap().insert(
-            id.to_owned(),
-            TerminalPtyOutputEntry {
-                stream: stream.clone(),
-            },
-        );
-        stream
-    }
-
-    #[test]
-    fn closed_reader_stops_without_touching_host() {
-        let id = "idle-poll-test-close";
-        let stream = register(id);
-        let host = TestTerminal {
-            reads: AtomicUsize::new(0),
-            exited: false,
-        };
-        assert!(poll_terminal_pty_output(&host, id, &stream));
-        close_terminal_pty_output_stream(id);
-        assert!(!poll_terminal_pty_output(&host, id, &stream));
-        assert_eq!(host.reads.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn exit_drains_final_bytes_before_closing() {
-        let id = "idle-poll-test-exit";
-        let stream = register(id);
-        let host = TestTerminal {
-            reads: AtomicUsize::new(0),
-            exited: true,
-        };
-        assert!(!poll_terminal_pty_output(&host, id, &stream));
-        assert_eq!(
-            stream.replay_cache(),
-            vec![STANDARD.encode(b"before"), STANDARD.encode(b"tail")]
-        );
-        assert!(!poll_terminal_pty_output(&host, id, &stream));
-        assert_eq!(host.reads.load(Ordering::SeqCst), 2);
-    }
 }

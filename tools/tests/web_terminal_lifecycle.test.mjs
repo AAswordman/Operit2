@@ -86,7 +86,7 @@ function fixture() {
   const session = {
     id: 'web-terminal', state: 'running', emulator: { serial_send_bytes: (...args) => sends.push(args) },
     activeCommand: null, pendingCommands: [], managedExecution: null, screen: [], workingDir: '/',
-    output: new Uint8Array(4096), outputLength: 0,
+    output: new Uint8Array(4096), outputLength: 0, outputWaiters: new Set(),
   };
   const context = vm.createContext({
     TextEncoder, TextDecoder, Uint8Array, session,

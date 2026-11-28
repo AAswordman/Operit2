@@ -178,6 +178,7 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
 @property(nonatomic, strong) NSData *protocolPrefix;
 @property(nonatomic, strong) NSMutableData *protocolBuffer;
 @property(nonatomic, strong) NSMutableData *pendingOutput;
+@property(nonatomic, copy) dispatch_block_t outputChanged;
 @property(nonatomic, strong) NSMutableData *screenOutput;
 @property(nonatomic, strong) NSMutableData *queuedInput;
 @property(nonatomic, strong) ORTArm64Execution *execution;
@@ -245,6 +246,7 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
   [self.queuedInput setLength:0];
   dispatch_semaphore_signal(self.startup);
   if (self.execution) if (self.execution.changed) self.execution.changed();
+  if (self.outputChanged) self.outputChanged();
 }
 - (void)fail:(NSString *)error {
   self.failure = error;
@@ -362,6 +364,7 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
     if (buffer.length > ORTOutputCapacity)
       [buffer replaceBytesInRange:NSMakeRange(0, buffer.length - ORTOutputCapacity) withBytes:nullptr length:0];
   }
+  if (self.outputChanged) self.outputChanged();
   if (execution && execution.started && !execution.done) {
     if (execution.boundedOutput && data.length > ORTCommandCapacity - execution.outputCount) {
       [self fail:@"ARM64 command output exceeded the 16 MiB capture limit"]; return;
@@ -1278,6 +1281,29 @@ static NSDictionary *ORTHandle(NSString *command, NSDictionary *request, void *c
   }
   ORTArm64TerminalSession *session = ORTSession(request, &error);
   if (!session) return ORTError(error);
+  if ([command isEqualToString:@"terminalReadAsync"]) {
+    if (!context || !callback || !completion) return ORTError(@"ARM64 output callbacks are missing");
+    __block BOOL accepted = NO;
+    dispatch_sync(session.queue, ^{
+      if (session.outputChanged) return;
+      accepted = YES;
+      __weak ORTArm64TerminalSession *weakSession = session;
+      session.outputChanged = ^{
+        ORTArm64TerminalSession *owner = weakSession;
+        if (!owner || (!owner.pendingOutput.length && !owner.closed && !owner.failure)) return;
+        NSData *data = [owner.pendingOutput copy];
+        [owner.pendingOutput setLength:0];
+        owner.outputChanged = nil;
+        if (data.length) callback(context, (const uint8_t *)data.bytes, data.length);
+        // Report data first; the next read observes a durable failure or EOF.
+        NSDictionary *response = data.length || !owner.failure ? ORTResult(@{}) : ORTError(owner.failure);
+        completion(context, ORTEncode(response));
+        [owner schedulePump];
+      };
+      session.outputChanged();
+    });
+    return accepted ? ORTResult(@{}) : ORTError(@"ARM64 output already has an active reader");
+  }
   if ([command isEqualToString:@"terminalExecuteAsync"]) {
     NSString *shellCommand = ORTString(request, @"command", &error);
     if (error) return ORTError(error);

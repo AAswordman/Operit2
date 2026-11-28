@@ -644,6 +644,20 @@ fn serde_struct_field_name(name: &str, attrs: &[syn::Attribute], rule: Option<&s
 mod serde_struct_field_tests {
     use super::*;
 
+    /// Keeps manually serialized binary buffers available to generated calls and streams.
+    #[test]
+    fn shared_binary_buffers_cross_link_without_derive_annotations() {
+        let file = syn::parse_file("use operit_link::CoreBuffer;").unwrap();
+        let resolver = TypeResolver::from_file(
+            &file, "example", "example", HashSet::new(), HashSet::new(), TypeRegistry::default(),
+        );
+        for ty in ["CoreBuffer", "operit_link::CoreBuffer", "Option<operit_link::CoreBuffer>"] {
+            assert!(is_supported_arg_type(ty, &resolver), "argument {ty}");
+            assert!(is_supported_return_type(ty, &resolver), "return {ty}");
+        }
+        assert!(!is_supported_return_type("unknown::CoreBuffer", &resolver));
+    }
+
     #[test]
     fn theme_wire_fields_follow_container_rename_all() {
         let file = syn::parse_file(r#"
@@ -898,6 +912,7 @@ pub fn is_supported_arg_type(ty: &str, resolver: &TypeResolver) -> bool {
     }
     if is_primitive_link_value_type(ty)
         || ty == "serde_json::Value"
+        || matches!(ty, "CoreBuffer" | "operit_link::CoreBuffer")
         || is_deserializable_named_value_type(ty, resolver)
         || is_tuple_arg_type(ty, resolver)
     {
@@ -939,6 +954,7 @@ pub fn is_supported_return_type(ty: &str, resolver: &TypeResolver) -> bool {
     }
     if is_primitive_link_value_type(ty)
         || ty == "serde_json::Value"
+        || matches!(ty, "CoreBuffer" | "operit_link::CoreBuffer")
         || is_serializable_named_value_type(ty, resolver)
         || is_tuple_value_type(ty, resolver)
     {

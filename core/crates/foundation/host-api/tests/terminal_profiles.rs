@@ -174,6 +174,11 @@ impl TerminalHost for TestTerminal {
         Ok(id)
     }
     /// Returns a value identifying the environment that owns this session.
+    /// Exposes explicit EOF or unsupported capability without a timer.
+    fn nextPtySessionOutput<'a>(&'a self, _: &'a str) -> operit_host_api::TerminalPtyOutputFuture<'a> {
+        Box::pin(async { Ok(None) })
+    }
+
     fn readPtySession(&self, id: &str) -> HostResult<Vec<u8>> {
         assert!(self.sessions.lock().unwrap().contains_key(id));
         Ok(self.rootfs.as_bytes().to_vec())

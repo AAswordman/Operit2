@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -77,7 +76,7 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
   final String _sessionId;
   final _output = StreamController<Uint8List>.broadcast();
   final _exitCode = Completer<int>();
-  StreamSubscription<String>? _outputSubscription;
+  StreamSubscription<Uint8List>? _outputSubscription;
   Timer? _resizeTimer;
   bool _closed = false;
   int? _pendingRows;
@@ -102,15 +101,13 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
       return;
     }
     unawaited(
-      _terminal
-          .writeTerminalPty(
-            sessionId: _sessionId,
-            dataBase64: base64Encode(data),
-          )
-          .catchError((Object error, StackTrace stackTrace) {
-            _handleOutputError(error, stackTrace);
-            return 0;
-          }),
+      _terminal.writeTerminalPty(sessionId: _sessionId, data: data).catchError((
+        Object error,
+        StackTrace stackTrace,
+      ) {
+        _handleOutputError(error, stackTrace);
+        return 0;
+      }),
     );
   }
 
@@ -161,29 +158,11 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
   }
 
   /// Handles one generated terminal output value.
-  void _handleEvent(String value) {
+  void _handleEvent(Uint8List value) {
     if (_closed || _output.isClosed) {
       return;
     }
-    _handleOutputValue(value);
-  }
-
-  /// Decodes a terminal output payload and emits the bytes to listeners.
-  void _handleOutputValue(Object? value) {
-    if (_closed || _output.isClosed) {
-      return;
-    }
-    if (value is! String) {
-      _handleOutputError(
-        StateError('Terminal PTY output event is not a string'),
-        StackTrace.current,
-      );
-      return;
-    }
-    final dataBase64 = value;
-    if (dataBase64.isNotEmpty) {
-      _output.add(base64Decode(dataBase64));
-    }
+    _output.add(value);
   }
 
   /// Converts stream errors into terminal process completion.
