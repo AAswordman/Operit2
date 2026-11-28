@@ -318,10 +318,14 @@ function installV1Adapters(runtime) {
     var currentFiles = Object.assign({}, Tools.Files);
     var legacyFiles = __operitCreateV1Files(currentFiles);
     for (var [method, filesImplementation] of Object.entries(legacyFiles)) {
-        var builder = api.method().between('1.0.0', '2.0.0', filesImplementation);
-        // Methods retained only for legacy callers have no current-version implementation.
-        if (typeof currentFiles[method] === 'function') builder.since('2.0.0', currentFiles[method]);
-        Tools.Files[method] = builder.build('Tools.Files.' + method);
+        /** Keeps v1 methods that the current API family retired on the legacy range only. */
+        var methodBuilder = api.method()
+            .between('1.0.0', '2.0.0', filesImplementation);
+        var currentImplementation = currentFiles[method];
+        if (typeof currentImplementation === 'function') {
+            methodBuilder = methodBuilder.since('2.0.0', currentImplementation);
+        }
+        Tools.Files[method] = methodBuilder.build('Tools.Files.' + method);
     }
     var workflow = __operitCreateV1Workflow(
         /** Invokes the declared workflow prerequisite's published method. */

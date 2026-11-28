@@ -447,6 +447,9 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
         errorDetails: core_proxy.CoreProxyErrorDetails.fromCoreLinkError(error),
         providerName: provider.name,
       );
+    }
+  }
+
   /// Syncs a provider's model list with its live listing, removing obsolete non-custom models.
   Future<core_proxy.ProviderModelSyncResult?> _syncProviderModels(
     core_proxy.ProviderProfile provider,

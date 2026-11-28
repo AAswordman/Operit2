@@ -451,11 +451,14 @@ function __operitInstallV1Runtime(runtime) {
     }
     var legacyFiles = __operitCreateV1Files(files);
     for (var name of Object.keys(legacyFiles)) {
-        var method = api.method()
+        /** Keeps v1 methods that the current API family retired on the legacy range only. */
+        var methodBuilder = api.method()
             .between('1.0.0', '2.0.0', legacyFiles[/** @type {keyof typeof legacyFiles} */ (name)]);
-        // Legacy-only methods have no current-version variant to register.
-        var currentMethod = canonical.Files[/** @type {keyof typeof canonical.Files} */ (name)];
-        if (typeof currentMethod === 'function') method.since('2.0.0', currentMethod);
-        runtime.Tools.Files[name] = method.build('Tools.Files.' + name);
+        var canonicalImplementation =
+            canonical.Files[/** @type {keyof typeof canonical.Files} */ (name)];
+        if (typeof canonicalImplementation === 'function') {
+            methodBuilder = methodBuilder.since('2.0.0', canonicalImplementation);
+        }
+        runtime.Tools.Files[name] = methodBuilder.build('Tools.Files.' + name);
     }
 }
