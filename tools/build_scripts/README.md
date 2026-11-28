@@ -116,8 +116,11 @@ on each platform. Android's Gradle release/profile tasks set
 tables in `Cargo.toml`. Other platforms retain their existing symbol settings,
 and the bridge keeps panic unwinding for its JNI and transport error boundaries.
 
-Android packages JNI libraries uncompressed and page-aligned inside the APK with
-`useLegacyPackaging=false`. The bridge loads through `OperitRuntimeNative` when
+Android compresses JNI libraries inside the APK and extracts them during
+installation with `useLegacyPackaging=true`. BusyBox, Bash, proot, the loader and
+Shizuku execute from `nativeLibraryDir`, so packaging must produce real files in
+that directory; loading libraries directly from the APK leaves those paths absent
+and prevents Core Runtime startup. The bridge loads through `OperitRuntimeNative` when
 the runtime first needs it. Application startup does not preinitialize that class:
 a failed JVM class initializer cannot be retried by accessing the same class again.
 Compare the packaged library size and real device cold-start timings before
